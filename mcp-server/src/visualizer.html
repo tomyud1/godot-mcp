@@ -133,6 +133,8 @@ canvas.dragging { cursor: grabbing; }
   top: 0;
   right: -480px;
   width: 460px;
+  min-width: 300px;
+  max-width: 80vw;
   height: 100vh;
   background: var(--bg-primary);
   border-left: 1px solid var(--border);
@@ -143,6 +145,36 @@ canvas.dragging { cursor: grabbing; }
 }
 
 #detail-panel.open { right: 0; }
+#detail-panel.resizing { transition: none; }
+
+/* Horizontal resize handle for panel */
+#panel-resize-handle {
+  position: absolute;
+  left: -4px;
+  top: 0;
+  width: 8px;
+  height: 100%;
+  cursor: ew-resize;
+  z-index: 201;
+}
+#panel-resize-handle::after {
+  content: '';
+  position: absolute;
+  left: 3px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 50px;
+  background: var(--border);
+  border-radius: 2px;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+#panel-resize-handle:hover::after,
+#detail-panel.resizing #panel-resize-handle::after {
+  opacity: 1;
+  background: var(--accent);
+}
 
 #detail-panel::-webkit-scrollbar { width: 6px; }
 #detail-panel::-webkit-scrollbar-track { background: transparent; }
@@ -225,48 +257,45 @@ canvas.dragging { cursor: grabbing; }
 
 /* Sections */
 .section {
-  margin-bottom: 20px;
-  position: relative;
+  margin-bottom: 12px;
 }
 
 .section.resizable {
-  overflow: hidden;
-  max-height: 300px;
-  min-height: 60px;
+  display: flex;
+  flex-direction: column;
 }
 
 .section.resizable .item-list {
-  max-height: calc(100% - 30px);
+  max-height: 200px;
   overflow-y: auto;
+  flex-shrink: 1;
 }
 
 .section-resize-handle {
-  position: absolute;
-  bottom: -4px;
-  left: 0;
-  right: 0;
-  height: 8px;
+  position: relative;
+  height: 12px;
   cursor: ns-resize;
   z-index: 5;
+  margin: 4px 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .section-resize-handle::after {
   content: '';
-  position: absolute;
-  left: 50%;
-  bottom: 3px;
-  transform: translateX(-50%);
   width: 40px;
   height: 3px;
   background: var(--border);
   border-radius: 2px;
-  opacity: 0;
+  opacity: 0.3;
   transition: opacity 0.2s;
 }
 
 .section-resize-handle:hover::after,
 .section.resizing .section-resize-handle::after {
   opacity: 1;
+  background: var(--accent);
 }
 
 .section-header {
@@ -309,6 +338,189 @@ canvas.dragging { cursor: grabbing; }
 .item-list li:hover { background: var(--bg-secondary); }
 .item-list li.clickable { cursor: pointer; }
 .item-list li.clickable:hover { background: var(--bg-tertiary); }
+
+/* Inline editable items */
+.item-list li .item-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity 0.15s;
+  flex-shrink: 0;
+}
+.item-list li:hover .item-actions { opacity: 1; }
+.item-actions button {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.item-actions button:hover { background: var(--bg-hover); color: var(--text-primary); }
+.item-actions button.delete:hover { background: #3d2020; color: #f38ba8; }
+
+/* Inline editable spans */
+.editable {
+  cursor: text;
+  padding: 1px 4px;
+  margin: -1px -4px;
+  border-radius: 3px;
+  transition: background 0.15s;
+  min-width: 20px;
+  display: inline-block;
+}
+.editable:hover { background: rgba(255,255,255,0.08); }
+.editable:focus {
+  outline: none;
+  background: rgba(255,255,255,0.12);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.editable[data-placeholder]:empty::before {
+  content: attr(data-placeholder);
+  color: var(--text-muted);
+  opacity: 0.5;
+}
+
+/* Usage panel (like Ctrl+F results) */
+.usage-panel {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin: 8px 0;
+  overflow: hidden;
+}
+.usage-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: rgba(243, 139, 168, 0.15);
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  color: #f38ba8;
+}
+.usage-panel-header .usage-nav {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.usage-panel-header .usage-nav button {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.usage-panel-header .usage-nav button:hover { background: var(--bg-hover); }
+.usage-panel-list {
+  max-height: 150px;
+  overflow-y: auto;
+}
+.usage-panel-item {
+  display: flex;
+  align-items: center;
+  padding: 6px 12px;
+  font-size: 11px;
+  font-family: 'SF Mono', monospace;
+  cursor: pointer;
+  border-bottom: 1px solid var(--border);
+}
+.usage-panel-item:last-child { border-bottom: none; }
+.usage-panel-item:hover { background: var(--bg-hover); }
+.usage-panel-item.active { background: rgba(212, 162, 127, 0.15); }
+.usage-panel-item .file { color: var(--text-muted); margin-right: 8px; }
+.usage-panel-item .line { color: var(--accent); margin-right: 8px; }
+.usage-panel-item .code { color: var(--text-secondary); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.usage-panel-actions {
+  display: flex;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--bg-secondary);
+}
+.usage-panel-actions button {
+  flex: 1;
+  padding: 6px 12px;
+  border-radius: 4px;
+  font-size: 11px;
+  cursor: pointer;
+  border: 1px solid var(--border);
+}
+.usage-panel-actions .cancel { background: var(--bg-tertiary); color: var(--text-secondary); }
+.usage-panel-actions .delete { background: #3d2020; color: #f38ba8; border-color: #f38ba8; }
+
+/* Add item form */
+.add-item-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  color: var(--text-muted);
+  font-size: 12px;
+  cursor: pointer;
+  border-radius: 6px;
+  margin-top: 4px;
+}
+.add-item-btn:hover { background: var(--bg-secondary); color: var(--text-secondary); }
+.add-item-btn svg { opacity: 0.6; }
+
+.add-item-form {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  margin-top: 8px;
+}
+.add-item-form .form-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.add-item-form .form-row:last-child { margin-bottom: 0; }
+.add-item-form input, .add-item-form select {
+  flex: 1;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  padding: 6px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-family: inherit;
+}
+.add-item-form input:focus, .add-item-form select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.add-item-form .form-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+.add-item-form button {
+  padding: 6px 14px;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+  border: 1px solid var(--border);
+}
+.add-item-form button.cancel {
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+}
+.add-item-form button.confirm {
+  background: var(--accent);
+  color: var(--bg-primary);
+  border-color: var(--accent);
+  font-weight: 600;
+}
 
 /* Syntax tokens */
 .kw { color: var(--gd-keyword); font-weight: 600; }
@@ -373,13 +585,85 @@ canvas.dragging { cursor: grabbing; }
 .func-viewer-close:hover { color: var(--text-primary); background: var(--bg-hover); }
 
 .func-viewer-code {
+  position: relative;
   padding: 12px 0;
   font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
   font-size: 12px;
   line-height: 1.6;
-  overflow-x: auto;
+  overflow: auto;
   tab-size: 4;
 }
+
+/* Editable code area */
+.code-editor-container {
+  position: relative;
+  margin: 0 14px;
+}
+
+.code-editor-textarea {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  tab-size: inherit;
+  padding: 0;
+  margin: 0;
+  border: none;
+  background: transparent;
+  color: transparent;
+  caret-color: var(--text-primary);
+  resize: none;
+  outline: none;
+  overflow: hidden;
+  white-space: pre;
+}
+
+.code-editor-textarea::selection {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.code-editor-highlight {
+  white-space: pre;
+  pointer-events: none;
+}
+
+.code-editor-container:focus-within {
+  outline: 1px solid var(--accent);
+  outline-offset: 4px;
+  border-radius: 4px;
+}
+
+.func-viewer-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 14px;
+  background: var(--bg-tertiary);
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.func-viewer-footer .status { opacity: 0; transition: opacity 0.2s; }
+.func-viewer-footer .status.visible { opacity: 1; }
+.func-viewer-footer .save-btn {
+  background: var(--accent);
+  color: var(--bg-primary);
+  border: none;
+  padding: 4px 12px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  opacity: 0.5;
+  transition: opacity 0.2s;
+}
+.func-viewer-footer .save-btn.active { opacity: 1; }
+.func-viewer-footer .save-btn.active:hover { background: var(--accent-light); }
 
 .code-line {
   display: flex;
@@ -424,6 +708,7 @@ canvas.dragging { cursor: grabbing; }
 </div>
 
 <div id="detail-panel">
+  <div id="panel-resize-handle"></div>
   <div class="panel-header">
     <button class="close-btn" onclick="closePanel()">&times;</button>
     <h2 id="panel-title"></h2>
@@ -924,34 +1209,56 @@ function openPanel(node) {
   const exportVars = (node.variables || []).filter(v => v.exported);
   const regularVars = (node.variables || []).filter(v => !v.exported);
 
-  if (exportVars.length > 0) {
-    html += `<div class="section resizable">`;
-    html += `<div class="section-header">Exports <span class="section-count">${exportVars.length}</span></div>`;
-    html += `<ul class="item-list">`;
-    for (const v of exportVars) {
-      html += `<li>`;
-      html += `<span class="exp">@export</span> `;
-      html += `<span class="kw">var</span> ${esc(v.name)}`;
-      if (v.type) html += `<span class="ret">:</span> <span class="tp">${esc(v.type)}</span>`;
-      if (v.default) html += ` <span class="ret">=</span> <span class="num">${esc(v.default)}</span>`;
-      html += `</li>`;
-    }
-    html += `</ul><div class="section-resize-handle"></div></div>`;
+  // Exports section (always show for adding)
+  html += `<div class="section resizable">`;
+  html += `<div class="section-header">Exports <span class="section-count">${exportVars.length}</span></div>`;
+  html += `<ul class="item-list" id="exports-list">`;
+  for (let vi = 0; vi < exportVars.length; vi++) {
+    const v = exportVars[vi];
+    html += `<li data-var-index="${vi}" data-exported="true">`;
+    html += `<span class="exp">@export</span> `;
+    html += `<span class="kw">var</span> `;
+    html += `<span class="editable var-name" contenteditable="true" data-field="name" data-original="${esc(v.name)}">${esc(v.name)}</span>`;
+    html += `<span class="ret">:</span> `;
+    html += `<span class="tp editable var-type" contenteditable="true" data-field="type" data-placeholder="Type" data-original="${esc(v.type || '')}">${esc(v.type || '')}</span>`;
+    html += ` <span class="ret">=</span> `;
+    html += `<span class="num editable var-default" contenteditable="true" data-field="default" data-placeholder="value" data-original="${esc(v.default || '')}">${esc(v.default || '')}</span>`;
+    html += `<span class="item-actions">`;
+    html += `<button class="delete" onclick="showDeleteUsages(${vi}, true, 'variable')" title="Delete">×</button>`;
+    html += `</span>`;
+    html += `</li>`;
+    html += `<div id="usage-panel-export-${vi}" class="usage-panel" style="display:none"></div>`;
   }
+  html += `</ul>`;
+  html += `<div class="add-item-btn" onclick="addNewVariable(true)">`;
+  html += `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>`;
+  html += `Add export</div>`;
+  html += `<div class="section-resize-handle"></div></div>`;
 
-  if (regularVars.length > 0) {
-    html += `<div class="section resizable">`;
-    html += `<div class="section-header">Variables <span class="section-count">${regularVars.length}</span></div>`;
-    html += `<ul class="item-list">`;
-    for (const v of regularVars) {
-      html += `<li>`;
-      html += `<span class="kw">var</span> ${esc(v.name)}`;
-      if (v.type) html += `<span class="ret">:</span> <span class="tp">${esc(v.type)}</span>`;
-      if (v.default) html += ` <span class="ret">=</span> <span class="num">${esc(v.default)}</span>`;
-      html += `</li>`;
-    }
-    html += `</ul><div class="section-resize-handle"></div></div>`;
+  // Variables section (always show for adding)
+  html += `<div class="section resizable">`;
+  html += `<div class="section-header">Variables <span class="section-count">${regularVars.length}</span></div>`;
+  html += `<ul class="item-list" id="vars-list">`;
+  for (let vi = 0; vi < regularVars.length; vi++) {
+    const v = regularVars[vi];
+    html += `<li data-var-index="${vi}" data-exported="false">`;
+    html += `<span class="kw">var</span> `;
+    html += `<span class="editable var-name" contenteditable="true" data-field="name" data-original="${esc(v.name)}">${esc(v.name)}</span>`;
+    html += `<span class="ret">:</span> `;
+    html += `<span class="tp editable var-type" contenteditable="true" data-field="type" data-placeholder="Type" data-original="${esc(v.type || '')}">${esc(v.type || '')}</span>`;
+    html += ` <span class="ret">=</span> `;
+    html += `<span class="num editable var-default" contenteditable="true" data-field="default" data-placeholder="value" data-original="${esc(v.default || '')}">${esc(v.default || '')}</span>`;
+    html += `<span class="item-actions">`;
+    html += `<button class="delete" onclick="showDeleteUsages(${vi}, false, 'variable')" title="Delete">×</button>`;
+    html += `</span>`;
+    html += `</li>`;
+    html += `<div id="usage-panel-var-${vi}" class="usage-panel" style="display:none"></div>`;
   }
+  html += `</ul>`;
+  html += `<div class="add-item-btn" onclick="addNewVariable(false)">`;
+  html += `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>`;
+  html += `Add variable</div>`;
+  html += `<div class="section-resize-handle"></div></div>`;
 
   // Functions
   if ((node.functions || []).length > 0) {
@@ -973,22 +1280,32 @@ function openPanel(node) {
     html += `</ul><div class="section-resize-handle"></div></div>`;
   }
 
-  // Signals
-  if ((node.signals || []).length > 0) {
-    html += `<div class="section">`;
-    html += `<div class="section-header">Signals <span class="section-count">${node.signals.length}</span></div>`;
-    html += `<ul class="item-list">`;
-    for (const s of node.signals) {
-      const sigName = typeof s === 'string' ? s : s.name;
-      const sigParams = typeof s === 'object' ? s.params : '';
-      html += `<li>`;
-      html += `<span class="kw">signal</span> <span class="sig">${esc(sigName)}</span>`;
-      if (sigParams) html += `<span class="param">(${esc(sigParams)})</span>`;
-      html += `<span class="tag tag-signal" style="margin-left:auto">signal</span>`;
-      html += `</li>`;
-    }
-    html += `</ul></div>`;
+  // Signals section (always show for adding)
+  const signalsList = node.signals || [];
+  html += `<div class="section">`;
+  html += `<div class="section-header">Signals <span class="section-count">${signalsList.length}</span></div>`;
+  html += `<ul class="item-list" id="signals-list">`;
+  for (let si = 0; si < signalsList.length; si++) {
+    const s = signalsList[si];
+    const sigName = typeof s === 'string' ? s : s.name;
+    const sigParams = typeof s === 'object' ? s.params : '';
+    html += `<li data-signal-index="${si}">`;
+    html += `<span class="kw">signal</span> `;
+    html += `<span class="sig editable signal-name" contenteditable="true" data-field="name" data-original="${esc(sigName)}">${esc(sigName)}</span>`;
+    html += `<span class="param">(</span>`;
+    html += `<span class="editable signal-params" contenteditable="true" data-field="params" data-placeholder="params" data-original="${esc(sigParams)}">${esc(sigParams)}</span>`;
+    html += `<span class="param">)</span>`;
+    html += `<span class="item-actions">`;
+    html += `<button class="delete" onclick="showDeleteUsages(${si}, false, 'signal')" title="Delete">×</button>`;
+    html += `</span>`;
+    html += `</li>`;
+    html += `<div id="usage-panel-signal-${si}" class="usage-panel" style="display:none"></div>`;
   }
+  html += `</ul>`;
+  html += `<div class="add-item-btn" onclick="addNewSignal()">`;
+  html += `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>`;
+  html += `Add signal</div>`;
+  html += `</div>`;
 
   // Connections - group by target and show signal names
   const related = edges.filter(e => e.from === node.path || e.to === node.path);
@@ -1044,10 +1361,11 @@ function openPanel(node) {
   document.getElementById('panel-body').innerHTML = html;
   detailPanel.classList.add('open');
   initSectionResizing();
+  initInlineEditing();
   draw();
 }
 
-// Toggle function body viewer
+// Toggle function body viewer with inline editing
 window.toggleFunc = function(fi) {
   const viewer = document.getElementById(`func-viewer-${fi}`);
   if (!viewer) return;
@@ -1061,22 +1379,134 @@ window.toggleFunc = function(fi) {
   const f = selectedNode.functions[fi];
   if (!f.body) return;
 
-  const lines = f.body.split('\n');
-  let codeHtml = '';
-  for (let i = 0; i < lines.length; i++) {
-    const lineNum = (f.line || 1) + i;
-    codeHtml += `<div class="code-line"><span class="line-num">${lineNum}</span><span class="line-content">${highlightGDScript(lines[i])}</span></div>`;
-  }
-
+  const editorId = `code-editor-${fi}`;
+  
   viewer.innerHTML = `
     <div class="func-viewer-header">
-      <span><span class="func-title">${esc(f.name)}</span> · ${lines.length} lines</span>
+      <span><span class="func-title">${esc(f.name)}</span> · <span id="line-count-${fi}">${f.body.split('\n').length}</span> lines</span>
       <button class="func-viewer-close" onclick="toggleFunc(${fi})">&times;</button>
     </div>
-    <div class="func-viewer-code">${codeHtml}</div>
+    <div class="func-viewer-code">
+      <div class="code-editor-container" id="${editorId}">
+        <div class="code-editor-highlight" id="highlight-${fi}"></div>
+        <textarea class="code-editor-textarea" id="textarea-${fi}" spellcheck="false"></textarea>
+      </div>
+    </div>
+    <div class="func-viewer-footer">
+      <span class="status" id="status-${fi}">Modified</span>
+      <span style="display:flex;gap:8px;align-items:center">
+        <span style="opacity:0.6">Ctrl+S to save</span>
+        <button class="save-btn" id="save-btn-${fi}" onclick="saveFunction(${fi})">Save</button>
+      </span>
+    </div>
   `;
+  
+  const textarea = document.getElementById(`textarea-${fi}`);
+  const highlight = document.getElementById(`highlight-${fi}`);
+  const statusEl = document.getElementById(`status-${fi}`);
+  const saveBtn = document.getElementById(`save-btn-${fi}`);
+  const lineCountEl = document.getElementById(`line-count-${fi}`);
+  
+  // Store original code for comparison
+  textarea.dataset.original = f.body;
+  textarea.dataset.funcIndex = fi;
+  textarea.dataset.scriptPath = selectedNode.path;
+  textarea.dataset.funcName = f.name;
+  textarea.value = f.body;
+  
+  // Initial highlight
+  updateHighlight(fi);
+  
+  // Sync highlight on input
+  textarea.addEventListener('input', () => {
+    updateHighlight(fi);
+    const modified = textarea.value !== textarea.dataset.original;
+    statusEl.classList.toggle('visible', modified);
+    saveBtn.classList.toggle('active', modified);
+    lineCountEl.textContent = textarea.value.split('\n').length;
+  });
+  
+  // Sync scroll
+  textarea.addEventListener('scroll', () => {
+    highlight.style.transform = `translate(-${textarea.scrollLeft}px, -${textarea.scrollTop}px)`;
+  });
+  
+  // Handle tab key
+  textarea.addEventListener('keydown', (e) => {
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      const start = textarea.selectionStart;
+      const end = textarea.selectionEnd;
+      textarea.value = textarea.value.substring(0, start) + '\t' + textarea.value.substring(end);
+      textarea.selectionStart = textarea.selectionEnd = start + 1;
+      textarea.dispatchEvent(new Event('input'));
+    }
+    // Ctrl+S to save
+    if (e.key === 's' && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      saveFunction(fi);
+    }
+  });
+  
+  // Auto-resize textarea height
+  function autoResize() {
+    textarea.style.height = 'auto';
+    textarea.style.height = textarea.scrollHeight + 'px';
+    highlight.style.height = textarea.scrollHeight + 'px';
+  }
+  textarea.addEventListener('input', autoResize);
+  setTimeout(autoResize, 0);
+  
   viewer.style.display = 'block';
 };
+
+// Update syntax highlighting
+function updateHighlight(fi) {
+  const textarea = document.getElementById(`textarea-${fi}`);
+  const highlight = document.getElementById(`highlight-${fi}`);
+  if (!textarea || !highlight) return;
+  
+  // Highlight each line
+  const lines = textarea.value.split('\n');
+  highlight.innerHTML = lines.map(line => highlightGDScript(line)).join('\n');
+}
+
+// Save function changes back to Godot
+async function saveFunction(fi) {
+  const textarea = document.getElementById(`textarea-${fi}`);
+  const statusEl = document.getElementById(`status-${fi}`);
+  const saveBtn = document.getElementById(`save-btn-${fi}`);
+  
+  if (!textarea || textarea.value === textarea.dataset.original) return;
+  
+  const scriptPath = textarea.dataset.scriptPath;
+  const funcName = textarea.dataset.funcName;
+  const newCode = textarea.value;
+  
+  statusEl.textContent = 'Saving...';
+  statusEl.classList.add('visible');
+  
+  try {
+    // TODO: Send to Godot via MCP
+    // For now, just update local state
+    const funcIndex = parseInt(textarea.dataset.funcIndex);
+    selectedNode.functions[funcIndex].body = newCode;
+    selectedNode.functions[funcIndex].body_lines = newCode.split('\n').length;
+    
+    textarea.dataset.original = newCode;
+    statusEl.textContent = 'Saved!';
+    saveBtn.classList.remove('active');
+    
+    setTimeout(() => {
+      statusEl.classList.remove('visible');
+    }, 2000);
+    
+    console.log(`[TODO] Save function "${funcName}" in ${scriptPath}`);
+  } catch (err) {
+    statusEl.textContent = 'Error saving!';
+    console.error('Failed to save:', err);
+  }
+}
 
 function closePanel() {
   selectedNode = null;
@@ -1084,19 +1514,258 @@ function closePanel() {
   draw();
 }
 
+// ---- Inline Editing for Variables/Signals ----
+function initInlineEditing() {
+  // Handle blur on editable fields - save changes
+  document.querySelectorAll('.editable').forEach(el => {
+    el.addEventListener('blur', handleInlineEdit);
+    el.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        el.blur();
+      }
+      if (e.key === 'Escape') {
+        el.textContent = el.dataset.original || '';
+        el.blur();
+      }
+    });
+  });
+}
+
+function handleInlineEdit(e) {
+  const el = e.target;
+  const li = el.closest('li');
+  if (!li) return;
+  
+  const newValue = el.textContent.trim();
+  const original = el.dataset.original || '';
+  const field = el.dataset.field;
+  
+  if (newValue === original) return; // No change
+  
+  // Determine what type of item this is
+  const isSignal = li.dataset.signalIndex !== undefined;
+  const isExport = li.dataset.exported === 'true';
+  const index = parseInt(isSignal ? li.dataset.signalIndex : li.dataset.varIndex);
+  
+  if (isSignal) {
+    // Update signal
+    const sig = selectedNode.signals[index];
+    if (typeof sig === 'string') {
+      selectedNode.signals[index] = { name: sig, params: '' };
+    }
+    if (field === 'name') selectedNode.signals[index].name = newValue;
+    if (field === 'params') selectedNode.signals[index].params = newValue;
+    console.log(`[TODO] Update signal in ${selectedNode.path}:`, selectedNode.signals[index]);
+  } else {
+    // Update variable
+    const vars = selectedNode.variables.filter(v => v.exported === isExport);
+    const v = vars[index];
+    const actualIndex = selectedNode.variables.findIndex(vr => vr.name === v.name);
+    if (actualIndex !== -1) {
+      if (field === 'name') selectedNode.variables[actualIndex].name = newValue;
+      if (field === 'type') selectedNode.variables[actualIndex].type = newValue;
+      if (field === 'default') selectedNode.variables[actualIndex].default = newValue;
+      console.log(`[TODO] Update variable in ${selectedNode.path}:`, selectedNode.variables[actualIndex]);
+    }
+  }
+  
+  // Update the original value
+  el.dataset.original = newValue;
+}
+
+// ---- Add New Items ----
+function addNewVariable(isExport) {
+  const newVar = { name: 'new_var', type: '', default: '', exported: isExport };
+  selectedNode.variables.push(newVar);
+  openPanel(selectedNode);
+  
+  // Focus the new variable name after panel refresh
+  setTimeout(() => {
+    const list = document.getElementById(isExport ? 'exports-list' : 'vars-list');
+    const lastItem = list?.querySelector('li:last-of-type .var-name');
+    if (lastItem) {
+      lastItem.focus();
+      // Select all text
+      const range = document.createRange();
+      range.selectNodeContents(lastItem);
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+    }
+  }, 50);
+}
+
+function addNewSignal() {
+  if (!selectedNode.signals) selectedNode.signals = [];
+  selectedNode.signals.push({ name: 'new_signal', params: '' });
+  openPanel(selectedNode);
+  
+  setTimeout(() => {
+    const list = document.getElementById('signals-list');
+    const lastItem = list?.querySelector('li:last-of-type .signal-name');
+    if (lastItem) {
+      lastItem.focus();
+      const range = document.createRange();
+      range.selectNodeContents(lastItem);
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+    }
+  }, 50);
+}
+
+// ---- Delete with Usage Panel ----
+function showDeleteUsages(index, isExport, type) {
+  const panelId = type === 'signal' ? `usage-panel-signal-${index}` 
+    : isExport ? `usage-panel-export-${index}` : `usage-panel-var-${index}`;
+  const panel = document.getElementById(panelId);
+  if (!panel) return;
+  
+  // Get the item name
+  let itemName = '';
+  if (type === 'signal') {
+    const sig = selectedNode.signals[index];
+    itemName = typeof sig === 'string' ? sig : sig.name;
+  } else {
+    const vars = selectedNode.variables.filter(v => v.exported === isExport);
+    itemName = vars[index]?.name || '';
+  }
+  
+  // TODO: Actually search for usages across all scripts
+  // For now, simulate finding usages
+  const mockUsages = findUsages(itemName, type);
+  
+  if (mockUsages.length === 0) {
+    // No usages, can delete directly
+    if (type === 'signal') {
+      selectedNode.signals.splice(index, 1);
+    } else {
+      const vars = selectedNode.variables.filter(v => v.exported === isExport);
+      const actualIndex = selectedNode.variables.findIndex(v => v.name === vars[index].name);
+      if (actualIndex !== -1) selectedNode.variables.splice(actualIndex, 1);
+    }
+    console.log(`[TODO] Delete ${type} "${itemName}" from ${selectedNode.path}`);
+    openPanel(selectedNode);
+    return;
+  }
+  
+  // Show usage panel
+  panel.innerHTML = `
+    <div class="usage-panel-header">
+      <span>⚠ "${itemName}" is used in ${mockUsages.length} place${mockUsages.length > 1 ? 's' : ''}</span>
+      <div class="usage-nav">
+        <span id="usage-counter-${panelId}">1/${mockUsages.length}</span>
+        <button onclick="navigateUsage('${panelId}', -1)">‹</button>
+        <button onclick="navigateUsage('${panelId}', 1)">›</button>
+      </div>
+    </div>
+    <div class="usage-panel-list">
+      ${mockUsages.map((u, i) => `
+        <div class="usage-panel-item ${i === 0 ? 'active' : ''}" data-usage-index="${i}" onclick="goToUsage('${u.file}', ${u.line})">
+          <span class="file">${u.file.split('/').pop()}</span>
+          <span class="line">:${u.line}</span>
+          <span class="code">${esc(u.code)}</span>
+        </div>
+      `).join('')}
+    </div>
+    <div class="usage-panel-actions">
+      <button class="cancel" onclick="hideUsagePanel('${panelId}')">Cancel</button>
+      <button class="delete" onclick="forceDelete(${index}, ${isExport}, '${type}', '${itemName}')">Delete Anyway</button>
+    </div>
+  `;
+  panel.style.display = 'block';
+  panel.dataset.currentUsage = '0';
+}
+
+function hideUsagePanel(panelId) {
+  const panel = document.getElementById(panelId);
+  if (panel) panel.style.display = 'none';
+}
+
+function navigateUsage(panelId, direction) {
+  const panel = document.getElementById(panelId);
+  if (!panel) return;
+  
+  const items = panel.querySelectorAll('.usage-panel-item');
+  let current = parseInt(panel.dataset.currentUsage || '0');
+  current = (current + direction + items.length) % items.length;
+  
+  items.forEach((item, i) => item.classList.toggle('active', i === current));
+  panel.dataset.currentUsage = current.toString();
+  document.getElementById(`usage-counter-${panelId}`).textContent = `${current + 1}/${items.length}`;
+  
+  // Scroll to active item
+  items[current].scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function goToUsage(file, line) {
+  // TODO: Open the file and scroll to line
+  console.log(`[TODO] Navigate to ${file}:${line}`);
+}
+
+function forceDelete(index, isExport, type, itemName) {
+  if (type === 'signal') {
+    selectedNode.signals.splice(index, 1);
+  } else {
+    const vars = selectedNode.variables.filter(v => v.exported === isExport);
+    const actualIndex = selectedNode.variables.findIndex(v => v.name === vars[index].name);
+    if (actualIndex !== -1) selectedNode.variables.splice(actualIndex, 1);
+  }
+  console.log(`[TODO] Force delete ${type} "${itemName}" from ${selectedNode.path}`);
+  openPanel(selectedNode);
+}
+
+// Find usages of a variable/signal across all scripts (mock implementation)
+function findUsages(name, type) {
+  const usages = [];
+  
+  // Search in all function bodies of all nodes
+  for (const node of nodes) {
+    for (const func of (node.functions || [])) {
+      if (!func.body) continue;
+      const lines = func.body.split('\n');
+      lines.forEach((line, i) => {
+        // Simple check: does the line contain the name?
+        if (line.includes(name)) {
+          usages.push({
+            file: node.path,
+            line: (func.line || 1) + i,
+            code: line.trim()
+          });
+        }
+      });
+    }
+  }
+  
+  return usages;
+}
+
 // Section resizing
-let resizingSection = null;
+let resizingList = null;
 let resizeStartY = 0;
 let resizeStartHeight = 0;
 
 function initSectionResizing() {
   document.querySelectorAll('.section-resize-handle').forEach(handle => {
+    // Remove old listeners
+    handle.replaceWith(handle.cloneNode(true));
+  });
+  
+  document.querySelectorAll('.section-resize-handle').forEach(handle => {
     handle.addEventListener('mousedown', (e) => {
       e.preventDefault();
-      resizingSection = handle.parentElement;
-      resizingSection.classList.add('resizing');
+      e.stopPropagation();
+      
+      // Find the item-list in this section
+      const section = handle.closest('.section');
+      resizingList = section?.querySelector('.item-list');
+      if (!resizingList) return;
+      
+      section.classList.add('resizing');
       resizeStartY = e.clientY;
-      resizeStartHeight = resizingSection.offsetHeight;
+      resizeStartHeight = resizingList.offsetHeight;
+      
       document.addEventListener('mousemove', onSectionResize);
       document.addEventListener('mouseup', onSectionResizeEnd);
     });
@@ -1104,20 +1773,63 @@ function initSectionResizing() {
 }
 
 function onSectionResize(e) {
-  if (!resizingSection) return;
+  if (!resizingList) return;
   const dy = e.clientY - resizeStartY;
-  const newHeight = Math.max(60, Math.min(600, resizeStartHeight + dy));
-  resizingSection.style.maxHeight = newHeight + 'px';
+  const newHeight = Math.max(50, Math.min(500, resizeStartHeight + dy));
+  resizingList.style.maxHeight = newHeight + 'px';
 }
 
 function onSectionResizeEnd() {
-  if (resizingSection) {
-    resizingSection.classList.remove('resizing');
-    resizingSection = null;
+  if (resizingList) {
+    const section = resizingList.closest('.section');
+    section?.classList.remove('resizing');
+    resizingList = null;
   }
   document.removeEventListener('mousemove', onSectionResize);
   document.removeEventListener('mouseup', onSectionResizeEnd);
 }
+
+// Panel horizontal resizing
+let panelResizing = false;
+let panelResizeStartX = 0;
+let panelStartWidth = 460;
+
+function initPanelResizing() {
+  const handle = document.getElementById('panel-resize-handle');
+  const panel = document.getElementById('detail-panel');
+  
+  handle.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    panelResizing = true;
+    panel.classList.add('resizing');
+    panelResizeStartX = e.clientX;
+    panelStartWidth = panel.offsetWidth;
+    
+    document.addEventListener('mousemove', onPanelResize);
+    document.addEventListener('mouseup', onPanelResizeEnd);
+  });
+}
+
+function onPanelResize(e) {
+  if (!panelResizing) return;
+  const panel = document.getElementById('detail-panel');
+  const dx = panelResizeStartX - e.clientX; // Dragging left = wider
+  const newWidth = Math.max(300, Math.min(window.innerWidth * 0.8, panelStartWidth + dx));
+  panel.style.width = newWidth + 'px';
+  panel.style.right = '0';
+}
+
+function onPanelResizeEnd() {
+  panelResizing = false;
+  const panel = document.getElementById('detail-panel');
+  panel.classList.remove('resizing');
+  document.removeEventListener('mousemove', onPanelResize);
+  document.removeEventListener('mouseup', onPanelResizeEnd);
+}
+
+// Initialize panel resizing on load
+document.addEventListener('DOMContentLoaded', initPanelResizing);
 
 function esc(s) {
   return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
