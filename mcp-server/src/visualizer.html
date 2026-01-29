@@ -1,0 +1,1276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Godot Project Map</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+:root {
+  /* Claude-inspired palette */
+  --bg-primary: #1a1a1e;
+  --bg-secondary: #242428;
+  --bg-tertiary: #2e2e33;
+  --bg-hover: #35353b;
+  --bg-surface: #28282d;
+  --border: #3a3a40;
+  --border-light: #4a4a52;
+  --text-primary: #e8e4df;
+  --text-secondary: #a8a49e;
+  --text-muted: #706c66;
+  --accent: #d4a27f;
+  --accent-light: #e4b896;
+  --accent-dim: #8b6f55;
+
+  /* GDScript syntax colors */
+  --gd-keyword: #cc7832;
+  --gd-func-name: #ffc66d;
+  --gd-type: #6897bb;
+  --gd-string: #6a8759;
+  --gd-number: #6897bb;
+  --gd-comment: #808080;
+  --gd-var: #cc7832;
+  --gd-signal: #a6e3a1;
+  --gd-export: #bbb529;
+  --gd-builtin: #8888c6;
+
+  /* Edge colors */
+  --edge-extends: #7aa2f7;
+  --edge-preload: #d4a27f;
+  --edge-signal: #a6e3a1;
+}
+
+body {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  overflow: hidden;
+  height: 100vh;
+}
+
+canvas { display: block; cursor: grab; }
+canvas.dragging { cursor: grabbing; }
+
+/* Search bar */
+#search-bar {
+  position: fixed;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px 18px;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.3);
+}
+
+#search-bar input {
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text-primary);
+  font-size: 14px;
+  width: 260px;
+  font-family: inherit;
+}
+
+#search-bar input::placeholder { color: var(--text-muted); }
+#search-bar .stats { color: var(--text-muted); font-size: 12px; white-space: nowrap; }
+
+#search-bar svg { flex-shrink: 0; }
+
+/* Legend */
+#legend {
+  position: fixed;
+  bottom: 16px;
+  left: 16px;
+  z-index: 100;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px 18px;
+  font-size: 12px;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.3);
+}
+
+/* Zoom indicator - positioned bottom-left, offset from legend */
+#zoom-indicator {
+  position: fixed;
+  bottom: 16px;
+  left: 150px;
+  z-index: 100;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  transition: all 0.2s;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.3);
+}
+
+#zoom-indicator:hover { background: var(--bg-hover); border-color: var(--border-light); }
+#zoom-indicator.faded { opacity: 0.4; }
+#zoom-indicator.faded:hover { opacity: 1; }
+#zoom-indicator svg { flex-shrink: 0; }
+#zoom-indicator .zoom-text { color: var(--text-secondary); font-weight: 500; min-width: 36px; text-align: center; }
+
+#legend .item { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; color: var(--text-secondary); }
+#legend .item:last-child { margin-bottom: 0; }
+#legend .line { width: 28px; height: 2px; border-radius: 1px; }
+
+/* Detail panel */
+#detail-panel {
+  position: fixed;
+  top: 0;
+  right: -480px;
+  width: 460px;
+  height: 100vh;
+  background: var(--bg-primary);
+  border-left: 1px solid var(--border);
+  z-index: 200;
+  overflow-y: auto;
+  transition: right 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: -8px 0 32px rgba(0,0,0,0.4);
+}
+
+#detail-panel.open { right: 0; }
+
+#detail-panel::-webkit-scrollbar { width: 6px; }
+#detail-panel::-webkit-scrollbar-track { background: transparent; }
+#detail-panel::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+.panel-header {
+  position: sticky;
+  top: 0;
+  background: var(--bg-primary);
+  border-bottom: 1px solid var(--border);
+  padding: 20px 24px;
+  z-index: 10;
+}
+
+.panel-header h2 {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--accent-light);
+  margin-bottom: 4px;
+  padding-right: 40px;
+}
+
+.panel-header .path {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+  word-break: break-all;
+}
+
+.close-btn {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+}
+
+.close-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
+
+.panel-body { padding: 16px 24px 32px; }
+
+.desc-block {
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin-bottom: 16px;
+  padding: 10px 14px;
+  background: var(--bg-secondary);
+  border-radius: 8px;
+  border-left: 3px solid var(--accent);
+  line-height: 1.5;
+}
+
+.meta-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+}
+
+.meta-badge {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  padding: 5px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.meta-badge span { color: var(--accent-light); font-weight: 600; }
+
+/* Sections */
+.section {
+  margin-bottom: 20px;
+  position: relative;
+}
+
+.section.resizable {
+  overflow: hidden;
+  max-height: 300px;
+  min-height: 60px;
+}
+
+.section.resizable .item-list {
+  max-height: calc(100% - 30px);
+  overflow-y: auto;
+}
+
+.section-resize-handle {
+  position: absolute;
+  bottom: -4px;
+  left: 0;
+  right: 0;
+  height: 8px;
+  cursor: ns-resize;
+  z-index: 5;
+}
+
+.section-resize-handle::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: 3px;
+  transform: translateX(-50%);
+  width: 40px;
+  height: 3px;
+  background: var(--border);
+  border-radius: 2px;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.section-resize-handle:hover::after,
+.section.resizing .section-resize-handle::after {
+  opacity: 1;
+}
+
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 6px;
+}
+
+.section-count {
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 10px;
+}
+
+.item-list { list-style: none; }
+
+.item-list li {
+  padding: 6px 10px;
+  border-radius: 6px;
+  margin-bottom: 1px;
+  font-size: 13px;
+  font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+  cursor: default;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  line-height: 1.4;
+}
+
+.item-list li:hover { background: var(--bg-secondary); }
+.item-list li.clickable { cursor: pointer; }
+.item-list li.clickable:hover { background: var(--bg-tertiary); }
+
+/* Syntax tokens */
+.kw { color: var(--gd-keyword); font-weight: 600; }
+.fn { color: var(--gd-func-name); }
+.tp { color: var(--gd-type); }
+.str { color: var(--gd-string); }
+.num { color: var(--gd-number); }
+.cmt { color: var(--gd-comment); font-style: italic; }
+.sig { color: var(--gd-signal); }
+.exp { color: var(--gd-export); }
+.param { color: var(--text-secondary); }
+.ret { color: var(--text-muted); }
+
+/* Tags */
+.tag {
+  font-size: 9px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-family: -apple-system, system-ui, sans-serif;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.tag-export { background: #3d3520; color: var(--gd-export); }
+.tag-signal { background: #1e3326; color: var(--gd-signal); }
+.tag-lines { background: var(--bg-tertiary); color: var(--text-muted); font-weight: normal; }
+.tag-return { background: #1e2a3a; color: var(--gd-type); }
+
+/* Function viewer */
+.func-viewer {
+  margin-top: 16px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.func-viewer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  background: var(--bg-tertiary);
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.func-viewer-header .func-title { color: var(--gd-func-name); font-weight: 600; }
+
+.func-viewer-close {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.func-viewer-close:hover { color: var(--text-primary); background: var(--bg-hover); }
+
+.func-viewer-code {
+  padding: 12px 0;
+  font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-x: auto;
+  tab-size: 4;
+}
+
+.code-line {
+  display: flex;
+  padding: 0 14px;
+  min-height: 20px;
+}
+
+.code-line:hover { background: rgba(255,255,255,0.03); }
+
+.line-num {
+  color: var(--text-muted);
+  min-width: 36px;
+  text-align: right;
+  padding-right: 16px;
+  user-select: none;
+  flex-shrink: 0;
+  font-size: 11px;
+}
+
+.line-content {
+  white-space: pre;
+  flex: 1;
+}
+</style>
+</head>
+<body>
+<div id="search-bar">
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+  <input type="text" id="search" placeholder="Search scripts..." />
+  <span class="stats" id="stats"></span>
+</div>
+
+<div id="legend">
+  <div class="item"><div class="line" style="background:var(--edge-extends)"></div> extends</div>
+  <div class="item"><div class="line" style="background:var(--edge-preload)"></div> preload</div>
+  <div class="item"><div class="line" style="background:var(--edge-signal);height:0;border-top:2px dotted var(--edge-signal)"></div> signal</div>
+</div>
+
+<div id="zoom-indicator" onclick="resetZoom()" title="Click to reset zoom">
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/><path d="M8 11h6"/><path d="M11 8v6"/></svg>
+  <span class="zoom-text" id="zoom-text">100%</span>
+</div>
+
+<div id="detail-panel">
+  <div class="panel-header">
+    <button class="close-btn" onclick="closePanel()">&times;</button>
+    <h2 id="panel-title"></h2>
+    <div class="path" id="panel-path"></div>
+  </div>
+  <div class="panel-body" id="panel-body"></div>
+</div>
+
+<canvas id="canvas"></canvas>
+
+<script>
+const PROJECT_DATA = "%%PROJECT_DATA%%";
+
+// ---- State ----
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+const searchInput = document.getElementById('search');
+const statsEl = document.getElementById('stats');
+const detailPanel = document.getElementById('detail-panel');
+const zoomIndicator = document.getElementById('zoom-indicator');
+const zoomText = document.getElementById('zoom-text');
+
+let W, H;
+let camera = { x: 0, y: 0, zoom: 1 };
+let defaultZoom = 1;
+let dragging = null;
+let hoveredNode = null;
+let selectedNode = null;
+let searchTerm = '';
+
+// Update zoom indicator
+function updateZoomIndicator() {
+  const percent = Math.round(camera.zoom * 100);
+  zoomText.textContent = percent + '%';
+  
+  // Fade when at default zoom (within 1% tolerance)
+  const isDefault = Math.abs(camera.zoom - defaultZoom) < 0.01;
+  zoomIndicator.classList.toggle('faded', isDefault);
+}
+
+// Reset zoom to default
+function resetZoom() {
+  camera.zoom = defaultZoom;
+  
+  // Re-center the view
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  nodes.forEach(n => { minX = Math.min(minX, n.x); maxX = Math.max(maxX, n.x); minY = Math.min(minY, n.y); maxY = Math.max(maxY, n.y); });
+  camera.x = (minX + maxX) / 2;
+  camera.y = (minY + maxY) / 2;
+  
+  updateZoomIndicator();
+  draw();
+}
+
+// ---- Folder colors ----
+const FOLDER_COLORS = [
+  'var(--accent)', '#7aa2f7', '#a6e3a1', '#f38ba8', '#cba6f7',
+  '#f9e2af', '#94e2d5', '#89dceb', '#fab387', '#f5c2e7'
+];
+const folderColorMap = {};
+let folderColorIdx = 0;
+
+function getFolderColor(folder) {
+  if (!folderColorMap[folder]) {
+    folderColorMap[folder] = FOLDER_COLORS[folderColorIdx % FOLDER_COLORS.length];
+    folderColorIdx++;
+  }
+  return folderColorMap[folder];
+}
+
+// ---- Node layout ----
+const NODE_W = 200;
+const NODE_H = 54;
+const nodes = PROJECT_DATA.nodes.map((n, i) => ({
+  ...n,
+  x: 0, y: 0,
+  color: getFolderColor(n.folder),
+  highlighted: true,
+  visible: true
+}));
+
+const edges = PROJECT_DATA.edges;
+
+// Force-directed layout
+function initLayout() {
+  const count = nodes.length;
+  if (count === 0) return;
+
+  const radius = Math.max(200, count * 45);
+  nodes.forEach((n, i) => {
+    const angle = (i / count) * Math.PI * 2;
+    n.x = Math.cos(angle) * radius;
+    n.y = Math.sin(angle) * radius;
+  });
+
+  const pathIdx = {};
+  nodes.forEach((n, i) => pathIdx[n.path] = i);
+
+  const iterations = 300;
+  for (let iter = 0; iter < iterations; iter++) {
+    const alpha = 1 - iter / iterations;
+    const repulsion = 60000;
+    const attraction = 0.004;
+
+    for (let i = 0; i < count; i++) {
+      for (let j = i + 1; j < count; j++) {
+        let dx = nodes[j].x - nodes[i].x;
+        let dy = nodes[j].y - nodes[i].y;
+        let dist = Math.sqrt(dx * dx + dy * dy) || 1;
+        let force = repulsion / (dist * dist);
+        let fx = (dx / dist) * force * alpha;
+        let fy = (dy / dist) * force * alpha;
+        nodes[i].x -= fx; nodes[i].y -= fy;
+        nodes[j].x += fx; nodes[j].y += fy;
+      }
+    }
+
+    for (const e of edges) {
+      const si = pathIdx[e.from], ti = pathIdx[e.to];
+      if (si === undefined || ti === undefined) continue;
+      let dx = nodes[ti].x - nodes[si].x;
+      let dy = nodes[ti].y - nodes[si].y;
+      let dist = Math.sqrt(dx * dx + dy * dy) || 1;
+      let force = dist * attraction * alpha;
+      let fx = (dx / dist) * force, fy = (dy / dist) * force;
+      nodes[si].x += fx; nodes[si].y += fy;
+      nodes[ti].x -= fx; nodes[ti].y -= fy;
+    }
+
+    let cx = 0, cy = 0;
+    nodes.forEach(n => { cx += n.x; cy += n.y; });
+    cx /= count; cy /= count;
+    nodes.forEach(n => { n.x -= cx * 0.01; n.y -= cy * 0.01; });
+  }
+}
+
+// ---- Rendering ----
+function resize() {
+  W = window.innerWidth; H = window.innerHeight;
+  canvas.width = W * devicePixelRatio;
+  canvas.height = H * devicePixelRatio;
+  canvas.style.width = W + 'px';
+  canvas.style.height = H + 'px';
+  ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+}
+
+function screenToWorld(sx, sy) {
+  return { x: (sx - W / 2) / camera.zoom + camera.x, y: (sy - H / 2) / camera.zoom + camera.y };
+}
+
+function draw() {
+  ctx.clearRect(0, 0, W, H);
+  ctx.save();
+  ctx.translate(W / 2, H / 2);
+  ctx.scale(camera.zoom, camera.zoom);
+  ctx.translate(-camera.x, -camera.y);
+
+  const pathIdx = {};
+  nodes.forEach((n, i) => pathIdx[n.path] = i);
+
+  // Group edges by node pair, type, and direction for bundled drawing
+  const edgeGroups = {};
+  for (const e of edges) {
+    const si = pathIdx[e.from], ti = pathIdx[e.to];
+    if (si === undefined || ti === undefined) continue;
+    
+    // For signal connections, keep direction (A->B is different from B->A)
+    // For extends/preload, also keep direction as they're inherently directional
+    const key = `${si}-${ti}-${e.type}`;
+    if (!edgeGroups[key]) {
+      edgeGroups[key] = { from: e.from, to: e.to, type: e.type, edges: [], si, ti };
+    }
+    edgeGroups[key].edges.push(e);
+  }
+  
+  // Draw bundled edges
+  for (const key of Object.keys(edgeGroups)) {
+    const group = edgeGroups[key];
+    const s = nodes[group.si], t = nodes[group.ti];
+    const count = group.edges.length;
+    
+    // Skip edges where both nodes are hidden during search
+    if (searchTerm && s.visible === false && t.visible === false) continue;
+
+    // Dim edges when one node is hidden, or when neither is highlighted
+    const bothVisible = s.visible !== false && t.visible !== false;
+    ctx.globalAlpha = (!bothVisible || (!s.highlighted && !t.highlighted)) ? 0.08 : 0.5;
+    
+    // Calculate perpendicular offset for multiple edge types between same nodes
+    const angle = Math.atan2(t.y - s.y, t.x - s.x);
+    const perpAngle = angle + Math.PI / 2;
+    
+    // Get offset based on edge type (so different types don't overlap)
+    const typeOffset = group.type === 'extends' ? 0 : group.type === 'preload' ? 8 : 16;
+    const offsetX = Math.cos(perpAngle) * typeOffset / camera.zoom;
+    const offsetY = Math.sin(perpAngle) * typeOffset / camera.zoom;
+    
+    ctx.beginPath();
+    ctx.moveTo(s.x + offsetX, s.y + offsetY);
+    ctx.lineTo(t.x + offsetX, t.y + offsetY);
+
+    if (group.type === 'extends') {
+      ctx.strokeStyle = '#7aa2f7'; ctx.setLineDash([]); ctx.lineWidth = 2 / camera.zoom;
+    } else if (group.type === 'preload') {
+      ctx.strokeStyle = '#d4a27f'; ctx.setLineDash([]); ctx.lineWidth = 1.5 / camera.zoom;
+    } else {
+      ctx.strokeStyle = '#a6e3a1';
+      ctx.setLineDash([4 / camera.zoom, 4 / camera.zoom]);
+      ctx.lineWidth = 1.5 / camera.zoom;
+    }
+    ctx.stroke(); ctx.setLineDash([]);
+
+    // Arrow at midpoint
+    const al = 10 / camera.zoom;
+    const mx = (s.x + t.x) / 2 + offsetX, my = (s.y + t.y) / 2 + offsetY;
+    ctx.beginPath();
+    ctx.moveTo(mx + Math.cos(angle) * al, my + Math.sin(angle) * al);
+    ctx.lineTo(mx + Math.cos(angle + 2.5) * al * 0.6, my + Math.sin(angle + 2.5) * al * 0.6);
+    ctx.lineTo(mx + Math.cos(angle - 2.5) * al * 0.6, my + Math.sin(angle - 2.5) * al * 0.6);
+    ctx.closePath(); ctx.fillStyle = ctx.strokeStyle; ctx.fill();
+    
+    // Draw count badge if multiple connections of same type
+    if (count > 1) {
+      const badgeX = mx + Math.cos(perpAngle) * (12 / camera.zoom);
+      const badgeY = my + Math.sin(perpAngle) * (12 / camera.zoom);
+      const badgeSize = 16 / camera.zoom;
+      
+      ctx.globalAlpha = bothVisible ? 0.9 : 0.3;
+      ctx.beginPath();
+      ctx.arc(badgeX, badgeY, badgeSize / 2, 0, Math.PI * 2);
+      ctx.fillStyle = ctx.strokeStyle;
+      ctx.fill();
+      
+      // Count text
+      ctx.fillStyle = '#1a1a1e';
+      ctx.font = `bold ${10 / camera.zoom}px -apple-system, system-ui, sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(count.toString(), badgeX, badgeY);
+    }
+  }
+
+  ctx.globalAlpha = 1;
+
+  // Draw nodes
+  for (const n of nodes) {
+    // Skip hidden nodes during search
+    if (searchTerm && n.visible === false) continue;
+    
+    const x = n.x - NODE_W / 2, y = n.y - NODE_H / 2;
+    const isHovered = n === hoveredNode, isSelected = n === selectedNode;
+
+    ctx.globalAlpha = n.highlighted ? 1 : 0.12;
+
+    // Shadow
+    ctx.shadowColor = 'rgba(0,0,0,0.4)';
+    ctx.shadowBlur = isHovered ? 16 : 8;
+    ctx.shadowOffsetY = 2;
+
+    // Background
+    ctx.beginPath(); roundRect(ctx, x, y, NODE_W, NODE_H, 10);
+    ctx.fillStyle = isSelected ? '#35353b' : isHovered ? '#303036' : '#242428';
+    ctx.fill();
+
+    ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
+
+    // Border
+    ctx.strokeStyle = isSelected ? n.color : isHovered ? n.color : '#3a3a40';
+    ctx.lineWidth = (isSelected ? 2 : 1) / camera.zoom;
+    ctx.stroke();
+
+    // Left accent bar
+    ctx.beginPath();
+    ctx.roundRect(x + 4, y + 8, 3, NODE_H - 16, 2);
+    ctx.fillStyle = n.color;
+    ctx.fill();
+
+    // Title - scales with zoom
+    const fs = 14;
+    ctx.font = `600 ${fs}px -apple-system, system-ui, sans-serif`;
+    ctx.fillStyle = '#e8e4df';
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'left';
+    const displayName = n.class_name || n.filename.replace('.gd', '');
+    ctx.fillText(displayName, x + 16, y + NODE_H / 2 - fs * 0.45);
+
+    // Subtitle with colored stats - scales with zoom
+    const ss = 10.5;
+    const varCount = n.variables ? n.variables.length : 0;
+    const funcCount = n.functions ? n.functions.length : 0;
+    const sigCount = n.signals ? n.signals.length : 0;
+    
+    // Draw subtitle parts with colors
+    ctx.font = `${ss}px -apple-system, system-ui, sans-serif`;
+    const subY = y + NODE_H / 2 + fs * 0.65;
+    let subX = x + 16;
+    
+    // Extends
+    ctx.fillStyle = '#706c66';
+    const extendsText = (n.extends || 'Node') + ' · ';
+    ctx.fillText(extendsText, subX, subY);
+    subX += ctx.measureText(extendsText).width;
+    
+    // Functions (cyan/teal)
+    ctx.fillStyle = '#89dceb';
+    ctx.fillText(funcCount + 'f', subX, subY);
+    subX += ctx.measureText(funcCount + 'f').width;
+    
+    // Space
+    ctx.fillStyle = '#706c66';
+    ctx.fillText(' ', subX, subY);
+    subX += ctx.measureText(' ').width;
+    
+    // Variables (purple)
+    ctx.fillStyle = '#cba6f7';
+    ctx.fillText(varCount + 'v', subX, subY);
+    subX += ctx.measureText(varCount + 'v').width;
+    
+    // Space
+    ctx.fillStyle = '#706c66';
+    ctx.fillText(' ', subX, subY);
+    subX += ctx.measureText(' ').width;
+    
+    // Signals (green)
+    ctx.fillStyle = '#a6e3a1';
+    ctx.fillText(sigCount + 's', subX, subY);
+    subX += ctx.measureText(sigCount + 's').width;
+    
+    // Separator
+    ctx.fillStyle = '#706c66';
+    ctx.fillText(' · ', subX, subY);
+    subX += ctx.measureText(' · ').width;
+    
+    // Lines (yellow/amber)
+    ctx.fillStyle = '#f9e2af';
+    ctx.fillText(n.line_count + 'L', subX, subY);
+  }
+
+  ctx.globalAlpha = 1;
+  ctx.restore();
+}
+
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+}
+
+function hitTest(wx, wy) {
+  for (let i = nodes.length - 1; i >= 0; i--) {
+    const n = nodes[i];
+    // Skip hidden nodes during search
+    if (searchTerm && n.visible === false) continue;
+    if (wx >= n.x - NODE_W / 2 && wx <= n.x + NODE_W / 2 &&
+        wy >= n.y - NODE_H / 2 && wy <= n.y + NODE_H / 2) return n;
+  }
+  return null;
+}
+
+// ---- GDScript Syntax Highlighting (Godot 4 colors) ----
+// Using a tokenizer approach to avoid regex conflicts
+const GD_KEYWORDS = new Set([
+  'var', 'func', 'signal', 'class_name', 'extends', 'class', 'enum', 'const',
+  'if', 'elif', 'else', 'for', 'while', 'match', 'break', 'continue', 'pass', 'return',
+  'and', 'or', 'not', 'in', 'is', 'as', 'self', 'super', 'true', 'false', 'null',
+  'void', 'await', 'yield', 'static', 'preload', 'load'
+]);
+
+const GD_TYPES = new Set([
+  'int', 'float', 'bool', 'String', 'Vector2', 'Vector3', 'Vector4', 
+  'Color', 'Array', 'Dictionary', 'Object', 'Node', 'Node2D', 'Node3D',
+  'Control', 'Resource', 'Variant', 'void'
+]);
+
+function highlightGDScript(code) {
+  const tokens = [];
+  let i = 0;
+  
+  while (i < code.length) {
+    const ch = code[i];
+    const rest = code.slice(i);
+    
+    // Comments
+    if (ch === '#') {
+      const end = code.indexOf('\n', i);
+      const comment = end === -1 ? code.slice(i) : code.slice(i, end);
+      tokens.push({ type: 'comment', text: comment });
+      i += comment.length;
+      continue;
+    }
+    
+    // Strings
+    if (ch === '"' || ch === "'") {
+      let j = i + 1;
+      while (j < code.length && code[j] !== ch) {
+        if (code[j] === '\\') j++; // skip escaped char
+        j++;
+      }
+      const str = code.slice(i, j + 1);
+      tokens.push({ type: 'string', text: str });
+      i = j + 1;
+      continue;
+    }
+    
+    // Annotations (@export, @onready, etc.)
+    if (ch === '@') {
+      const match = rest.match(/^@\w+/);
+      if (match) {
+        tokens.push({ type: 'annotation', text: match[0] });
+        i += match[0].length;
+        continue;
+      }
+    }
+    
+    // Arrow ->
+    if (rest.startsWith('->')) {
+      tokens.push({ type: 'arrow', text: '->' });
+      i += 2;
+      continue;
+    }
+    
+    // Numbers
+    if (/\d/.test(ch)) {
+      const match = rest.match(/^\d+\.?\d*/);
+      if (match) {
+        tokens.push({ type: 'number', text: match[0] });
+        i += match[0].length;
+        continue;
+      }
+    }
+    
+    // Words (identifiers, keywords, types, function calls)
+    if (/[a-zA-Z_]/.test(ch)) {
+      const match = rest.match(/^[a-zA-Z_]\w*/);
+      if (match) {
+        const word = match[0];
+        const afterWord = code.slice(i + word.length);
+        const isCallable = /^\s*\(/.test(afterWord);  // followed by (
+        
+        let type = 'identifier';  // default: white for variables
+        if (GD_KEYWORDS.has(word)) type = 'keyword';
+        else if (GD_TYPES.has(word) || /^[A-Z]/.test(word)) type = 'type';
+        else if (isCallable) type = 'function';  // function/method calls
+        
+        tokens.push({ type, text: word });
+        i += word.length;
+        continue;
+      }
+    }
+    
+    // Everything else (operators, punctuation, whitespace)
+    tokens.push({ type: 'plain', text: ch });
+    i++;
+  }
+  
+  // Convert tokens to HTML with Godot-like colors
+  return tokens.map(t => {
+    const escaped = t.text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    switch (t.type) {
+      case 'keyword':    return `<span style="color:#FF7085">${escaped}</span>`;      // Pink/red
+      case 'type':       return `<span style="color:#8EFFDA">${escaped}</span>`;      // Teal/mint  
+      case 'function':   return `<span style="color:#66E6FF">${escaped}</span>`;      // Cyan (function calls)
+      case 'string':     return `<span style="color:#FFE566">${escaped}</span>`;      // Yellow
+      case 'number':     return `<span style="color:#A3FFB4">${escaped}</span>`;      // Green
+      case 'comment':    return `<span style="color:#9A9EA6">${escaped}</span>`;      // Gray
+      case 'annotation': return `<span style="color:#FFB373">${escaped}</span>`;      // Orange
+      case 'arrow':      return `<span style="color:#ABC8FF">${escaped}</span>`;      // Light blue
+      case 'identifier': return `<span style="color:#CDCFD2">${escaped}</span>`;      // White/light gray (variables)
+      default:           return escaped;
+    }
+  }).join('');
+}
+
+// ---- Detail Panel ----
+function openPanel(node) {
+  selectedNode = node;
+
+  document.getElementById('panel-title').textContent = node.class_name || node.filename.replace('.gd', '');
+  document.getElementById('panel-path').textContent = node.path;
+
+  let html = '';
+
+  // Description
+  if (node.description) {
+    html += `<div class="desc-block">${esc(node.description)}</div>`;
+  }
+
+  // Meta badges
+  html += `<div class="meta-row">`;
+  html += `<div class="meta-badge"><span>${node.line_count}</span> lines</div>`;
+  html += `<div class="meta-badge">extends <span>${node.extends || 'Node'}</span></div>`;
+  if (node.class_name) html += `<div class="meta-badge">class <span>${esc(node.class_name)}</span></div>`;
+  html += `</div>`;
+
+  // Variables - split into @export and regular
+  const exportVars = (node.variables || []).filter(v => v.exported);
+  const regularVars = (node.variables || []).filter(v => !v.exported);
+
+  if (exportVars.length > 0) {
+    html += `<div class="section resizable">`;
+    html += `<div class="section-header">Exports <span class="section-count">${exportVars.length}</span></div>`;
+    html += `<ul class="item-list">`;
+    for (const v of exportVars) {
+      html += `<li>`;
+      html += `<span class="exp">@export</span> `;
+      html += `<span class="kw">var</span> ${esc(v.name)}`;
+      if (v.type) html += `<span class="ret">:</span> <span class="tp">${esc(v.type)}</span>`;
+      if (v.default) html += ` <span class="ret">=</span> <span class="num">${esc(v.default)}</span>`;
+      html += `</li>`;
+    }
+    html += `</ul><div class="section-resize-handle"></div></div>`;
+  }
+
+  if (regularVars.length > 0) {
+    html += `<div class="section resizable">`;
+    html += `<div class="section-header">Variables <span class="section-count">${regularVars.length}</span></div>`;
+    html += `<ul class="item-list">`;
+    for (const v of regularVars) {
+      html += `<li>`;
+      html += `<span class="kw">var</span> ${esc(v.name)}`;
+      if (v.type) html += `<span class="ret">:</span> <span class="tp">${esc(v.type)}</span>`;
+      if (v.default) html += ` <span class="ret">=</span> <span class="num">${esc(v.default)}</span>`;
+      html += `</li>`;
+    }
+    html += `</ul><div class="section-resize-handle"></div></div>`;
+  }
+
+  // Functions
+  if ((node.functions || []).length > 0) {
+    html += `<div class="section resizable" style="max-height:400px">`;
+    html += `<div class="section-header">Functions <span class="section-count">${node.functions.length}</span></div>`;
+    html += `<ul class="item-list">`;
+    for (let fi = 0; fi < node.functions.length; fi++) {
+      const f = node.functions[fi];
+      html += `<li class="clickable" onclick="toggleFunc(${fi})">`;
+      html += `<span class="kw">func</span> <span class="fn">${esc(f.name)}</span>`;
+      html += `<span class="param">(${esc(f.params)})</span>`;
+      if (f.return_type) html += ` <span class="ret">&rarr;</span> <span class="tp">${esc(f.return_type)}</span>`;
+      html += `<span style="margin-left:auto;display:flex;gap:4px">`;
+      if (f.body_lines) html += `<span class="tag tag-lines">${f.body_lines}L</span>`;
+      html += `</span>`;
+      html += `</li>`;
+      html += `<div id="func-viewer-${fi}" class="func-viewer" style="display:none"></div>`;
+    }
+    html += `</ul><div class="section-resize-handle"></div></div>`;
+  }
+
+  // Signals
+  if ((node.signals || []).length > 0) {
+    html += `<div class="section">`;
+    html += `<div class="section-header">Signals <span class="section-count">${node.signals.length}</span></div>`;
+    html += `<ul class="item-list">`;
+    for (const s of node.signals) {
+      const sigName = typeof s === 'string' ? s : s.name;
+      const sigParams = typeof s === 'object' ? s.params : '';
+      html += `<li>`;
+      html += `<span class="kw">signal</span> <span class="sig">${esc(sigName)}</span>`;
+      if (sigParams) html += `<span class="param">(${esc(sigParams)})</span>`;
+      html += `<span class="tag tag-signal" style="margin-left:auto">signal</span>`;
+      html += `</li>`;
+    }
+    html += `</ul></div>`;
+  }
+
+  // Connections - group by target and show signal names
+  const related = edges.filter(e => e.from === node.path || e.to === node.path);
+  if (related.length > 0) {
+    // Group connections by target and type
+    const connGroups = {};
+    for (const e of related) {
+      const other = e.from === node.path ? e.to : e.from;
+      const dir = e.from === node.path ? 'out' : 'in';
+      const key = `${other}-${e.type}-${dir}`;
+      if (!connGroups[key]) {
+        connGroups[key] = { other, type: e.type, dir, signals: [] };
+      }
+      if (e.signal_name) connGroups[key].signals.push(e.signal_name);
+    }
+    
+    html += `<div class="section">`;
+    html += `<div class="section-header">Connections <span class="section-count">${related.length}</span></div>`;
+    html += `<ul class="item-list">`;
+    
+    for (const key of Object.keys(connGroups)) {
+      const g = connGroups[key];
+      const dirIcon = g.dir === 'out' ? '→' : '←';
+      const color = g.type === 'extends' ? 'var(--edge-extends)' : g.type === 'preload' ? 'var(--edge-preload)' : 'var(--edge-signal)';
+      const filename = g.other.split('/').pop();
+      
+      html += `<li style="flex-wrap:wrap">`;
+      html += `${dirIcon} <span style="color:${color}">${esc(filename)}</span> <span class="ret">(${g.type})</span>`;
+      
+      // Show signal names if this is a signal connection
+      if (g.type === 'signal' && g.signals.length > 0) {
+        const uniqueSignals = [...new Set(g.signals)];
+        html += `<div style="width:100%;margin-top:4px;padding-left:20px;font-size:11px;color:var(--text-muted)">`;
+        html += uniqueSignals.map(s => `<span class="sig">${esc(s)}</span>`).join(', ');
+        html += `</div>`;
+      }
+      html += `</li>`;
+    }
+    html += `</ul></div>`;
+  }
+
+  // Preloads
+  if ((node.preloads || []).length > 0) {
+    html += `<div class="section">`;
+    html += `<div class="section-header">Preloads <span class="section-count">${node.preloads.length}</span></div>`;
+    html += `<ul class="item-list">`;
+    for (const p of node.preloads) {
+      html += `<li><span class="str">"${esc(p)}"</span></li>`;
+    }
+    html += `</ul></div>`;
+  }
+
+  document.getElementById('panel-body').innerHTML = html;
+  detailPanel.classList.add('open');
+  initSectionResizing();
+  draw();
+}
+
+// Toggle function body viewer
+window.toggleFunc = function(fi) {
+  const viewer = document.getElementById(`func-viewer-${fi}`);
+  if (!viewer) return;
+
+  if (viewer.style.display !== 'none') {
+    viewer.style.display = 'none';
+    viewer.innerHTML = '';
+    return;
+  }
+
+  const f = selectedNode.functions[fi];
+  if (!f.body) return;
+
+  const lines = f.body.split('\n');
+  let codeHtml = '';
+  for (let i = 0; i < lines.length; i++) {
+    const lineNum = (f.line || 1) + i;
+    codeHtml += `<div class="code-line"><span class="line-num">${lineNum}</span><span class="line-content">${highlightGDScript(lines[i])}</span></div>`;
+  }
+
+  viewer.innerHTML = `
+    <div class="func-viewer-header">
+      <span><span class="func-title">${esc(f.name)}</span> · ${lines.length} lines</span>
+      <button class="func-viewer-close" onclick="toggleFunc(${fi})">&times;</button>
+    </div>
+    <div class="func-viewer-code">${codeHtml}</div>
+  `;
+  viewer.style.display = 'block';
+};
+
+function closePanel() {
+  selectedNode = null;
+  detailPanel.classList.remove('open');
+  draw();
+}
+
+// Section resizing
+let resizingSection = null;
+let resizeStartY = 0;
+let resizeStartHeight = 0;
+
+function initSectionResizing() {
+  document.querySelectorAll('.section-resize-handle').forEach(handle => {
+    handle.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      resizingSection = handle.parentElement;
+      resizingSection.classList.add('resizing');
+      resizeStartY = e.clientY;
+      resizeStartHeight = resizingSection.offsetHeight;
+      document.addEventListener('mousemove', onSectionResize);
+      document.addEventListener('mouseup', onSectionResizeEnd);
+    });
+  });
+}
+
+function onSectionResize(e) {
+  if (!resizingSection) return;
+  const dy = e.clientY - resizeStartY;
+  const newHeight = Math.max(60, Math.min(600, resizeStartHeight + dy));
+  resizingSection.style.maxHeight = newHeight + 'px';
+}
+
+function onSectionResizeEnd() {
+  if (resizingSection) {
+    resizingSection.classList.remove('resizing');
+    resizingSection = null;
+  }
+  document.removeEventListener('mousemove', onSectionResize);
+  document.removeEventListener('mouseup', onSectionResizeEnd);
+}
+
+function esc(s) {
+  return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// ---- Events ----
+const DRAG_THRESHOLD = 5; // pixels - minimum movement to count as drag
+
+canvas.addEventListener('mousedown', (e) => {
+  const w = screenToWorld(e.clientX, e.clientY);
+  const hit = hitTest(w.x, w.y);
+
+  if (hit && e.button === 0) {
+    dragging = { 
+      type: 'node', 
+      node: hit, 
+      offX: hit.x - w.x, 
+      offY: hit.y - w.y,
+      startScreenX: e.clientX,
+      startScreenY: e.clientY,
+      moved: false
+    };
+    canvas.classList.add('dragging');
+  } else {
+    dragging = { type: 'pan', startX: e.clientX, startY: e.clientY, camX: camera.x, camY: camera.y };
+    canvas.classList.add('dragging');
+  }
+});
+
+canvas.addEventListener('mousemove', (e) => {
+  if (dragging) {
+    if (dragging.type === 'node') {
+      const w = screenToWorld(e.clientX, e.clientY);
+      dragging.node.x = w.x + dragging.offX;
+      dragging.node.y = w.y + dragging.offY;
+      
+      // Check if moved past threshold
+      const dx = Math.abs(e.clientX - dragging.startScreenX);
+      const dy = Math.abs(e.clientY - dragging.startScreenY);
+      if (dx > DRAG_THRESHOLD || dy > DRAG_THRESHOLD) {
+        dragging.moved = true;
+      }
+    } else {
+      const dx = (e.clientX - dragging.startX) / camera.zoom;
+      const dy = (e.clientY - dragging.startY) / camera.zoom;
+      camera.x = dragging.camX - dx;
+      camera.y = dragging.camY - dy;
+    }
+    draw();
+  } else {
+    const w = screenToWorld(e.clientX, e.clientY);
+    const prev = hoveredNode;
+    hoveredNode = hitTest(w.x, w.y);
+    if (hoveredNode !== prev) {
+      canvas.style.cursor = hoveredNode ? 'pointer' : 'grab';
+      draw();
+    }
+  }
+});
+
+canvas.addEventListener('mouseup', (e) => {
+  if (dragging && dragging.type === 'node' && !dragging.moved) {
+    openPanel(dragging.node);
+  }
+  canvas.classList.remove('dragging');
+  dragging = null;
+});
+
+// Prevent click from also opening panel (mouseup already handles it)
+canvas.addEventListener('click', (e) => {
+  // Only handle clicks on empty space (not nodes) - nodes are handled by mouseup
+});
+
+canvas.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
+  const newZoom = Math.max(0.1, Math.min(5, camera.zoom * zoomFactor));
+  const wx = (e.clientX - W / 2) / camera.zoom + camera.x;
+  const wy = (e.clientY - H / 2) / camera.zoom + camera.y;
+  camera.zoom = newZoom;
+  camera.x = wx - (e.clientX - W / 2) / camera.zoom;
+  camera.y = wy - (e.clientY - H / 2) / camera.zoom;
+  updateZoomIndicator();
+  draw();
+}, { passive: false });
+
+searchInput.addEventListener('input', () => {
+  searchTerm = searchInput.value.toLowerCase().trim();
+  nodes.forEach(n => {
+    if (!searchTerm) { n.highlighted = true; n.visible = true; return; }
+    const matches = n.filename.toLowerCase().includes(searchTerm) ||
+      (n.class_name && n.class_name.toLowerCase().includes(searchTerm)) ||
+      (n.description && n.description.toLowerCase().includes(searchTerm)) ||
+      (n.path && n.path.toLowerCase().includes(searchTerm));
+    n.highlighted = matches;
+    n.visible = matches;
+  });
+  
+  const matchingNodes = nodes.filter(n => n.highlighted);
+  const count = matchingNodes.length;
+  statsEl.textContent = searchTerm ? `${count}/${nodes.length}` : `${nodes.length} scripts · ${edges.length} connections`;
+  
+  // If there are matching results, center the view on them
+  if (searchTerm && matchingNodes.length > 0) {
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    matchingNodes.forEach(n => { 
+      minX = Math.min(minX, n.x); 
+      maxX = Math.max(maxX, n.x); 
+      minY = Math.min(minY, n.y); 
+      maxY = Math.max(maxY, n.y); 
+    });
+    camera.x = (minX + maxX) / 2;
+    camera.y = (minY + maxY) / 2;
+    
+    // Adjust zoom if needed to fit all matching nodes
+    if (matchingNodes.length === 1) {
+      camera.zoom = Math.max(defaultZoom, 1);
+    }
+    updateZoomIndicator();
+  }
+  
+  draw();
+});
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') closePanel();
+  if (e.key === '/' && document.activeElement !== searchInput) { e.preventDefault(); searchInput.focus(); }
+});
+
+// ---- Init ----
+window.addEventListener('resize', () => { resize(); draw(); });
+resize();
+statsEl.textContent = `${nodes.length} scripts · ${edges.length} connections`;
+
+if (nodes.length === 0) {
+  ctx.font = '18px -apple-system, system-ui, sans-serif';
+  ctx.fillStyle = '#706c66';
+  ctx.textAlign = 'center';
+  ctx.fillText('No scripts found in project', W / 2, H / 2);
+  zoomIndicator.style.display = 'none';
+} else {
+  initLayout();
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  nodes.forEach(n => { minX = Math.min(minX, n.x); maxX = Math.max(maxX, n.x); minY = Math.min(minY, n.y); maxY = Math.max(maxY, n.y); });
+  camera.x = (minX + maxX) / 2;
+  camera.y = (minY + maxY) / 2;
+  const spanX = (maxX - minX) + NODE_W * 2;
+  const spanY = (maxY - minY) + NODE_H * 2;
+  camera.zoom = Math.min(1.5, W / spanX, H / spanY) * 0.85;
+  defaultZoom = camera.zoom;  // Store the default zoom level
+  updateZoomIndicator();
+  draw();
+}
+</script>
+</body>
+</html>

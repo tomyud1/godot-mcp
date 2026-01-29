@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "godot": {
+      "command": "node",
+      "args": ["/Users/tomeryud/godot-mcp/mcp-server/dist/index.js"]
+    }
+  }
+}
