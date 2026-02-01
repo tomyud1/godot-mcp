@@ -84,6 +84,172 @@ canvas.dragging { cursor: grabbing; }
 
 #search-bar svg { flex-shrink: 0; }
 
+/* View tabs */
+#view-tabs {
+  position: fixed;
+  top: 16px;
+  left: 16px;
+  z-index: 100;
+  display: flex;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 4px;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.3);
+}
+
+#view-tabs button {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 13px;
+  padding: 8px 16px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s;
+  font-family: inherit;
+}
+
+#view-tabs button:hover { color: var(--text-secondary); background: var(--bg-hover); }
+#view-tabs button.active { color: var(--text-primary); background: var(--bg-tertiary); }
+
+/* Context menu */
+#context-menu {
+  position: fixed;
+  z-index: 500;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 0;
+  min-width: 180px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+  display: none;
+}
+
+#context-menu.visible { display: block; }
+
+#context-menu .menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+#context-menu .menu-item:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+#context-menu .menu-item svg { flex-shrink: 0; opacity: 0.7; }
+
+#context-menu .menu-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 6px 0;
+}
+
+/* Modal */
+.modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0,0,0,0.6);
+  z-index: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.modal-content {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  width: 400px;
+  box-shadow: 0 16px 64px rgba(0,0,0,0.5);
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+}
+
+.modal-header h3 {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.modal-body {
+  padding: 20px;
+}
+
+.modal-body .form-group {
+  margin-bottom: 16px;
+}
+
+.modal-body .form-group:last-child { margin-bottom: 0; }
+
+.modal-body label {
+  display: block;
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+
+.modal-body input, .modal-body select {
+  width: 100%;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 12px;
+  font-size: 14px;
+  color: var(--text-primary);
+  font-family: 'SF Mono', Monaco, monospace;
+}
+
+.modal-body input:focus, .modal-body select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 16px 20px;
+  border-top: 1px solid var(--border);
+}
+
+.modal-footer button {
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+  border: 1px solid var(--border);
+}
+
+.modal-footer .cancel {
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+}
+
+.modal-footer .confirm {
+  background: var(--accent);
+  color: var(--bg-primary);
+  border-color: var(--accent);
+}
+
+.modal-footer .confirm:hover { background: var(--accent-light); }
+
 /* Legend */
 #legend {
   position: fixed;
@@ -154,7 +320,7 @@ canvas.dragging { cursor: grabbing; }
   top: 0;
   width: 8px;
   height: 100%;
-  cursor: ew-resize;
+  cursor: col-resize;
   z-index: 201;
 }
 #panel-resize-handle::after {
@@ -257,24 +423,17 @@ canvas.dragging { cursor: grabbing; }
 
 /* Sections */
 .section {
-  margin-bottom: 12px;
+  margin-bottom: 16px;
 }
 
-.section.resizable {
-  display: flex;
-  flex-direction: column;
-}
-
-.section.resizable .item-list {
-  max-height: 200px;
-  overflow-y: auto;
-  flex-shrink: 1;
+.section .item-list {
+  /* No max-height - show all items */
 }
 
 .section-resize-handle {
   position: relative;
   height: 12px;
-  cursor: ns-resize;
+  cursor: row-resize;
   z-index: 5;
   margin: 4px 0;
   display: flex;
@@ -349,6 +508,7 @@ canvas.dragging { cursor: grabbing; }
   flex-shrink: 0;
 }
 .item-list li:hover .item-actions { opacity: 1; }
+.item-list li:hover .delete { opacity: 1 !important; }
 .item-actions button {
   background: var(--bg-tertiary);
   border: 1px solid var(--border);
@@ -387,75 +547,258 @@ canvas.dragging { cursor: grabbing; }
   opacity: 0.5;
 }
 
-/* Usage panel (like Ctrl+F results) */
-.usage-panel {
-  background: var(--bg-tertiary);
+/* @onready badge */
+.onready-badge {
+  display: inline-block;
+  font-size: 9px;
+  padding: 2px 5px;
+  background: rgba(137, 180, 250, 0.2);
+  color: #89b4fa;
+  border-radius: 3px;
+  margin-right: 6px;
+  font-weight: 500;
+  cursor: pointer;
+  user-select: none;
+}
+.onready-badge:hover { background: rgba(137, 180, 250, 0.3); }
+.onready-badge.inactive {
+  background: rgba(255,255,255,0.05);
+  color: var(--text-muted);
+  opacity: 0.5;
+}
+
+/* Floating usage panel (to the left of detail panel) */
+#usage-float-panel {
+  position: fixed;
+  top: 80px;
+  right: 480px;
+  width: 380px;
+  min-width: 300px;
+  min-height: 250px;
+  max-height: calc(100vh - 100px);
+  background: var(--bg-secondary);
   border: 1px solid var(--border);
-  border-radius: 8px;
-  margin: 8px 0;
+  border-radius: 12px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+  z-index: 150;
+  display: none;
+  flex-direction: column;
   overflow: hidden;
 }
-.usage-panel-header {
+
+#usage-float-panel.visible { display: flex; }
+#usage-float-panel.dragging { user-select: none; }
+
+/* Resize handle */
+#usage-float-panel .ufp-resize {
+  position: absolute;
+  bottom: 0;
+  right: 0;
+  width: 16px;
+  height: 16px;
+  cursor: nwse-resize;
+  z-index: 10;
+}
+#usage-float-panel .ufp-resize::after {
+  content: '';
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  width: 8px;
+  height: 8px;
+  border-right: 2px solid var(--border);
+  border-bottom: 2px solid var(--border);
+  opacity: 0.5;
+}
+#usage-float-panel .ufp-resize:hover::after { opacity: 1; }
+
+#usage-float-panel .ufp-header {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
-  padding: 8px 12px;
-  background: rgba(243, 139, 168, 0.15);
+  gap: 12px;
+  padding: 12px 16px;
+  background: rgba(243, 139, 168, 0.12);
   border-bottom: 1px solid var(--border);
-  font-size: 12px;
-  color: #f38ba8;
+  cursor: grab;
 }
-.usage-panel-header .usage-nav {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.usage-panel-header .usage-nav button {
-  background: transparent;
-  border: 1px solid var(--border);
-  color: var(--text-secondary);
-  width: 24px;
-  height: 24px;
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 12px;
-}
-.usage-panel-header .usage-nav button:hover { background: var(--bg-hover); }
-.usage-panel-list {
-  max-height: 150px;
-  overflow-y: auto;
-}
-.usage-panel-item {
-  display: flex;
-  align-items: center;
-  padding: 6px 12px;
-  font-size: 11px;
-  font-family: 'SF Mono', monospace;
-  cursor: pointer;
-  border-bottom: 1px solid var(--border);
-}
-.usage-panel-item:last-child { border-bottom: none; }
-.usage-panel-item:hover { background: var(--bg-hover); }
-.usage-panel-item.active { background: rgba(212, 162, 127, 0.15); }
-.usage-panel-item .file { color: var(--text-muted); margin-right: 8px; }
-.usage-panel-item .line { color: var(--accent); margin-right: 8px; }
-.usage-panel-item .code { color: var(--text-secondary); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.usage-panel-actions {
-  display: flex;
-  gap: 8px;
-  padding: 8px 12px;
-  background: var(--bg-secondary);
-}
-.usage-panel-actions button {
+
+#usage-float-panel .ufp-header:active { cursor: grabbing; }
+
+#usage-float-panel .ufp-header .ufp-info {
   flex: 1;
-  padding: 6px 12px;
+  min-width: 0;
+}
+
+#usage-float-panel .ufp-header .ufp-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #f38ba8;
+  line-height: 1.3;
+}
+
+#usage-float-panel .ufp-header .ufp-count {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-top: 4px;
+  line-height: 1.3;
+}
+
+#usage-float-panel .ufp-header .ufp-count .count-num {
+  font-weight: 700;
+  font-size: 14px;
+  color: #fab387;
+}
+
+#usage-float-panel .ufp-header .ufp-buttons {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+#usage-float-panel .ufp-header .refresh-btn,
+#usage-float-panel .ufp-header .close-btn {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  width: 28px;
+  height: 28px;
   border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+#usage-float-panel .ufp-header .close-btn {
+  font-size: 18px;
+}
+
+#usage-float-panel .ufp-header .refresh-btn:hover,
+#usage-float-panel .ufp-header .close-btn:hover { 
+  background: var(--bg-hover); 
+  color: var(--text-primary);
+}
+
+#usage-float-panel .ufp-list {
+  flex: 1;
+  overflow-y: auto;
+  max-height: 300px;
+}
+
+#usage-float-panel .ufp-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 16px;
+  font-size: 12px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--border);
+  transition: background 0.1s;
+}
+
+#usage-float-panel .ufp-item:last-child { border-bottom: none; }
+#usage-float-panel .ufp-item:hover { background: var(--bg-hover); }
+#usage-float-panel .ufp-item.active { background: rgba(212, 162, 127, 0.2); border-left: 3px solid var(--accent); margin-left: -3px; padding-left: 19px; }
+
+#usage-float-panel .ufp-item .ufp-loc {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+#usage-float-panel .ufp-item .ufp-file {
+  color: var(--text-muted);
   font-size: 11px;
+}
+
+#usage-float-panel .ufp-item .ufp-func {
+  color: #89dceb;
+  font-weight: 600;
+  font-size: 12px;
+}
+
+#usage-float-panel .ufp-item .ufp-func::before {
+  content: 'func ';
+  color: var(--gd-keyword);
+  font-weight: normal;
+}
+
+#usage-float-panel .ufp-item .ufp-line {
+  color: var(--text-muted);
+  font-size: 10px;
+  margin-left: auto;
+}
+
+#usage-float-panel .ufp-item .ufp-code {
+  color: var(--text-secondary);
+  font-family: 'SF Mono', Monaco, monospace;
+  font-size: 11px;
+  background: var(--bg-tertiary);
+  padding: 6px 10px;
+  border-radius: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#usage-float-panel .ufp-item .ufp-code .highlight {
+  color: #f38ba8;
+  font-weight: 600;
+  background: rgba(243, 139, 168, 0.15);
+  padding: 1px 3px;
+  border-radius: 2px;
+}
+
+#usage-float-panel .ufp-item .ufp-file {
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+#usage-float-panel .ufp-actions {
+  display: flex;
+  gap: 10px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-tertiary);
+}
+
+#usage-float-panel .ufp-actions button {
+  flex: 1;
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 12px;
   cursor: pointer;
   border: 1px solid var(--border);
+  font-weight: 500;
 }
-.usage-panel-actions .cancel { background: var(--bg-tertiary); color: var(--text-secondary); }
-.usage-panel-actions .delete { background: #3d2020; color: #f38ba8; border-color: #f38ba8; }
+
+#usage-float-panel .ufp-actions .cancel {
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+}
+
+#usage-float-panel .ufp-actions .delete {
+  background: rgba(243, 139, 168, 0.2);
+  color: #f38ba8;
+  border-color: rgba(243, 139, 168, 0.4);
+}
+
+#usage-float-panel .ufp-actions .delete:hover {
+  background: rgba(243, 139, 168, 0.3);
+}
+
+/* Highlight line in function viewer */
+.code-line-highlight {
+  background: rgba(243, 139, 168, 0.25) !important;
+  border-left: 3px solid #f38ba8 !important;
+  margin-left: -14px !important;
+  padding-left: 11px !important;
+}
 
 /* Add item form */
 .add-item-btn {
@@ -666,9 +1009,10 @@ canvas.dragging { cursor: grabbing; }
 .func-viewer-footer .save-btn.active:hover { background: var(--accent-light); }
 
 .code-line {
-  display: flex;
+  display: block;
   padding: 0 14px;
-  min-height: 20px;
+  min-height: 1.4em;
+  white-space: pre;
 }
 
 .code-line:hover { background: rgba(255,255,255,0.03); }
@@ -717,10 +1061,162 @@ canvas.dragging { cursor: grabbing; }
   <div class="panel-body" id="panel-body"></div>
 </div>
 
+<!-- View Tabs -->
+<div id="view-tabs">
+  <button class="active" onclick="switchView('scripts')">Scripts</button>
+  <button onclick="switchView('scenes')">Scenes</button>
+</div>
+
+<!-- Context Menu -->
+<div id="context-menu">
+  <div class="menu-item" onclick="createNewScript()">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+      <polyline points="14,2 14,8 20,8"/>
+      <line x1="12" y1="18" x2="12" y2="12"/>
+      <line x1="9" y1="15" x2="15" y2="15"/>
+    </svg>
+    New Script
+  </div>
+  <div class="menu-divider"></div>
+  <div class="menu-item" onclick="refreshProject()">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M23 4v6h-6M1 20v-6h6"/>
+      <path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/>
+    </svg>
+    Refresh
+  </div>
+</div>
+
+<!-- Floating Usage Panel -->
+<div id="usage-float-panel">
+  <div class="ufp-header" id="ufp-header">
+    <div class="ufp-info">
+      <div class="ufp-title" id="ufp-title">⚠ Delete Variable</div>
+      <div class="ufp-count" id="ufp-count"></div>
+    </div>
+    <div class="ufp-buttons">
+      <button class="refresh-btn" onclick="refreshUsages()" title="Re-scan for usages">↻</button>
+      <button class="close-btn" onclick="closeUsagePanel()" title="Cancel">×</button>
+    </div>
+  </div>
+  <div class="ufp-list" id="ufp-list"></div>
+  <div class="ufp-actions">
+    <button class="cancel" onclick="closeUsagePanel()">Cancel</button>
+    <button class="delete" id="ufp-delete-btn">Delete Anyway</button>
+  </div>
+  <div class="ufp-resize" id="ufp-resize"></div>
+</div>
+
+<!-- New Script Modal -->
+<div id="new-script-modal" class="modal" style="display:none">
+  <div class="modal-content">
+    <div class="modal-header">
+      <h3>Create New Script</h3>
+      <button class="close-btn" onclick="closeNewScriptModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label>Script Path</label>
+        <input type="text" id="new-script-path" placeholder="res://scripts/my_script.gd">
+      </div>
+      <div class="form-group">
+        <label>Extends</label>
+        <select id="new-script-extends">
+          <option value="Node">Node</option>
+          <option value="Node2D">Node2D</option>
+          <option value="Node3D">Node3D</option>
+          <option value="CharacterBody2D">CharacterBody2D</option>
+          <option value="CharacterBody3D">CharacterBody3D</option>
+          <option value="RigidBody2D">RigidBody2D</option>
+          <option value="Area2D">Area2D</option>
+          <option value="Control">Control</option>
+          <option value="Resource">Resource</option>
+          <option value="RefCounted">RefCounted</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Class Name (optional)</label>
+        <input type="text" id="new-script-classname" placeholder="MyClass">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="cancel" onclick="closeNewScriptModal()">Cancel</button>
+      <button class="confirm" onclick="submitNewScript()">Create</button>
+    </div>
+  </div>
+</div>
+
 <canvas id="canvas"></canvas>
 
 <script>
 const PROJECT_DATA = "%%PROJECT_DATA%%";
+
+// ---- WebSocket for real-time edits ----
+let ws = null;
+let wsConnected = false;
+let pendingRequests = new Map();
+let requestId = 0;
+
+function connectWebSocket() {
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  ws = new WebSocket(`${protocol}//${window.location.host}`);
+  
+  ws.onopen = () => {
+    wsConnected = true;
+    console.log('[visualizer] WebSocket connected');
+  };
+  
+  ws.onclose = () => {
+    wsConnected = false;
+    console.log('[visualizer] WebSocket disconnected, reconnecting...');
+    setTimeout(connectWebSocket, 2000);
+  };
+  
+  ws.onerror = (err) => {
+    console.error('[visualizer] WebSocket error:', err);
+  };
+  
+  ws.onmessage = (event) => {
+    try {
+      const msg = JSON.parse(event.data);
+      if (msg.id && pendingRequests.has(msg.id)) {
+        const { resolve, reject } = pendingRequests.get(msg.id);
+        pendingRequests.delete(msg.id);
+        if (msg.error) {
+          reject(new Error(msg.error));
+        } else {
+          resolve(msg);
+        }
+      }
+    } catch (e) {
+      console.error('[visualizer] Failed to parse message:', e);
+    }
+  };
+}
+
+function sendCommand(command, args) {
+  return new Promise((resolve, reject) => {
+    if (!wsConnected) {
+      reject(new Error('Not connected to server'));
+      return;
+    }
+    const id = String(++requestId);
+    pendingRequests.set(id, { resolve, reject });
+    ws.send(JSON.stringify({ id, command, args }));
+    
+    // Timeout after 10 seconds
+    setTimeout(() => {
+      if (pendingRequests.has(id)) {
+        pendingRequests.delete(id);
+        reject(new Error('Request timeout'));
+      }
+    }, 10000);
+  });
+}
+
+// Connect on load
+connectWebSocket();
 
 // ---- State ----
 const canvas = document.getElementById('canvas');
@@ -1210,7 +1706,7 @@ function openPanel(node) {
   const regularVars = (node.variables || []).filter(v => !v.exported);
 
   // Exports section (always show for adding)
-  html += `<div class="section resizable">`;
+  html += `<div class="section">`;
   html += `<div class="section-header">Exports <span class="section-count">${exportVars.length}</span></div>`;
   html += `<ul class="item-list" id="exports-list">`;
   for (let vi = 0; vi < exportVars.length; vi++) {
@@ -1227,21 +1723,23 @@ function openPanel(node) {
     html += `<button class="delete" onclick="showDeleteUsages(${vi}, true, 'variable')" title="Delete">×</button>`;
     html += `</span>`;
     html += `</li>`;
-    html += `<div id="usage-panel-export-${vi}" class="usage-panel" style="display:none"></div>`;
   }
   html += `</ul>`;
   html += `<div class="add-item-btn" onclick="addNewVariable(true)">`;
   html += `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>`;
   html += `Add export</div>`;
-  html += `<div class="section-resize-handle"></div></div>`;
+  html += `</div>`;
 
   // Variables section (always show for adding)
-  html += `<div class="section resizable">`;
+  html += `<div class="section">`;
   html += `<div class="section-header">Variables <span class="section-count">${regularVars.length}</span></div>`;
   html += `<ul class="item-list" id="vars-list">`;
   for (let vi = 0; vi < regularVars.length; vi++) {
     const v = regularVars[vi];
-    html += `<li data-var-index="${vi}" data-exported="false">`;
+    html += `<li data-var-index="${vi}" data-exported="false" data-onready="${v.onready || false}">`;
+    if (v.onready) {
+      html += `<span class="onready-badge" onclick="toggleOnready(${vi}, false)" title="Click to toggle @onready">@onready</span>`;
+    }
     html += `<span class="kw">var</span> `;
     html += `<span class="editable var-name" contenteditable="true" data-field="name" data-original="${esc(v.name)}">${esc(v.name)}</span>`;
     html += `<span class="ret">:</span> `;
@@ -1249,20 +1747,22 @@ function openPanel(node) {
     html += ` <span class="ret">=</span> `;
     html += `<span class="num editable var-default" contenteditable="true" data-field="default" data-placeholder="value" data-original="${esc(v.default || '')}">${esc(v.default || '')}</span>`;
     html += `<span class="item-actions">`;
+    if (!v.onready) {
+      html += `<button onclick="toggleOnready(${vi}, false)" title="Add @onready" style="font-size:9px;width:auto;padding:0 4px;">⏱</button>`;
+    }
     html += `<button class="delete" onclick="showDeleteUsages(${vi}, false, 'variable')" title="Delete">×</button>`;
     html += `</span>`;
     html += `</li>`;
-    html += `<div id="usage-panel-var-${vi}" class="usage-panel" style="display:none"></div>`;
   }
   html += `</ul>`;
   html += `<div class="add-item-btn" onclick="addNewVariable(false)">`;
   html += `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>`;
   html += `Add variable</div>`;
-  html += `<div class="section-resize-handle"></div></div>`;
+  html += `</div>`;
 
   // Functions
   if ((node.functions || []).length > 0) {
-    html += `<div class="section resizable" style="max-height:400px">`;
+    html += `<div class="section">`;
     html += `<div class="section-header">Functions <span class="section-count">${node.functions.length}</span></div>`;
     html += `<ul class="item-list">`;
     for (let fi = 0; fi < node.functions.length; fi++) {
@@ -1271,13 +1771,14 @@ function openPanel(node) {
       html += `<span class="kw">func</span> <span class="fn">${esc(f.name)}</span>`;
       html += `<span class="param">(${esc(f.params)})</span>`;
       if (f.return_type) html += ` <span class="ret">&rarr;</span> <span class="tp">${esc(f.return_type)}</span>`;
-      html += `<span style="margin-left:auto;display:flex;gap:4px">`;
+      html += `<span style="margin-left:auto;display:flex;gap:4px;align-items:center">`;
       if (f.body_lines) html += `<span class="tag tag-lines">${f.body_lines}L</span>`;
+      html += `<button class="delete" onclick="event.stopPropagation();showDeleteUsages(${fi}, false, 'function')" title="Delete function" style="opacity:0">×</button>`;
       html += `</span>`;
       html += `</li>`;
       html += `<div id="func-viewer-${fi}" class="func-viewer" style="display:none"></div>`;
     }
-    html += `</ul><div class="section-resize-handle"></div></div>`;
+    html += `</ul></div>`;
   }
 
   // Signals section (always show for adding)
@@ -1299,7 +1800,6 @@ function openPanel(node) {
     html += `<button class="delete" onclick="showDeleteUsages(${si}, false, 'signal')" title="Delete">×</button>`;
     html += `</span>`;
     html += `</li>`;
-    html += `<div id="usage-panel-signal-${si}" class="usage-panel" style="display:none"></div>`;
   }
   html += `</ul>`;
   html += `<div class="add-item-btn" onclick="addNewSignal()">`;
@@ -1466,9 +1966,11 @@ function updateHighlight(fi) {
   const highlight = document.getElementById(`highlight-${fi}`);
   if (!textarea || !highlight) return;
   
-  // Highlight each line
+  // Highlight each line, wrap in spans for line-level highlighting
   const lines = textarea.value.split('\n');
-  highlight.innerHTML = lines.map(line => highlightGDScript(line)).join('\n');
+  highlight.innerHTML = lines.map((line, i) => 
+    `<div class="code-line" data-line="${i}">${highlightGDScript(line) || ' '}</div>`
+  ).join('');
 }
 
 // Save function changes back to Godot
@@ -1487,8 +1989,14 @@ async function saveFunction(fi) {
   statusEl.classList.add('visible');
   
   try {
-    // TODO: Send to Godot via MCP
-    // For now, just update local state
+    // Send to Godot
+    await sendCommand('modify_function', {
+      path: scriptPath,
+      name: funcName,
+      body: newCode
+    });
+    
+    // Update local state
     const funcIndex = parseInt(textarea.dataset.funcIndex);
     selectedNode.functions[funcIndex].body = newCode;
     selectedNode.functions[funcIndex].body_lines = newCode.split('\n').length;
@@ -1501,9 +2009,9 @@ async function saveFunction(fi) {
       statusEl.classList.remove('visible');
     }, 2000);
     
-    console.log(`[TODO] Save function "${funcName}" in ${scriptPath}`);
+    console.log(`Saved function "${funcName}" in ${scriptPath}`);
   } catch (err) {
-    statusEl.textContent = 'Error saving!';
+    statusEl.textContent = 'Error: ' + err.message;
     console.error('Failed to save:', err);
   }
 }
@@ -1532,7 +2040,7 @@ function initInlineEditing() {
   });
 }
 
-function handleInlineEdit(e) {
+async function handleInlineEdit(e) {
   const el = e.target;
   const li = el.closest('li');
   if (!li) return;
@@ -1548,190 +2056,575 @@ function handleInlineEdit(e) {
   const isExport = li.dataset.exported === 'true';
   const index = parseInt(isSignal ? li.dataset.signalIndex : li.dataset.varIndex);
   
-  if (isSignal) {
-    // Update signal
-    const sig = selectedNode.signals[index];
-    if (typeof sig === 'string') {
-      selectedNode.signals[index] = { name: sig, params: '' };
+  try {
+    if (isSignal) {
+      // Update signal
+      const sig = selectedNode.signals[index];
+      const oldName = typeof sig === 'string' ? sig : sig.name;
+      const oldParams = typeof sig === 'object' ? sig.params : '';
+      
+      const newSig = {
+        name: field === 'name' ? newValue : oldName,
+        params: field === 'params' ? newValue : oldParams
+      };
+      
+      // Send to Godot
+      await sendCommand('modify_signal', {
+        path: selectedNode.path,
+        action: 'update',
+        old_name: oldName,
+        name: newSig.name,
+        params: newSig.params
+      });
+      
+      // Update local state
+      selectedNode.signals[index] = newSig;
+      console.log(`Updated signal in ${selectedNode.path}:`, newSig);
+    } else {
+      // Update variable
+      const vars = selectedNode.variables.filter(v => v.exported === isExport);
+      const v = vars[index];
+      const actualIndex = selectedNode.variables.findIndex(vr => vr.name === v.name);
+      
+      if (actualIndex !== -1) {
+        const newVar = { ...selectedNode.variables[actualIndex] };
+        if (field === 'name') newVar.name = newValue;
+        if (field === 'type') newVar.type = newValue;
+        if (field === 'default') newVar.default = newValue;
+        
+        // Send to Godot
+        await sendCommand('modify_variable', {
+          path: selectedNode.path,
+          action: 'update',
+          old_name: v.name,
+          name: newVar.name,
+          type: newVar.type,
+          default: newVar.default,
+          exported: isExport
+        });
+        
+        // Update local state
+        selectedNode.variables[actualIndex] = newVar;
+        console.log(`Updated variable in ${selectedNode.path}:`, newVar);
+      }
     }
-    if (field === 'name') selectedNode.signals[index].name = newValue;
-    if (field === 'params') selectedNode.signals[index].params = newValue;
-    console.log(`[TODO] Update signal in ${selectedNode.path}:`, selectedNode.signals[index]);
-  } else {
-    // Update variable
-    const vars = selectedNode.variables.filter(v => v.exported === isExport);
-    const v = vars[index];
-    const actualIndex = selectedNode.variables.findIndex(vr => vr.name === v.name);
-    if (actualIndex !== -1) {
-      if (field === 'name') selectedNode.variables[actualIndex].name = newValue;
-      if (field === 'type') selectedNode.variables[actualIndex].type = newValue;
-      if (field === 'default') selectedNode.variables[actualIndex].default = newValue;
-      console.log(`[TODO] Update variable in ${selectedNode.path}:`, selectedNode.variables[actualIndex]);
-    }
+    
+    // Update the original value
+    el.dataset.original = newValue;
+  } catch (err) {
+    console.error('Failed to update:', err);
+    // Revert on error
+    el.textContent = original;
+    alert('Failed to save: ' + err.message);
   }
+}
+
+// ---- Toggle @onready ----
+async function toggleOnready(index, isExport) {
+  const vars = selectedNode.variables.filter(v => v.exported === isExport);
+  const v = vars[index];
+  const actualIndex = selectedNode.variables.findIndex(vr => vr.name === v.name);
   
-  // Update the original value
-  el.dataset.original = newValue;
+  if (actualIndex === -1) return;
+  
+  const newOnready = !v.onready;
+  
+  try {
+    await sendCommand('modify_variable', {
+      path: selectedNode.path,
+      action: 'update',
+      old_name: v.name,
+      name: v.name,
+      type: v.type || '',
+      default: v.default || '',
+      exported: isExport,
+      onready: newOnready
+    });
+    
+    selectedNode.variables[actualIndex].onready = newOnready;
+    openPanel(selectedNode);
+  } catch (err) {
+    console.error('Failed to toggle @onready:', err);
+    alert('Failed to update: ' + err.message);
+  }
 }
 
 // ---- Add New Items ----
-function addNewVariable(isExport) {
+async function addNewVariable(isExport) {
   const newVar = { name: 'new_var', type: '', default: '', exported: isExport };
-  selectedNode.variables.push(newVar);
-  openPanel(selectedNode);
   
-  // Focus the new variable name after panel refresh
-  setTimeout(() => {
-    const list = document.getElementById(isExport ? 'exports-list' : 'vars-list');
-    const lastItem = list?.querySelector('li:last-of-type .var-name');
-    if (lastItem) {
-      lastItem.focus();
-      // Select all text
-      const range = document.createRange();
-      range.selectNodeContents(lastItem);
-      const sel = window.getSelection();
-      sel.removeAllRanges();
-      sel.addRange(range);
-    }
-  }, 50);
+  try {
+    // Send to Godot first
+    await sendCommand('modify_variable', {
+      path: selectedNode.path,
+      action: 'add',
+      name: newVar.name,
+      type: newVar.type,
+      default: newVar.default,
+      exported: isExport
+    });
+    
+    // Update local state
+    selectedNode.variables.push(newVar);
+    openPanel(selectedNode);
+    
+    // Focus the new variable name after panel refresh
+    setTimeout(() => {
+      const list = document.getElementById(isExport ? 'exports-list' : 'vars-list');
+      const lastItem = list?.querySelector('li:last-of-type .var-name');
+      if (lastItem) {
+        lastItem.focus();
+        const range = document.createRange();
+        range.selectNodeContents(lastItem);
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+      }
+    }, 50);
+  } catch (err) {
+    console.error('Failed to add variable:', err);
+    alert('Failed to add variable: ' + err.message);
+  }
 }
 
-function addNewSignal() {
-  if (!selectedNode.signals) selectedNode.signals = [];
-  selectedNode.signals.push({ name: 'new_signal', params: '' });
-  openPanel(selectedNode);
+async function addNewSignal() {
+  const newSig = { name: 'new_signal', params: '' };
   
-  setTimeout(() => {
-    const list = document.getElementById('signals-list');
-    const lastItem = list?.querySelector('li:last-of-type .signal-name');
-    if (lastItem) {
-      lastItem.focus();
-      const range = document.createRange();
-      range.selectNodeContents(lastItem);
-      const sel = window.getSelection();
-      sel.removeAllRanges();
-      sel.addRange(range);
-    }
-  }, 50);
+  try {
+    // Send to Godot first
+    await sendCommand('modify_signal', {
+      path: selectedNode.path,
+      action: 'add',
+      name: newSig.name,
+      params: newSig.params
+    });
+    
+    // Update local state
+    if (!selectedNode.signals) selectedNode.signals = [];
+    selectedNode.signals.push(newSig);
+    openPanel(selectedNode);
+    
+    setTimeout(() => {
+      const list = document.getElementById('signals-list');
+      const lastItem = list?.querySelector('li:last-of-type .signal-name');
+      if (lastItem) {
+        lastItem.focus();
+        const range = document.createRange();
+        range.selectNodeContents(lastItem);
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+      }
+    }, 50);
+  } catch (err) {
+    console.error('Failed to add signal:', err);
+    alert('Failed to add signal: ' + err.message);
+  }
 }
 
-// ---- Delete with Usage Panel ----
-function showDeleteUsages(index, isExport, type) {
-  const panelId = type === 'signal' ? `usage-panel-signal-${index}` 
-    : isExport ? `usage-panel-export-${index}` : `usage-panel-var-${index}`;
-  const panel = document.getElementById(panelId);
-  if (!panel) return;
-  
+// ---- Delete with Floating Usage Panel ----
+let pendingDelete = null; // { index, isExport, type, itemName }
+let currentUsages = []; // Current list of usages
+
+async function showDeleteUsages(index, isExport, type) {
   // Get the item name
   let itemName = '';
   if (type === 'signal') {
     const sig = selectedNode.signals[index];
     itemName = typeof sig === 'string' ? sig : sig.name;
+  } else if (type === 'function') {
+    const func = selectedNode.functions[index];
+    itemName = func?.name || '';
   } else {
     const vars = selectedNode.variables.filter(v => v.exported === isExport);
     itemName = vars[index]?.name || '';
   }
   
-  // TODO: Actually search for usages across all scripts
-  // For now, simulate finding usages
-  const mockUsages = findUsages(itemName, type);
+  // Store pending delete info and the declaring node
+  pendingDelete = { index, isExport, type, itemName, declaringNode: selectedNode };
   
-  if (mockUsages.length === 0) {
-    // No usages, can delete directly
+  // Find usages with smart detection
+  currentUsages = findUsagesSmart(itemName, type);
+  
+  if (currentUsages.length === 0) {
+    // No usages, delete directly
+    await performDelete(index, isExport, type, itemName);
+    return;
+  }
+  
+  renderUsagePanel();
+}
+
+function renderUsagePanel() {
+  if (!pendingDelete) return;
+  const { itemName, type } = pendingDelete;
+  
+  const panel = document.getElementById('usage-float-panel');
+  const titleEl = document.getElementById('ufp-title');
+  const countEl = document.getElementById('ufp-count');
+  const listEl = document.getElementById('ufp-list');
+  const deleteBtn = document.getElementById('ufp-delete-btn');
+  
+  // Set title based on type
+  const typeLabel = type === 'signal' ? 'Signal' : type === 'function' ? 'Function' : 'Variable';
+  titleEl.innerHTML = `⚠ Delete ${typeLabel}: <span style="color:#f38ba8;font-weight:600">${itemName}</span>`;
+  
+  if (currentUsages.length === 0) {
+    // All usages fixed! Can delete now
+    countEl.innerHTML = `<span style="color:#a6e3a1">✓ All usages fixed! Safe to delete.</span>`;
+    listEl.innerHTML = '<div style="padding: 30px; text-align: center; color: var(--text-muted);">No more usages found</div>';
+    deleteBtn.textContent = 'Delete Now';
+    deleteBtn.style.background = 'rgba(166, 227, 161, 0.2)';
+    deleteBtn.style.color = '#a6e3a1';
+    deleteBtn.style.borderColor = 'rgba(166, 227, 161, 0.4)';
+  } else {
+    countEl.innerHTML = `Found <span class="count-num">${currentUsages.length}</span> usage${currentUsages.length > 1 ? 's' : ''} — click to navigate`;
+    
+    listEl.innerHTML = currentUsages.map((u, i) => {
+      const highlightedCode = highlightUsageInCode(u.code, itemName);
+      const fileName = u.file.split('/').pop().replace('.gd', '');
+      return `
+        <div class="ufp-item" 
+             data-usage-index="${i}" 
+             data-file="${u.file}" 
+             data-line="${u.line}"
+             data-func="${u.funcName || ''}"
+             onclick="navigateToUsage(this)">
+          <div class="ufp-loc">
+            <span class="ufp-func">${u.funcName || 'unknown'}</span>
+            <span class="ufp-line">line ${u.line}</span>
+          </div>
+          <div class="ufp-code">${highlightedCode}</div>
+          <div class="ufp-file">${fileName}.gd</div>
+        </div>
+      `;
+    }).join('');
+    deleteBtn.textContent = 'Delete Anyway';
+    deleteBtn.style.background = '';
+    deleteBtn.style.color = '';
+    deleteBtn.style.borderColor = '';
+  }
+  
+  deleteBtn.onclick = () => forceDeleteFromPanel();
+  
+  // Position panel if not already positioned by drag
+  if (!panel.dataset.positioned) {
+    const detailPanel = document.getElementById('detail-panel');
+    const detailWidth = detailPanel.offsetWidth;
+    panel.style.right = (detailWidth + 20) + 'px';
+    panel.style.top = '80px';
+    panel.style.left = 'auto';
+  }
+  
+  panel.classList.add('visible');
+  initUsagePanelDrag();
+  initUsagePanelResize();
+}
+
+function refreshUsages() {
+  if (!pendingDelete) return;
+  const { itemName, type } = pendingDelete;
+  
+  // Re-scan for usages
+  currentUsages = findUsagesSmart(itemName, type);
+  renderUsagePanel();
+}
+
+// ---- Draggable Usage Panel ----
+let ufpDragging = false;
+let ufpDragStart = { x: 0, y: 0 };
+let ufpPanelStart = { x: 0, y: 0 };
+
+function initUsagePanelDrag() {
+  const header = document.getElementById('ufp-header');
+  const panel = document.getElementById('usage-float-panel');
+  
+  // Remove existing listeners
+  header.onmousedown = (e) => {
+    if (e.target.tagName === 'BUTTON') return; // Don't drag when clicking buttons
+    
+    ufpDragging = true;
+    panel.classList.add('dragging');
+    ufpDragStart = { x: e.clientX, y: e.clientY };
+    
+    const rect = panel.getBoundingClientRect();
+    ufpPanelStart = { x: rect.left, y: rect.top };
+    
+    document.addEventListener('mousemove', onUfpDrag);
+    document.addEventListener('mouseup', onUfpDragEnd);
+  };
+}
+
+function onUfpDrag(e) {
+  if (!ufpDragging) return;
+  
+  const panel = document.getElementById('usage-float-panel');
+  const dx = e.clientX - ufpDragStart.x;
+  const dy = e.clientY - ufpDragStart.y;
+  
+  const newX = ufpPanelStart.x + dx;
+  const newY = ufpPanelStart.y + dy;
+  
+  // Switch to left/top positioning for dragging
+  panel.style.left = Math.max(0, newX) + 'px';
+  panel.style.top = Math.max(0, newY) + 'px';
+  panel.style.right = 'auto';
+  panel.dataset.positioned = 'true';
+}
+
+function onUfpDragEnd() {
+  ufpDragging = false;
+  document.getElementById('usage-float-panel')?.classList.remove('dragging');
+  document.removeEventListener('mousemove', onUfpDrag);
+  document.removeEventListener('mouseup', onUfpDragEnd);
+}
+
+// ---- Resizable Usage Panel ----
+let ufpResizing = false;
+let ufpResizeStart = { x: 0, y: 0, w: 0, h: 0 };
+
+function initUsagePanelResize() {
+  const resizeHandle = document.getElementById('ufp-resize');
+  const panel = document.getElementById('usage-float-panel');
+  
+  resizeHandle.onmousedown = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    ufpResizing = true;
+    ufpResizeStart = {
+      x: e.clientX,
+      y: e.clientY,
+      w: panel.offsetWidth,
+      h: panel.offsetHeight
+    };
+    document.addEventListener('mousemove', onUfpResize);
+    document.addEventListener('mouseup', onUfpResizeEnd);
+  };
+}
+
+function onUfpResize(e) {
+  if (!ufpResizing) return;
+  const panel = document.getElementById('usage-float-panel');
+  
+  const dw = e.clientX - ufpResizeStart.x;
+  const dh = e.clientY - ufpResizeStart.y;
+  
+  const newW = Math.max(300, ufpResizeStart.w + dw);
+  const newH = Math.max(200, ufpResizeStart.h + dh);
+  
+  panel.style.width = newW + 'px';
+  panel.style.height = newH + 'px';
+}
+
+function onUfpResizeEnd() {
+  ufpResizing = false;
+  document.removeEventListener('mousemove', onUfpResize);
+  document.removeEventListener('mouseup', onUfpResizeEnd);
+}
+
+function highlightUsageInCode(code, name) {
+  const escaped = esc(code);
+  // Highlight the variable/signal/function name
+  const regex = new RegExp(`\\b(${name})\\b`, 'g');
+  return escaped.replace(regex, '<span class="highlight">$1</span>');
+}
+
+function closeUsagePanel() {
+  const panel = document.getElementById('usage-float-panel');
+  panel.classList.remove('visible');
+  panel.dataset.positioned = '';
+  panel.style.left = '';
+  panel.style.right = '';
+  panel.style.top = '';
+  pendingDelete = null;
+  currentUsages = [];
+}
+
+function navigateToUsage(el) {
+  // Mark this item as active
+  document.querySelectorAll('#ufp-list .ufp-item').forEach(item => {
+    item.classList.remove('active');
+  });
+  el.classList.add('active');
+  
+  const file = el.dataset.file;
+  const line = parseInt(el.dataset.line);
+  const funcName = el.dataset.func;
+  
+  // Find the node for this file
+  const targetNode = nodes.find(n => n.path === file);
+  if (!targetNode) {
+    console.log('Node not found for file:', file);
+    return;
+  }
+  
+  // If it's a different node, switch to it
+  if (selectedNode?.path !== targetNode.path) {
+    openPanel(targetNode);
+    // Wait for panel to render
+    setTimeout(() => {
+      if (funcName) {
+        expandAndHighlightFunction(funcName, line, targetNode);
+      }
+    }, 150);
+  } else {
+    // Same node, just expand/highlight
+    if (funcName) {
+      expandAndHighlightFunction(funcName, line, targetNode);
+    }
+  }
+}
+
+function expandAndHighlightFunction(funcName, targetLine, nodeData) {
+  const node = nodeData || selectedNode;
+  
+  // Find the function index
+  const funcIndex = node.functions.findIndex(f => f.name === funcName);
+  if (funcIndex === -1) {
+    console.log('Function not found:', funcName);
+    return;
+  }
+  
+  console.log(`Expanding function ${funcName} (index ${funcIndex}) to line ${targetLine}`);
+  
+  // Get the function viewer element
+  const viewer = document.getElementById(`func-viewer-${funcIndex}`);
+  if (!viewer) {
+    console.log('Viewer element not found for index:', funcIndex);
+    return;
+  }
+  
+  // Check if already expanded
+  const isExpanded = viewer.style.display !== 'none';
+  
+  if (!isExpanded) {
+    // Need to expand - call toggleFunc
+    window.toggleFunc(funcIndex);
+  }
+  
+  // Wait for expansion, then highlight
+  setTimeout(() => {
+    highlightLineInViewer(viewer, funcName, targetLine, node);
+    // Scroll the viewer into view
+    viewer.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, isExpanded ? 100 : 300);
+}
+
+function highlightLineInViewer(viewer, funcName, targetLine, nodeData) {
+  // Find the function to get its start line
+  const node = nodeData || selectedNode;
+  const func = node.functions.find(f => f.name === funcName);
+  if (!func) {
+    console.log('Function not found for highlighting:', funcName);
+    return;
+  }
+  
+  const funcStartLine = func.line || 1;
+  const relativeLineIndex = targetLine - funcStartLine;
+  
+  console.log(`Highlighting line ${targetLine} in ${funcName} (start: ${funcStartLine}, relative: ${relativeLineIndex})`);
+  
+  // Find the highlight overlay within the viewer
+  const highlightDiv = viewer.querySelector('.code-editor-highlight');
+  if (!highlightDiv) {
+    console.log('Highlight div not found in viewer');
+    return;
+  }
+  
+  // Clear all previous highlights
+  document.querySelectorAll('.code-line-highlight').forEach(el => {
+    el.classList.remove('code-line-highlight');
+  });
+  
+  // Get all lines and highlight the target
+  const lines = highlightDiv.querySelectorAll('.code-line');
+  console.log(`Found ${lines.length} lines in viewer`);
+  
+  if (relativeLineIndex >= 0 && relativeLineIndex < lines.length) {
+    const targetLineEl = lines[relativeLineIndex];
+    targetLineEl.classList.add('code-line-highlight');
+    
+    // Scroll the line into view within the code editor
+    setTimeout(() => {
+      targetLineEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 50);
+  } else {
+    console.log(`Line index ${relativeLineIndex} out of range (0-${lines.length - 1})`);
+  }
+}
+
+async function performDelete(index, isExport, type, itemName) {
+  try {
     if (type === 'signal') {
+      await sendCommand('modify_signal', {
+        path: selectedNode.path,
+        action: 'delete',
+        old_name: itemName
+      });
       selectedNode.signals.splice(index, 1);
+    } else if (type === 'function') {
+      await sendCommand('modify_function_delete', {
+        path: selectedNode.path,
+        name: itemName
+      });
+      selectedNode.functions.splice(index, 1);
     } else {
+      await sendCommand('modify_variable', {
+        path: selectedNode.path,
+        action: 'delete',
+        old_name: itemName
+      });
       const vars = selectedNode.variables.filter(v => v.exported === isExport);
       const actualIndex = selectedNode.variables.findIndex(v => v.name === vars[index].name);
       if (actualIndex !== -1) selectedNode.variables.splice(actualIndex, 1);
     }
-    console.log(`[TODO] Delete ${type} "${itemName}" from ${selectedNode.path}`);
+    console.log(`Deleted ${type} "${itemName}" from ${selectedNode.path}`);
+    closeUsagePanel();
     openPanel(selectedNode);
-    return;
+  } catch (err) {
+    console.error('Failed to delete:', err);
+    alert('Failed to delete: ' + err.message);
   }
-  
-  // Show usage panel
-  panel.innerHTML = `
-    <div class="usage-panel-header">
-      <span>⚠ "${itemName}" is used in ${mockUsages.length} place${mockUsages.length > 1 ? 's' : ''}</span>
-      <div class="usage-nav">
-        <span id="usage-counter-${panelId}">1/${mockUsages.length}</span>
-        <button onclick="navigateUsage('${panelId}', -1)">‹</button>
-        <button onclick="navigateUsage('${panelId}', 1)">›</button>
-      </div>
-    </div>
-    <div class="usage-panel-list">
-      ${mockUsages.map((u, i) => `
-        <div class="usage-panel-item ${i === 0 ? 'active' : ''}" data-usage-index="${i}" onclick="goToUsage('${u.file}', ${u.line})">
-          <span class="file">${u.file.split('/').pop()}</span>
-          <span class="line">:${u.line}</span>
-          <span class="code">${esc(u.code)}</span>
-        </div>
-      `).join('')}
-    </div>
-    <div class="usage-panel-actions">
-      <button class="cancel" onclick="hideUsagePanel('${panelId}')">Cancel</button>
-      <button class="delete" onclick="forceDelete(${index}, ${isExport}, '${type}', '${itemName}')">Delete Anyway</button>
-    </div>
-  `;
-  panel.style.display = 'block';
-  panel.dataset.currentUsage = '0';
 }
 
-function hideUsagePanel(panelId) {
-  const panel = document.getElementById(panelId);
-  if (panel) panel.style.display = 'none';
+async function forceDeleteFromPanel() {
+  if (!pendingDelete) return;
+  const { index, isExport, type, itemName } = pendingDelete;
+  await performDelete(index, isExport, type, itemName);
 }
 
-function navigateUsage(panelId, direction) {
-  const panel = document.getElementById(panelId);
-  if (!panel) return;
-  
-  const items = panel.querySelectorAll('.usage-panel-item');
-  let current = parseInt(panel.dataset.currentUsage || '0');
-  current = (current + direction + items.length) % items.length;
-  
-  items.forEach((item, i) => item.classList.toggle('active', i === current));
-  panel.dataset.currentUsage = current.toString();
-  document.getElementById(`usage-counter-${panelId}`).textContent = `${current + 1}/${items.length}`;
-  
-  // Scroll to active item
-  items[current].scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-}
-
-function goToUsage(file, line) {
-  // TODO: Open the file and scroll to line
-  console.log(`[TODO] Navigate to ${file}:${line}`);
-}
-
-function forceDelete(index, isExport, type, itemName) {
-  if (type === 'signal') {
-    selectedNode.signals.splice(index, 1);
-  } else {
-    const vars = selectedNode.variables.filter(v => v.exported === isExport);
-    const actualIndex = selectedNode.variables.findIndex(v => v.name === vars[index].name);
-    if (actualIndex !== -1) selectedNode.variables.splice(actualIndex, 1);
-  }
-  console.log(`[TODO] Force delete ${type} "${itemName}" from ${selectedNode.path}`);
-  openPanel(selectedNode);
-}
-
-// Find usages of a variable/signal across all scripts (mock implementation)
-function findUsages(name, type) {
+// ---- Smart Usage Detection ----
+// Avoids false positives like matching "new" in "SomeClass.new()"
+function findUsagesSmart(name, type) {
   const usages = [];
   
-  // Search in all function bodies of all nodes
+  // GDScript built-in methods/keywords to avoid false positives
+  const builtinMethods = ['new', 'free', 'queue_free', 'get', 'set', 'call', 'emit', 'connect', 'disconnect'];
+  const isBuiltinMethod = builtinMethods.includes(name);
+  
   for (const node of nodes) {
+    // Check if this is the node where the item is declared
+    const isDeclaringNode = node.path === selectedNode?.path;
+    
     for (const func of (node.functions || [])) {
       if (!func.body) continue;
+      
       const lines = func.body.split('\n');
       lines.forEach((line, i) => {
-        // Simple check: does the line contain the name?
-        if (line.includes(name)) {
+        const lineNum = (func.line || 1) + i;
+        
+        // Skip the declaration line itself
+        if (isDeclaringNode && isDeclarationLine(line, name, type)) {
+          return;
+        }
+        
+        // Check if this line actually uses the variable/signal/function
+        if (isActualUsage(line, name, type, isBuiltinMethod)) {
           usages.push({
             file: node.path,
-            line: (func.line || 1) + i,
-            code: line.trim()
+            line: lineNum,
+            code: line.trim(),
+            funcName: func.name
           });
         }
       });
@@ -1739,6 +2632,60 @@ function findUsages(name, type) {
   }
   
   return usages;
+}
+
+function isDeclarationLine(line, name, type) {
+  const trimmed = line.trim();
+  if (type === 'variable') {
+    // var name, @export var name, @onready var name
+    return new RegExp(`^(@export\\s+)?(@onready\\s+)?var\\s+${name}\\b`).test(trimmed);
+  }
+  if (type === 'signal') {
+    return new RegExp(`^signal\\s+${name}\\b`).test(trimmed);
+  }
+  if (type === 'function') {
+    return new RegExp(`^func\\s+${name}\\s*\\(`).test(trimmed);
+  }
+  return false;
+}
+
+function isActualUsage(line, name, type, isBuiltinMethod) {
+  // Build a regex that matches the name as a word boundary
+  const namePattern = `\\b${name}\\b`;
+  
+  if (!new RegExp(namePattern).test(line)) {
+    return false; // Name not in line at all
+  }
+  
+  // For variables named like builtins (e.g., "new"), do extra checks
+  if (isBuiltinMethod) {
+    // Exclude patterns like "ClassName.new()" or ".new()"
+    // These are constructor calls, not variable usages
+    const constructorPattern = new RegExp(`\\.${name}\\s*\\(`);
+    if (constructorPattern.test(line)) {
+      // Check if the name appears OUTSIDE of a constructor pattern too
+      const withoutConstructors = line.replace(new RegExp(`\\w+\\.${name}\\s*\\([^)]*\\)`, 'g'), '');
+      if (!new RegExp(namePattern).test(withoutConstructors)) {
+        return false; // Only appears in constructor calls
+      }
+    }
+  }
+  
+  // For signals, check for signal-specific patterns
+  if (type === 'signal') {
+    // Match: signal_name.emit(), signal_name.connect(), etc.
+    return new RegExp(`\\b${name}\\s*\\.\\s*(emit|connect|disconnect)\\b`).test(line) ||
+           new RegExp(`\\.${name}\\s*\\.\\s*(connect|emit)`).test(line);
+  }
+  
+  // For functions, match function calls
+  if (type === 'function') {
+    return new RegExp(`\\b${name}\\s*\\(`).test(line);
+  }
+  
+  // For variables, the name should appear as a standalone identifier
+  // Not as part of another word and not only in a method call position
+  return true;
 }
 
 // Section resizing
@@ -1830,6 +2777,197 @@ function onPanelResizeEnd() {
 
 // Initialize panel resizing on load
 document.addEventListener('DOMContentLoaded', initPanelResizing);
+
+// ---- View Switching (Scripts/Scenes) ----
+let currentView = 'scripts';
+let sceneData = null;
+
+function switchView(view) {
+  if (view === currentView) return;
+  currentView = view;
+  
+  // Update tab buttons
+  document.querySelectorAll('#view-tabs button').forEach(btn => {
+    btn.classList.toggle('active', btn.textContent.toLowerCase() === view);
+  });
+  
+  if (view === 'scenes') {
+    loadSceneView();
+  } else {
+    draw();
+  }
+}
+
+async function loadSceneView() {
+  // Request scene data from Godot
+  try {
+    const result = await sendCommand('map_scenes', { root: 'res://' });
+    if (result.ok) {
+      sceneData = result.scene_map;
+      drawSceneView();
+    } else {
+      console.error('Failed to load scenes:', result.error);
+      alert('Failed to load scenes: ' + (result.error || 'Unknown error'));
+    }
+  } catch (err) {
+    console.error('Failed to load scenes:', err);
+    // Show placeholder for now
+    drawSceneViewPlaceholder();
+  }
+}
+
+function drawSceneView() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.save();
+  ctx.translate(camera.x, camera.y);
+  ctx.scale(camera.zoom, camera.zoom);
+  
+  if (!sceneData || !sceneData.scenes || sceneData.scenes.length === 0) {
+    drawSceneViewPlaceholder();
+    ctx.restore();
+    return;
+  }
+  
+  // Draw scene nodes (similar to script nodes but for scenes)
+  const scenes = sceneData.scenes;
+  scenes.forEach((scene, i) => {
+    const x = scene.x || (i % 4) * 250 + 100;
+    const y = scene.y || Math.floor(i / 4) * 150 + 100;
+    
+    // Scene card
+    ctx.fillStyle = '#2a4858';
+    ctx.strokeStyle = '#3d6b7a';
+    ctx.lineWidth = 2;
+    roundRect(ctx, x, y, 200, 80, 8, true, true);
+    
+    // Scene name
+    ctx.fillStyle = '#e8e4df';
+    ctx.font = '600 14px -apple-system, system-ui, sans-serif';
+    ctx.fillText(scene.name || scene.path.split('/').pop(), x + 12, y + 24);
+    
+    // Scene path
+    ctx.fillStyle = '#706c66';
+    ctx.font = '11px -apple-system, system-ui, sans-serif';
+    ctx.fillText(scene.path, x + 12, y + 42);
+    
+    // Node count
+    const nodeCount = scene.nodes ? scene.nodes.length : 0;
+    ctx.fillStyle = '#89dceb';
+    ctx.fillText(`${nodeCount} nodes`, x + 12, y + 60);
+  });
+  
+  ctx.restore();
+}
+
+function drawSceneViewPlaceholder() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = '#706c66';
+  ctx.font = '16px -apple-system, system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('Scene view coming soon...', canvas.width / 2, canvas.height / 2);
+  ctx.fillText('Requires scene mapping tool in Godot', canvas.width / 2, canvas.height / 2 + 24);
+  ctx.textAlign = 'left';
+}
+
+// ---- Context Menu ----
+const contextMenu = document.getElementById('context-menu');
+let contextMenuPos = { x: 0, y: 0 };
+
+canvas.addEventListener('contextmenu', (e) => {
+  e.preventDefault();
+  
+  // Position menu at mouse
+  contextMenuPos = { x: e.clientX, y: e.clientY };
+  contextMenu.style.left = e.clientX + 'px';
+  contextMenu.style.top = e.clientY + 'px';
+  contextMenu.classList.add('visible');
+});
+
+// Hide context menu on click elsewhere
+document.addEventListener('click', (e) => {
+  if (!contextMenu.contains(e.target)) {
+    contextMenu.classList.remove('visible');
+  }
+});
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    contextMenu.classList.remove('visible');
+    closeNewScriptModal();
+  }
+});
+
+// ---- New Script Creation ----
+function createNewScript() {
+  contextMenu.classList.remove('visible');
+  document.getElementById('new-script-modal').style.display = 'flex';
+  document.getElementById('new-script-path').focus();
+}
+
+function closeNewScriptModal() {
+  document.getElementById('new-script-modal').style.display = 'none';
+}
+
+async function submitNewScript() {
+  const path = document.getElementById('new-script-path').value.trim();
+  const extendsType = document.getElementById('new-script-extends').value;
+  const className = document.getElementById('new-script-classname').value.trim();
+  
+  if (!path) {
+    alert('Please enter a script path');
+    return;
+  }
+  
+  if (!path.startsWith('res://') || !path.endsWith('.gd')) {
+    alert('Path must start with res:// and end with .gd');
+    return;
+  }
+  
+  try {
+    // Use existing create_script tool via invokeTool (not internal)
+    const result = await sendCommand('create_script_file', {
+      path: path,
+      extends: extendsType,
+      class_name: className || ''
+    });
+    
+    if (result.ok) {
+      closeNewScriptModal();
+      // Refresh the project map
+      refreshProject();
+    } else {
+      alert('Failed to create script: ' + (result.error || 'Unknown error'));
+    }
+  } catch (err) {
+    alert('Failed to create script: ' + err.message);
+  }
+}
+
+async function refreshProject() {
+  contextMenu.classList.remove('visible');
+  try {
+    const result = await sendCommand('refresh_map', {});
+    if (result.ok && result.project_map) {
+      // Update nodes and edges
+      const newNodes = result.project_map.nodes.map((n, i) => ({
+        ...n,
+        x: nodes[i]?.x || 0,
+        y: nodes[i]?.y || 0,
+        color: getFolderColor(n.folder),
+        highlighted: true,
+        visible: true
+      }));
+      nodes.length = 0;
+      nodes.push(...newNodes);
+      edges.length = 0;
+      edges.push(...result.project_map.edges);
+      initLayout();
+      draw();
+    }
+  } catch (err) {
+    console.error('Failed to refresh:', err);
+  }
+}
 
 function esc(s) {
   return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');

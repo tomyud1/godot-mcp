@@ -25,7 +25,7 @@ import {
 
 import { allTools, getMockToolResponse, toolExists } from './tools/index.js';
 import { GodotBridge } from './godot-bridge.js';
-import { serveVisualization, stopVisualizationServer } from './visualizer-server.js';
+import { serveVisualization, stopVisualizationServer, setGodotBridge } from './visualizer-server.js';
 
 // Server metadata
 const SERVER_NAME = 'godot-mcp-server';
@@ -40,6 +40,9 @@ const server = new Server(
 
 // Create Godot bridge (WebSocket server)
 const godotBridge = new GodotBridge(WEBSOCKET_PORT);
+
+// Set the bridge reference for the visualizer server
+setGodotBridge(godotBridge);
 
 // Log connection changes
 godotBridge.onConnectionChange((connected, info) => {

@@ -122,8 +122,9 @@ func _parse_script(path: String) -> Dictionary:
 	re_class_name.compile("^class_name\\s+(\\w+)")
 
 	# Match: @export var name: Type = value  OR  var name: Type  OR  var name = value
+	# Captures: 1=@export, 2=@onready, 3=name, 4=type, 5=default
 	var re_var := RegEx.new()
-	re_var.compile("^(@export(?:\\([^)]*\\))?\\s+)?(?:@onready\\s+)?var\\s+(\\w+)\\s*(?::\\s*(\\w+))?(?:\\s*=\\s*(.+))?")
+	re_var.compile("^(@export(?:\\([^)]*\\))?\\s+)?(@onready\\s+)?var\\s+(\\w+)\\s*(?::\\s*(\\w+))?(?:\\s*=\\s*(.+))?")
 
 	# Match: func name(params) -> ReturnType:
 	var re_func := RegEx.new()
@@ -175,28 +176,32 @@ func _parse_script(path: String) -> Dictionary:
 				class_name_str = m.get_string(1)
 				continue
 
-		# Variables
-		var m_var := re_var.search(stripped)
-		if m_var:
-			var exported: bool = m_var.get_string(1).strip_edges() != ""
-			var var_name: String = m_var.get_string(2)
-			var var_type: String = m_var.get_string(3).strip_edges()
-			var default_val: String = m_var.get_string(4).strip_edges()
+		# Variables - only match top-level (not indented)
+		# Skip lines that start with tab or spaces (inside functions)
+		if not line.begins_with("\t") and not line.begins_with(" "):
+			var m_var := re_var.search(stripped)
+			if m_var:
+				var exported: bool = m_var.get_string(1).strip_edges() != ""
+				var onready: bool = m_var.get_string(2).strip_edges() != ""
+				var var_name: String = m_var.get_string(3)
+				var var_type: String = m_var.get_string(4).strip_edges()
+				var default_val: String = m_var.get_string(5).strip_edges()
 
-			# Try to infer type from default value if no explicit type
-			if var_type.is_empty() and not default_val.is_empty():
-				var_type = _infer_type(default_val)
-			
-			# Track variable types for signal connection resolution
-			if not var_type.is_empty():
-				var_type_map[var_name] = var_type
+				# Try to infer type from default value if no explicit type
+				if var_type.is_empty() and not default_val.is_empty():
+					var_type = _infer_type(default_val)
+				
+				# Track variable types for signal connection resolution
+				if not var_type.is_empty():
+					var_type_map[var_name] = var_type
 
-			variables.append({
-				"name": var_name,
-				"type": var_type,
-				"exported": exported,
-				"default": default_val
-			})
+				variables.append({
+					"name": var_name,
+					"type": var_type,
+					"exported": exported,
+					"onready": onready,
+					"default": default_val
+				})
 
 		# Functions
 		var m_func := re_func.search(stripped)
@@ -326,3 +331,592 @@ func _infer_type(default_val: String) -> String:
 	if default_val.ends_with(".new()"):
 		return default_val.replace(".new()", "")
 	return ""
+
+
+func map_scenes(args: Dictionary) -> Dictionary:
+	"""Crawl the project and build a map of all scenes."""
+	var root_path: String = str(args.get("root", "res://"))
+	var include_addons: bool = bool(args.get("include_addons", false))
+
+	if not root_path.begins_with("res://"):
+		root_path = "res://" + root_path
+
+	# Collect all .tscn files
+	var scene_paths: Array = []
+	_collect_scenes(root_path, scene_paths, include_addons)
+
+	if scene_paths.is_empty():
+		return {"ok": true, "scene_map": {"scenes": [], "total_scenes": 0}}
+
+	# Parse each scene
+	var scenes: Array = []
+	for path in scene_paths:
+		var info: Dictionary = _parse_scene(path)
+		scenes.append(info)
+
+	# Build edges between scenes (instantiation, preloads)
+	var edges: Array = []
+	for scene in scenes:
+		var from_path: String = scene["path"]
+		for instance in scene.get("instances", []):
+			edges.append({"from": from_path, "to": instance, "type": "instance"})
+
+	return {
+		"ok": true,
+		"scene_map": {
+			"scenes": scenes,
+			"edges": edges,
+			"total_scenes": scenes.size()
+		}
+	}
+
+
+func _collect_scenes(path: String, results: Array, include_addons: bool) -> void:
+	"""Recursively collect all .tscn files."""
+	var dir := DirAccess.open(path)
+	if dir == null:
+		return
+
+	dir.list_dir_begin()
+	var name := dir.get_next()
+	while name != "":
+		if name.begins_with("."):
+			name = dir.get_next()
+			continue
+
+		var full_path := path.path_join(name)
+
+		if dir.current_is_dir():
+			if name == "addons" and not include_addons:
+				name = dir.get_next()
+				continue
+			_collect_scenes(full_path, results, include_addons)
+		elif name.ends_with(".tscn"):
+			results.append(full_path)
+
+		name = dir.get_next()
+	dir.list_dir_end()
+
+
+func _parse_scene(path: String) -> Dictionary:
+	"""Parse a scene file and extract its structure."""
+	var file := FileAccess.open(path, FileAccess.READ)
+	if file == null:
+		return {"path": path, "error": "Cannot open file"}
+
+	var content: String = file.get_as_text()
+	file.close()
+
+	var scene_name: String = path.get_file().replace(".tscn", "")
+	var root_type: String = ""
+	var nodes: Array = []
+	var instances: Array = []
+	var scripts: Array = []
+
+	# Parse .tscn format
+	var lines: PackedStringArray = content.split("\n")
+	var current_node: Dictionary = {}
+	
+	var re_ext_resource := RegEx.new()
+	re_ext_resource.compile('\\[ext_resource.*path="([^"]+)".*type="([^"]+)"')
+	
+	var re_node := RegEx.new()
+	re_node.compile('\\[node name="([^"]+)".*type="([^"]+)"')
+	
+	var re_node_instance := RegEx.new()
+	re_node_instance.compile('\\[node name="([^"]+)".*instance=ExtResource\\("([^"]+)"\\)')
+	
+	var re_script := RegEx.new()
+	re_script.compile('script = ExtResource\\("([^"]+)"\\)')
+
+	var ext_resources: Dictionary = {}  # id -> {path, type}
+	
+	for line in lines:
+		# External resources
+		var m_ext := re_ext_resource.search(line)
+		if m_ext:
+			var res_path: String = m_ext.get_string(1)
+			var res_type: String = m_ext.get_string(2)
+			# Extract ID from the line
+			var id_match := RegEx.create_from_string('id="([^"]+)"').search(line)
+			if id_match:
+				ext_resources[id_match.get_string(1)] = {"path": res_path, "type": res_type}
+				if res_type == "PackedScene":
+					instances.append(res_path)
+				elif res_type == "Script":
+					scripts.append(res_path)
+			continue
+
+		# Regular nodes
+		var m_node := re_node.search(line)
+		if m_node:
+			var node_name: String = m_node.get_string(1)
+			var node_type: String = m_node.get_string(2)
+			if root_type.is_empty():
+				root_type = node_type
+			nodes.append({"name": node_name, "type": node_type})
+			continue
+
+		# Instance nodes
+		var m_inst := re_node_instance.search(line)
+		if m_inst:
+			var node_name: String = m_inst.get_string(1)
+			nodes.append({"name": node_name, "type": "Instance"})
+
+	return {
+		"path": path,
+		"name": scene_name,
+		"root_type": root_type,
+		"nodes": nodes,
+		"instances": instances,
+		"scripts": scripts,
+		"node_count": nodes.size()
+	}
+
+
+# ============================================================================
+# INTERNAL FILE MODIFICATION FUNCTIONS (not exposed as MCP tools)
+# These are called directly by the visualizer for inline editing
+# ============================================================================
+
+func _internal_map_scenes(args: Dictionary) -> Dictionary:
+	"""Internal wrapper for map_scenes."""
+	return map_scenes(args)
+
+
+func _internal_refresh_map(args: Dictionary) -> Dictionary:
+	"""Refresh the project map."""
+	return map_project(args)
+
+
+func _internal_create_script_file(args: Dictionary) -> Dictionary:
+	"""Create a new script file."""
+	var script_path: String = args.get("path", "")
+	var extends_type: String = args.get("extends", "Node")
+	var class_name_str: String = args.get("class_name", "")
+	
+	if script_path.is_empty():
+		return {"ok": false, "error": "No path provided"}
+	
+	if not script_path.begins_with("res://"):
+		script_path = "res://" + script_path
+	
+	if not script_path.ends_with(".gd"):
+		script_path += ".gd"
+	
+	# Check if file already exists
+	if FileAccess.file_exists(script_path):
+		return {"ok": false, "error": "File already exists: " + script_path}
+	
+	# Create directory if needed
+	var dir_path: String = script_path.get_base_dir()
+	if not DirAccess.dir_exists_absolute(dir_path):
+		var err := DirAccess.make_dir_recursive_absolute(dir_path)
+		if err != OK:
+			return {"ok": false, "error": "Failed to create directory"}
+	
+	# Build script content
+	var content := ""
+	if not class_name_str.is_empty():
+		content += "class_name " + class_name_str + "\n"
+	content += "extends " + extends_type + "\n"
+	content += "\n\n"
+	content += "func _ready() -> void:\n"
+	content += "\tpass\n"
+	
+	# Write file
+	var file := FileAccess.open(script_path, FileAccess.WRITE)
+	if file == null:
+		return {"ok": false, "error": "Cannot create file: " + script_path}
+	
+	file.store_string(content)
+	file.close()
+	
+	return {"ok": true, "path": script_path}
+
+
+func _internal_modify_variable(args: Dictionary) -> Dictionary:
+	"""Add, update, or delete a variable in a script file."""
+	var script_path: String = args.get("path", "")
+	var action: String = args.get("action", "")  # "add", "update", "delete"
+	var old_name: String = args.get("old_name", "")
+	var new_name: String = args.get("name", "")
+	var var_type: String = args.get("type", "")
+	var default_val: String = args.get("default", "")
+	var exported: bool = args.get("exported", false)
+	var onready: bool = args.get("onready", false)
+	
+	if script_path.is_empty():
+		return {"ok": false, "error": "No script path provided"}
+	
+	var file := FileAccess.open(script_path, FileAccess.READ)
+	if file == null:
+		return {"ok": false, "error": "Cannot open file: " + script_path}
+	
+	var content: String = file.get_as_text()
+	file.close()
+	
+	var lines: Array = Array(content.split("\n"))
+	var modified := false
+	
+	if action == "delete":
+		# Find and remove the variable declaration
+		var pattern := RegEx.new()
+		pattern.compile("^(@export(?:\\([^)]*\\))?\\s+)?(?:@onready\\s+)?var\\s+" + old_name + "\\s*(?::|=|$)")
+		for i in range(lines.size() - 1, -1, -1):
+			if pattern.search(lines[i].strip_edges()):
+				lines.remove_at(i)
+				modified = true
+				break
+	
+	elif action == "update":
+		# Find and update the variable declaration
+		var pattern := RegEx.new()
+		pattern.compile("^(@export(?:\\([^)]*\\))?\\s+)?(@onready\\s+)?var\\s+" + old_name + "\\s*(?::\\s*\\w+)?(?:\\s*=\\s*.+)?$")
+		for i in range(lines.size()):
+			var m := pattern.search(lines[i].strip_edges())
+			if m:
+				# Use onready from args, not from matched pattern
+				var new_line := _build_var_line(new_name, var_type, default_val, exported, onready)
+				lines[i] = new_line
+				modified = true
+				break
+	
+	elif action == "add":
+		# Find position to insert (after last variable, before first function)
+		var insert_pos := _find_var_insert_position(lines, exported)
+		var new_line := _build_var_line(new_name, var_type, default_val, exported, false)
+		lines.insert(insert_pos, new_line)
+		modified = true
+	
+	if modified:
+		var new_content := "\n".join(PackedStringArray(lines))
+		var write_file := FileAccess.open(script_path, FileAccess.WRITE)
+		if write_file == null:
+			return {"ok": false, "error": "Cannot write to file: " + script_path}
+		write_file.store_string(new_content)
+		write_file.close()
+		return {"ok": true, "action": action, "variable": new_name}
+	
+	return {"ok": false, "error": "Variable not found: " + old_name}
+
+
+func _internal_modify_signal(args: Dictionary) -> Dictionary:
+	"""Add, update, or delete a signal in a script file."""
+	var script_path: String = args.get("path", "")
+	var action: String = args.get("action", "")
+	var old_name: String = args.get("old_name", "")
+	var new_name: String = args.get("name", "")
+	var params: String = args.get("params", "")
+	
+	if script_path.is_empty():
+		return {"ok": false, "error": "No script path provided"}
+	
+	var file := FileAccess.open(script_path, FileAccess.READ)
+	if file == null:
+		return {"ok": false, "error": "Cannot open file: " + script_path}
+	
+	var content: String = file.get_as_text()
+	file.close()
+	
+	var lines: Array = Array(content.split("\n"))
+	var modified := false
+	
+	if action == "delete":
+		var pattern := RegEx.new()
+		pattern.compile("^signal\\s+" + old_name + "(?:\\s*\\(|$)")
+		for i in range(lines.size() - 1, -1, -1):
+			if pattern.search(lines[i].strip_edges()):
+				lines.remove_at(i)
+				modified = true
+				break
+	
+	elif action == "update":
+		var pattern := RegEx.new()
+		pattern.compile("^signal\\s+" + old_name + "(?:\\s*\\([^)]*\\))?$")
+		for i in range(lines.size()):
+			if pattern.search(lines[i].strip_edges()):
+				var new_line := "signal " + new_name
+				if not params.is_empty():
+					new_line += "(" + params + ")"
+				lines[i] = new_line
+				modified = true
+				break
+	
+	elif action == "add":
+		var insert_pos := _find_signal_insert_position(lines)
+		var new_line := "signal " + new_name
+		if not params.is_empty():
+			new_line += "(" + params + ")"
+		lines.insert(insert_pos, new_line)
+		modified = true
+	
+	if modified:
+		var new_content := "\n".join(PackedStringArray(lines))
+		var write_file := FileAccess.open(script_path, FileAccess.WRITE)
+		if write_file == null:
+			return {"ok": false, "error": "Cannot write to file: " + script_path}
+		write_file.store_string(new_content)
+		write_file.close()
+		return {"ok": true, "action": action, "signal": new_name}
+	
+	return {"ok": false, "error": "Signal not found: " + old_name}
+
+
+func _internal_modify_function(args: Dictionary) -> Dictionary:
+	"""Update a function's body in a script file."""
+	var script_path: String = args.get("path", "")
+	var func_name: String = args.get("name", "")
+	var new_body: String = args.get("body", "")
+	
+	if script_path.is_empty() or func_name.is_empty():
+		return {"ok": false, "error": "Missing path or function name"}
+	
+	var file := FileAccess.open(script_path, FileAccess.READ)
+	if file == null:
+		return {"ok": false, "error": "Cannot open file: " + script_path}
+	
+	var content: String = file.get_as_text()
+	file.close()
+	
+	var lines: Array = Array(content.split("\n"))
+	
+	# Find the function
+	var re_func := RegEx.new()
+	re_func.compile("^func\\s+" + func_name + "\\s*\\(")
+	
+	var func_start := -1
+	var func_end := -1
+	
+	for i in range(lines.size()):
+		if func_start == -1:
+			if re_func.search(lines[i].strip_edges()):
+				func_start = i
+		elif func_start != -1:
+			# Find end of function (next top-level declaration or end of file)
+			var stripped: String = lines[i].strip_edges()
+			if not stripped.is_empty() and not lines[i].begins_with("\t") and not lines[i].begins_with(" ") and not stripped.begins_with("#"):
+				func_end = i
+				break
+	
+	if func_start == -1:
+		return {"ok": false, "error": "Function not found: " + func_name}
+	
+	if func_end == -1:
+		func_end = lines.size()
+	
+	# Remove trailing empty lines from function body
+	while func_end > func_start + 1 and lines[func_end - 1].strip_edges().is_empty():
+		func_end -= 1
+	
+	# Replace function body
+	var new_lines := Array(new_body.split("\n"))
+	
+	# Remove old function lines
+	for i in range(func_end - 1, func_start - 1, -1):
+		lines.remove_at(i)
+	
+	# Insert new function lines
+	for i in range(new_lines.size()):
+		lines.insert(func_start + i, new_lines[i])
+	
+	var new_content := "\n".join(PackedStringArray(lines))
+	var write_file := FileAccess.open(script_path, FileAccess.WRITE)
+	if write_file == null:
+		return {"ok": false, "error": "Cannot write to file: " + script_path}
+	write_file.store_string(new_content)
+	write_file.close()
+	
+	return {"ok": true, "function": func_name}
+
+
+func _internal_modify_function_delete(args: Dictionary) -> Dictionary:
+	"""Delete a function from a script file."""
+	var script_path: String = args.get("path", "")
+	var func_name: String = args.get("name", "")
+	
+	if script_path.is_empty() or func_name.is_empty():
+		return {"ok": false, "error": "Missing path or function name"}
+	
+	var file := FileAccess.open(script_path, FileAccess.READ)
+	if file == null:
+		return {"ok": false, "error": "Cannot open file: " + script_path}
+	
+	var content: String = file.get_as_text()
+	file.close()
+	
+	var lines: Array = Array(content.split("\n"))
+	
+	# Find the function
+	var re_func := RegEx.new()
+	re_func.compile("^func\\s+" + func_name + "\\s*\\(")
+	
+	var func_start := -1
+	var func_end := -1
+	
+	for i in range(lines.size()):
+		if func_start == -1:
+			if re_func.search(lines[i].strip_edges()):
+				func_start = i
+		elif func_start != -1:
+			# Find end of function (next top-level declaration or end of file)
+			var stripped: String = lines[i].strip_edges()
+			if not stripped.is_empty() and not lines[i].begins_with("\t") and not lines[i].begins_with(" ") and not stripped.begins_with("#"):
+				func_end = i
+				break
+	
+	if func_start == -1:
+		return {"ok": false, "error": "Function not found: " + func_name}
+	
+	if func_end == -1:
+		func_end = lines.size()
+	
+	# Remove trailing empty lines before the function
+	while func_end > func_start + 1 and lines[func_end - 1].strip_edges().is_empty():
+		func_end -= 1
+	
+	# Remove the function lines
+	for i in range(func_end - 1, func_start - 1, -1):
+		lines.remove_at(i)
+	
+	# Remove extra blank lines that might be left
+	# (but keep at least one blank line between declarations)
+	
+	var new_content := "\n".join(PackedStringArray(lines))
+	var write_file := FileAccess.open(script_path, FileAccess.WRITE)
+	if write_file == null:
+		return {"ok": false, "error": "Cannot write to file: " + script_path}
+	write_file.store_string(new_content)
+	write_file.close()
+	
+	return {"ok": true, "deleted": func_name}
+
+
+func _internal_find_usages(args: Dictionary) -> Dictionary:
+	"""Find all usages of a variable, signal, or function across all scripts."""
+	var name: String = args.get("name", "")
+	var item_type: String = args.get("type", "")  # "variable", "signal", "function"
+	var root_path: String = args.get("root", "res://")
+	
+	if name.is_empty():
+		return {"ok": false, "error": "No name provided"}
+	
+	# Collect all scripts
+	var script_paths: Array = []
+	_collect_scripts(root_path, script_paths, false)
+	
+	var usages: Array = []
+	
+	# Build regex pattern based on type
+	var pattern := RegEx.new()
+	if item_type == "signal":
+		# Match: signal_name.emit() or signal_name.connect() or .signal_name.
+		pattern.compile("\\b" + name + "\\b")
+	else:
+		# Match word boundary for variables and functions
+		pattern.compile("\\b" + name + "\\b")
+	
+	for path in script_paths:
+		var file := FileAccess.open(path, FileAccess.READ)
+		if file == null:
+			continue
+		
+		var content: String = file.get_as_text()
+		file.close()
+		
+		var lines: PackedStringArray = content.split("\n")
+		for i in range(lines.size()):
+			var line: String = lines[i]
+			if pattern.search(line):
+				# Skip the declaration line itself
+				if item_type == "variable" and RegEx.create_from_string("^\\s*(@export)?\\s*var\\s+" + name + "\\b").search(line):
+					continue
+				if item_type == "signal" and RegEx.create_from_string("^\\s*signal\\s+" + name + "\\b").search(line):
+					continue
+				if item_type == "function" and RegEx.create_from_string("^\\s*func\\s+" + name + "\\s*\\(").search(line):
+					continue
+				
+				usages.append({
+					"file": path,
+					"line": i + 1,
+					"code": line.strip_edges()
+				})
+	
+	return {"ok": true, "usages": usages, "count": usages.size()}
+
+
+# Helper functions for file modification
+
+func _build_var_line(name: String, type: String, default: String, exported: bool, onready: bool) -> String:
+	var line := ""
+	if exported:
+		line += "@export "
+	if onready:
+		line += "@onready "
+	line += "var " + name
+	if not type.is_empty():
+		line += ": " + type
+	if not default.is_empty():
+		line += " = " + default
+	return line
+
+
+func _find_var_insert_position(lines: Array, exported: bool) -> int:
+	"""Find the best position to insert a new variable."""
+	var last_var_line := -1
+	var first_func_line := -1
+	var after_class_decl := 0
+	
+	var re_var := RegEx.new()
+	re_var.compile("^(@export)?\\s*(@onready)?\\s*var\\s+")
+	var re_func := RegEx.new()
+	re_func.compile("^func\\s+")
+	var re_class := RegEx.new()
+	re_class.compile("^(class_name|extends)\\s+")
+	
+	for i in range(lines.size()):
+		var stripped: String = lines[i].strip_edges()
+		if re_class.search(stripped):
+			after_class_decl = i + 1
+		if re_var.search(stripped):
+			last_var_line = i
+		if re_func.search(stripped) and first_func_line == -1:
+			first_func_line = i
+			break
+	
+	# Insert after last variable, or before first function, or after class declarations
+	if last_var_line != -1:
+		return last_var_line + 1
+	if first_func_line != -1:
+		return first_func_line
+	return max(after_class_decl, 2)  # At least after extends/class_name
+
+
+func _find_signal_insert_position(lines: Array) -> int:
+	"""Find the best position to insert a new signal."""
+	var last_signal_line := -1
+	var first_var_line := -1
+	var after_class_decl := 0
+	
+	var re_signal := RegEx.new()
+	re_signal.compile("^signal\\s+")
+	var re_var := RegEx.new()
+	re_var.compile("^(@export)?\\s*var\\s+")
+	var re_class := RegEx.new()
+	re_class.compile("^(class_name|extends)\\s+")
+	
+	for i in range(lines.size()):
+		var stripped: String = lines[i].strip_edges()
+		if re_class.search(stripped):
+			after_class_decl = i + 1
+		if re_signal.search(stripped):
+			last_signal_line = i
+		if re_var.search(stripped) and first_var_line == -1:
+			first_var_line = i
+	
+	# Insert after last signal, or before first var, or after class declarations
+	if last_signal_line != -1:
+		return last_signal_line + 1
+	if first_var_line != -1:
+		return first_var_line
+	return max(after_class_decl, 2)

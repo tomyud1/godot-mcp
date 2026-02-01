@@ -102,6 +102,15 @@ func set_editor_plugin(plugin: EditorPlugin) -> void:
 
 func execute_tool(tool_name: String, args: Dictionary) -> Dictionary:
 	"""Execute a tool by name with the given arguments."""
+	
+	# Handle internal visualizer commands (not exposed as MCP tools)
+	if tool_name.begins_with("visualizer._internal_"):
+		var method: String = tool_name.replace("visualizer.", "")
+		if _visualizer_tools.has_method(method):
+			return _visualizer_tools.call(method, args)
+		else:
+			return {"ok": false, "error": "Internal method not found: " + method}
+	
 	if not _tool_map.has(tool_name):
 		return {
 			"ok": false,
