@@ -7,10 +7,16 @@
   "bin": {
     "godot-mcp-server": "./dist/index.js"
   },
+  "files": [
+    "dist",
+    "scripts"
+  ],
   "scripts": {
-    "build": "tsc && cp src/visualizer.html dist/visualizer.html",
+    "build": "tsc && node scripts/build-visualizer.js",
+    "build:visualizer": "node scripts/build-visualizer.js",
+    "prepare": "npm run build",
     "start": "node dist/index.js",
-    "dev": "tsc && node dist/index.js",
+    "dev": "tsc && node scripts/build-visualizer.js && node dist/index.js",
     "watch": "tsc --watch"
   },
   "keywords": [
@@ -27,6 +33,7 @@
   "devDependencies": {
     "@types/node": "^20.11.0",
     "@types/ws": "^8.5.10",
+    "esbuild": "^0.20.0",
     "typescript": "^5.3.0"
   }
 }
