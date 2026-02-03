@@ -280,8 +280,25 @@ canvas.dragging { cursor: grabbing; }
 #zoom-indicator:hover { background: var(--bg-hover); border-color: var(--border-light); }
 #zoom-indicator.faded { opacity: 0.4; }
 #zoom-indicator.faded:hover { opacity: 1; }
-#zoom-indicator svg { flex-shrink: 0; }
-#zoom-indicator .zoom-text { color: var(--text-secondary); font-weight: 500; min-width: 36px; text-align: center; }
+#zoom-indicator svg { flex-shrink: 0; cursor: pointer; }
+#zoom-indicator svg:hover { stroke: var(--text-primary); }
+#zoom-indicator .zoom-input {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  font-weight: 500;
+  font-size: 12px;
+  width: 42px;
+  text-align: center;
+  padding: 2px 0;
+  cursor: text;
+}
+#zoom-indicator .zoom-input:focus {
+  outline: none;
+  background: var(--bg-tertiary);
+  border-radius: 3px;
+  color: var(--text-primary);
+}
 
 #legend .item { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; color: var(--text-secondary); }
 #legend .item:last-child { margin-bottom: 0; }
@@ -1024,4 +1041,370 @@ canvas.dragging { cursor: grabbing; }
 .line-content {
   white-space: pre;
   flex: 1;
+}
+
+/* ============================================================================
+   SCENE VIEW STYLES
+   ============================================================================ */
+
+/* Scene Back Button - positioned well after the view toggle */
+#scene-back-btn {
+  position: fixed;
+  top: 20px;
+  left: 180px;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.3);
+  transition: all 0.15s;
+}
+
+#scene-back-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  border-color: var(--border-light);
+}
+
+#scene-back-btn svg { flex-shrink: 0; opacity: 0.7; width: 12px; height: 12px; }
+#scene-back-btn .scene-name {
+  color: var(--accent);
+  font-weight: 600;
+  max-width: 100px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Hide legend in expanded scene view */
+#legend.hidden { display: none; }
+
+/* ============================================================================
+   SCENE NODE PROPERTIES PANEL STYLES
+   ============================================================================ */
+
+/* Loading and error states */
+.loading-state, .error-state {
+  padding: 40px 20px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+.error-state {
+  color: #f38ba8;
+}
+
+/* Property sections - styled like Godot inspector */
+.property-section {
+  margin-bottom: 4px;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.property-section .section-header {
+  cursor: pointer;
+  user-select: none;
+  background: var(--bg-secondary);
+  padding: 10px 14px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.property-section .section-header:hover {
+  background: var(--bg-hover);
+}
+
+.property-section .section-count {
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 10px;
+  font-weight: 500;
+}
+
+.property-section.collapsed .property-list {
+  display: none;
+}
+
+.property-section.collapsed .section-header span:first-child::before {
+  content: '▶ ';
+}
+
+.property-section:not(.collapsed) .section-header span:first-child::before {
+  content: '▼ ';
+}
+
+.property-section .section-header span:first-child {
+  display: flex;
+  align-items: center;
+}
+
+.property-section .section-header span:first-child::before {
+  margin-right: 4px;
+  font-size: 10px;
+  opacity: 0.6;
+}
+
+.property-list {
+  padding: 4px 0;
+  background: var(--bg-primary);
+}
+
+/* Property rows - cleaner layout */
+.property-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  margin-bottom: 1px;
+  transition: background 0.1s;
+}
+
+.property-row:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.property-name {
+  flex: 0 0 40%;
+  font-size: 13px;
+  color: var(--text-secondary);
+  text-overflow: ellipsis;
+  overflow: hidden;
+  white-space: nowrap;
+  padding-right: 8px;
+}
+
+.property-value {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+/* Property inputs */
+.property-input {
+  width: 100%;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 10px;
+  font-size: 13px;
+  color: var(--text-primary);
+  font-family: 'SF Mono', Monaco, monospace;
+}
+
+.property-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.property-input::-webkit-inner-spin-button,
+.property-input::-webkit-outer-spin-button {
+  opacity: 1;
+}
+
+/* Property select */
+.property-select {
+  width: 100%;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 10px;
+  font-size: 13px;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.property-select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* Toggle switch */
+.toggle-switch {
+  position: relative;
+  display: inline-block;
+  width: 36px;
+  height: 20px;
+}
+
+.toggle-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.toggle-slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  transition: 0.15s;
+}
+
+.toggle-slider::before {
+  position: absolute;
+  content: "";
+  height: 14px;
+  width: 14px;
+  left: 2px;
+  bottom: 2px;
+  background-color: var(--text-muted);
+  border-radius: 50%;
+  transition: 0.15s;
+}
+
+.toggle-switch input:checked + .toggle-slider {
+  background-color: rgba(166, 227, 161, 0.3);
+  border-color: var(--gd-signal);
+}
+
+.toggle-switch input:checked + .toggle-slider::before {
+  background-color: var(--gd-signal);
+  transform: translateX(16px);
+}
+
+/* Range input group */
+.range-input-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
+.property-range {
+  flex: 1;
+  height: 4px;
+  -webkit-appearance: none;
+  background: var(--bg-tertiary);
+  border-radius: 2px;
+  outline: none;
+}
+
+.property-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  background: var(--accent);
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.property-range::-webkit-slider-thumb:hover {
+  background: var(--accent-light);
+}
+
+.range-number {
+  width: 60px !important;
+  flex: 0 0 auto;
+}
+
+/* Vector input group */
+.vector-input-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+}
+
+.vector-input-group label {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.vector-input-group .property-input {
+  width: auto;
+  flex: 1;
+  min-width: 50px;
+}
+
+.vector-input-group.vec3 .property-input {
+  min-width: 40px;
+}
+
+/* Color input group */
+.color-input-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+}
+
+.property-color {
+  width: 40px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+  background: transparent;
+}
+
+.property-color::-webkit-color-swatch-wrapper {
+  padding: 2px;
+}
+
+.property-color::-webkit-color-swatch {
+  border-radius: 2px;
+  border: none;
+}
+
+.color-alpha {
+  width: 50px !important;
+  flex: 0 0 auto;
+}
+
+/* Readonly property */
+.property-readonly {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: 'SF Mono', Monaco, monospace;
+  background: var(--bg-tertiary);
+  padding: 4px 8px;
+  border-radius: 4px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Resource path */
+.resource-path {
+  font-size: 11px;
+  color: var(--gd-string);
+  font-family: 'SF Mono', Monaco, monospace;
+  background: var(--bg-tertiary);
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+
+/* Script badge in meta row */
+.meta-badge.script-badge {
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.meta-badge.script-badge:hover {
+  background: var(--bg-tertiary);
 }

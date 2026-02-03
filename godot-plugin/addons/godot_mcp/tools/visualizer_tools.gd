@@ -4,9 +4,13 @@ class_name VisualizerTools
 ## Crawls a Godot project and parses all GDScript files to build a project map.
 
 var _editor_plugin: EditorPlugin = null
+var _scene_tools_ref: Node = null
 
 func set_editor_plugin(plugin: EditorPlugin) -> void:
 	_editor_plugin = plugin
+
+func set_scene_tools_ref(scene_tools: Node) -> void:
+	_scene_tools_ref = scene_tools
 
 func map_project(args: Dictionary) -> Dictionary:
 	"""Crawl the entire project and build a structural map of all scripts."""
@@ -920,3 +924,57 @@ func _find_signal_insert_position(lines: Array) -> int:
 	if first_var_line != -1:
 		return first_var_line
 	return max(after_class_decl, 2)
+
+
+# ============================================================================
+# SCENE VISUALIZER INTERNAL FUNCTIONS
+# These are called by the visualizer for scene view functionality
+# ============================================================================
+
+func _internal_get_scene_hierarchy(args: Dictionary) -> Dictionary:
+	"""Get scene hierarchy for visualizer."""
+	if _scene_tools_ref and _scene_tools_ref.has_method("get_scene_hierarchy"):
+		return _scene_tools_ref.get_scene_hierarchy(args)
+	return {"ok": false, "error": "Scene tools not available"}
+
+
+func _internal_get_scene_node_properties(args: Dictionary) -> Dictionary:
+	"""Get node properties for visualizer panel."""
+	if _scene_tools_ref and _scene_tools_ref.has_method("get_scene_node_properties"):
+		return _scene_tools_ref.get_scene_node_properties(args)
+	return {"ok": false, "error": "Scene tools not available"}
+
+
+func _internal_set_scene_node_property(args: Dictionary) -> Dictionary:
+	"""Set node property from visualizer panel."""
+	if _scene_tools_ref and _scene_tools_ref.has_method("set_scene_node_property"):
+		return _scene_tools_ref.set_scene_node_property(args)
+	return {"ok": false, "error": "Scene tools not available"}
+
+
+func _internal_add_scene_node(args: Dictionary) -> Dictionary:
+	"""Add a node to a scene from visualizer."""
+	if _scene_tools_ref and _scene_tools_ref.has_method("add_node"):
+		return _scene_tools_ref.add_node(args)
+	return {"ok": false, "error": "Scene tools not available"}
+
+
+func _internal_remove_scene_node(args: Dictionary) -> Dictionary:
+	"""Remove a node from a scene from visualizer."""
+	if _scene_tools_ref and _scene_tools_ref.has_method("remove_node"):
+		return _scene_tools_ref.remove_node(args)
+	return {"ok": false, "error": "Scene tools not available"}
+
+
+func _internal_rename_scene_node(args: Dictionary) -> Dictionary:
+	"""Rename a node in a scene from visualizer."""
+	if _scene_tools_ref and _scene_tools_ref.has_method("rename_node"):
+		return _scene_tools_ref.rename_node(args)
+	return {"ok": false, "error": "Scene tools not available"}
+
+
+func _internal_move_scene_node(args: Dictionary) -> Dictionary:
+	"""Move/reorder a node in a scene from visualizer."""
+	if _scene_tools_ref and _scene_tools_ref.has_method("move_node"):
+		return _scene_tools_ref.move_node(args)
+	return {"ok": false, "error": "Scene tools not available"}

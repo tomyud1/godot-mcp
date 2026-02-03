@@ -132,7 +132,8 @@ async function handleInternalCommand(message: {
     // Forward to Godot's internal functions via tool invocation
     // The tool name prefix "_internal_" ensures these aren't exposed as MCP tools
     const result = await godotBridge.invokeTool(`visualizer._internal_${command}`, args);
-    return result as { ok: boolean; [key: string]: unknown };
+    // Add ok: true since the Godot plugin strips it from the response
+    return { ok: true, ...(result as Record<string, unknown>) };
   } catch (error) {
     const errMsg = error instanceof Error ? error.message : 'Unknown error';
     return { ok: false, error: errMsg };

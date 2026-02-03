@@ -5,7 +5,10 @@
 import {
   nodes, edges, NODE_W, NODE_H, camera, defaultZoom,
   W, H, setDimensions, searchTerm, hoveredNode, selectedNode,
-  currentView, sceneData
+  currentView, sceneData, expandedScene, expandedSceneHierarchy,
+  selectedSceneNode, hoveredSceneNode, scenePositions,
+  setExpandedScene, setSelectedSceneNode, setHoveredSceneNode,
+  setScenePosition
 } from './state.js';
 
 let canvas, ctx;
@@ -70,7 +73,7 @@ export function screenToWorld(sx, sy) {
 
 export function updateZoomIndicator() {
   const pct = Math.round(camera.zoom * 100);
-  zoomText.textContent = pct + '%';
+  zoomText.value = pct + '%';
   zoomIndicator.classList.toggle('faded', Math.abs(camera.zoom - defaultZoom) < 0.01);
 }
 
@@ -80,8 +83,26 @@ export function resetZoom() {
   draw();
 }
 
-// Make resetZoom available globally for onclick
+export function setCustomZoom(value) {
+  // Parse percentage string like "150%" or just "150" or "1.5"
+  let parsed = parseFloat(value.replace('%', '').trim());
+  if (isNaN(parsed)) return;
+  
+  // If user entered a small number like 1.5, treat as multiplier
+  if (parsed > 0 && parsed < 10) {
+    parsed = parsed * 100;
+  }
+  
+  // Clamp to valid range (10% - 500%)
+  const newZoom = Math.max(0.1, Math.min(5, parsed / 100));
+  camera.zoom = newZoom;
+  updateZoomIndicator();
+  draw();
+}
+
+// Make functions available globally for onclick
 window.resetZoom = resetZoom;
+window.setCustomZoom = setCustomZoom;
 
 // ---- Position Persistence ----
 export function savePositions() {
@@ -364,6 +385,23 @@ export function draw() {
   ctx.restore();
 }
 
+// Scene view constants
+const SCENE_CARD_W = 200;  // Match NODE_W
+const SCENE_CARD_H = 54;   // Match NODE_H
+const SCENE_NODE_MIN_W = 80;   // Minimum node width
+const SCENE_NODE_MAX_W = 200;  // Maximum node width
+const SCENE_NODE_H = 36;
+const SCENE_NODE_GAP_X = 15;  // Reduced for tighter layout
+const SCENE_NODE_GAP_Y = 40;
+
+// Calculate dynamic node width based on name
+function calculateNodeWidth(name) {
+  // Approximate width: ~7px per character + padding
+  const textWidth = (name || 'Node').length * 7;
+  const padding = 35; // For script icon and margins
+  return Math.min(SCENE_NODE_MAX_W, Math.max(SCENE_NODE_MIN_W, textWidth + padding));
+}
+
 function drawSceneView() {
   // Ensure DPR transform is set for crisp rendering on high-DPI displays
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -385,49 +423,382 @@ function drawSceneView() {
     return;
   }
 
-  // Draw scene nodes (similar to script nodes but for scenes)
-  const scenes = sceneData.scenes;
-  scenes.forEach((scene, i) => {
-    const x = Math.round(scene.x || (i % 4) * 250 + 100);
-    const y = Math.round(scene.y || Math.floor(i / 4) * 150 + 100);
-
-    // Scene card
-    ctx.fillStyle = '#2a4858';
-    ctx.strokeStyle = '#3d6b7a';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    roundRect(ctx, x, y, 200, 80, 8);
-    ctx.fill();
-    ctx.stroke();
-
-    // Scene name - scales with zoom
-    ctx.fillStyle = '#e8e4df';
-    ctx.font = `600 14px -apple-system, system-ui, sans-serif`;
-    ctx.textAlign = 'left';
-    ctx.fillText(scene.name || scene.path.split('/').pop(), x + 12, y + 24);
-
-    // Scene path
-    ctx.fillStyle = '#706c66';
-    ctx.font = `11px -apple-system, system-ui, sans-serif`;
-    ctx.fillText(scene.path, x + 12, y + 42);
-
-    // Node count
-    const nodeCount = scene.nodes ? scene.nodes.length : 0;
-    ctx.fillStyle = '#89dceb';
-    ctx.fillText(`${nodeCount} nodes`, x + 12, y + 60);
-  });
+  // Check if we're in expanded mode
+  if (expandedScene && expandedSceneHierarchy) {
+    drawExpandedSceneView();
+  } else {
+    drawSceneOverview();
+  }
 
   ctx.restore();
+}
+
+function drawSceneOverview() {
+  const scenes = sceneData.scenes;
+  
+  // Calculate positions if not set
+  scenes.forEach((scene, i) => {
+    if (!scenePositions[scene.path]) {
+      const cols = Math.max(1, Math.floor(Math.sqrt(scenes.length * 1.5)));
+      setScenePosition(
+        scene.path,
+        (i % cols) * (SCENE_CARD_W + 40) - ((cols - 1) * (SCENE_CARD_W + 40)) / 2,
+        Math.floor(i / cols) * (SCENE_CARD_H + 30) - 100
+      );
+    }
+  });
+
+  // Draw edges between scenes (instance relationships)
+  if (sceneData.edges) {
+    ctx.globalAlpha = 0.4;
+    for (const edge of sceneData.edges) {
+      const fromScene = scenes.find(s => s.path === edge.from);
+      const toScene = scenes.find(s => s.path === edge.to);
+      if (!fromScene || !toScene) continue;
+
+      const fromPos = scenePositions[edge.from];
+      const toPos = scenePositions[edge.to];
+      if (!fromPos || !toPos) continue;
+
+      const fromX = fromPos.x + SCENE_CARD_W / 2;
+      const fromY = fromPos.y + SCENE_CARD_H;
+      const toX = toPos.x + SCENE_CARD_W / 2;
+      const toY = toPos.y;
+
+      ctx.beginPath();
+      ctx.moveTo(fromX, fromY);
+      ctx.lineTo(toX, toY);
+      ctx.strokeStyle = '#89dceb';
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([4, 4]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  // Draw scene cards
+  scenes.forEach((scene, i) => {
+    const pos = scenePositions[scene.path];
+    const x = pos.x;
+    const y = pos.y;
+    
+    const isHovered = hoveredSceneNode && hoveredSceneNode.scenePath === scene.path && !hoveredSceneNode.nodePath;
+    const isExpanded = expandedScene === scene.path;
+    const sceneColor = getSceneColor(scene.path);
+
+    // Shadow - match script node styling
+    ctx.shadowColor = 'rgba(0,0,0,0.4)';
+    ctx.shadowBlur = isHovered ? 16 : 8;
+    ctx.shadowOffsetY = 2;
+
+    // Scene card background - match script node colors
+    ctx.beginPath();
+    roundRect(ctx, x, y, SCENE_CARD_W, SCENE_CARD_H, 10);
+    ctx.fillStyle = isExpanded ? '#35353b' : isHovered ? '#303036' : '#242428';
+    ctx.fill();
+
+    ctx.shadowBlur = 0;
+    ctx.shadowOffsetY = 0;
+
+    // Border - match script node styling
+    ctx.strokeStyle = isExpanded ? sceneColor : isHovered ? sceneColor : '#3a3a40';
+    ctx.lineWidth = isExpanded ? 2 : 1;
+    ctx.stroke();
+
+    // Left accent bar (scene color)
+    ctx.beginPath();
+    ctx.roundRect(x + 4, y + 8, 3, SCENE_CARD_H - 16, 2);
+    ctx.fillStyle = sceneColor;
+    ctx.fill();
+
+    // Scene name (main label)
+    ctx.fillStyle = '#e8e4df';
+    ctx.font = `600 13px -apple-system, system-ui, sans-serif`;
+    ctx.textAlign = 'left';
+    const sceneName = scene.name || scene.path.split('/').pop().replace('.tscn', '');
+    ctx.fillText(sceneName, x + 14, y + 22);
+
+    // Root type and stats on second line
+    const nodeCount = scene.node_count || (scene.nodes ? scene.nodes.length : 0);
+    ctx.fillStyle = '#706c66';
+    ctx.font = `11px -apple-system, system-ui, sans-serif`;
+    ctx.fillText(`${scene.root_type || 'Node'} · ${nodeCount} nodes`, x + 14, y + 40);
+  });
+}
+
+function drawExpandedSceneView() {
+  const hierarchy = expandedSceneHierarchy;
+  if (!hierarchy) return;
+
+  // Draw back button area (handled by HTML overlay)
+  
+  // Draw the node tree
+  const treeLayout = calculateTreeLayout(hierarchy);
+  
+  // Draw connection lines first
+  drawTreeConnections(treeLayout.nodes);
+  
+  // Draw nodes
+  for (const node of treeLayout.nodes) {
+    drawSceneNode(node);
+  }
+}
+
+function calculateTreeLayout(hierarchy) {
+  const nodes = [];
+  const LEVEL_HEIGHT = SCENE_NODE_H + SCENE_NODE_GAP_Y;
+  
+  // Simple layout: each node positions its children directly below,
+  // centered on itself, without considering grandchildren widths
+  function processNode(node, depth, centerX) {
+    const nodeWidth = calculateNodeWidth(node.name);
+    const x = centerX - nodeWidth / 2;
+    const y = depth * LEVEL_HEIGHT;
+    
+    const nodeLayout = {
+      ...node,
+      x,
+      y,
+      width: nodeWidth,
+      height: SCENE_NODE_H,
+      childPositions: []
+    };
+    nodes.push(nodeLayout);
+
+    // Layout children centered under this node
+    if (node.children && node.children.length > 0) {
+      // Calculate total width of direct children only
+      let totalChildrenWidth = 0;
+      for (const child of node.children) {
+        totalChildrenWidth += calculateNodeWidth(child.name) + SCENE_NODE_GAP_X;
+      }
+      totalChildrenWidth -= SCENE_NODE_GAP_X; // Remove last gap
+      
+      // Start children centered under parent
+      let childX = centerX - totalChildrenWidth / 2;
+      
+      for (const child of node.children) {
+        const childWidth = calculateNodeWidth(child.name);
+        const childCenterX = childX + childWidth / 2;
+        
+        nodeLayout.childPositions.push({
+          x: childCenterX,
+          y: (depth + 1) * LEVEL_HEIGHT
+        });
+        
+        processNode(child, depth + 1, childCenterX);
+        childX += childWidth + SCENE_NODE_GAP_X;
+      }
+    }
+
+    return nodeLayout;
+  }
+
+  processNode(hierarchy, 0, 0);
+
+  return { nodes };
+}
+
+function drawTreeConnections(nodes) {
+  ctx.strokeStyle = '#4a5568';
+  ctx.lineWidth = 1.5;
+  ctx.setLineDash([]);
+
+  for (const node of nodes) {
+    if (node.childPositions && node.childPositions.length > 0) {
+      const parentX = node.x + node.width / 2;
+      const parentY = node.y + SCENE_NODE_H;
+
+      for (const childPos of node.childPositions) {
+        ctx.beginPath();
+        ctx.moveTo(parentX, parentY);
+        
+        // Draw an elbow connector
+        const midY = parentY + (childPos.y - parentY) / 2;
+        ctx.lineTo(parentX, midY);
+        ctx.lineTo(childPos.x, midY);
+        ctx.lineTo(childPos.x, childPos.y);
+        
+        ctx.stroke();
+      }
+    }
+  }
+}
+
+function drawSceneNode(node) {
+  const x = node.x;
+  const y = node.y;
+  const w = node.width;
+  const isSelected = selectedSceneNode && selectedSceneNode.path === node.path;
+  const isHovered = hoveredSceneNode && hoveredSceneNode.nodePath === node.path;
+
+  // Node type color
+  const nodeColor = getNodeTypeColor(node.type);
+
+  // Shadow
+  ctx.shadowColor = 'rgba(0,0,0,0.25)';
+  ctx.shadowBlur = isHovered ? 12 : 6;
+  ctx.shadowOffsetY = 2;
+
+  // Background
+  ctx.beginPath();
+  roundRect(ctx, x, y, w, SCENE_NODE_H, 6);
+  ctx.fillStyle = isSelected ? '#35353b' : isHovered ? '#303036' : '#242428';
+  ctx.fill();
+
+  ctx.shadowBlur = 0;
+  ctx.shadowOffsetY = 0;
+
+  // Border
+  ctx.strokeStyle = isSelected ? nodeColor : isHovered ? nodeColor : '#3a3a40';
+  ctx.lineWidth = isSelected ? 2 : 1;
+  ctx.stroke();
+
+  // Left accent
+  ctx.beginPath();
+  ctx.roundRect(x + 3, y + 6, 2, SCENE_NODE_H - 12, 1);
+  ctx.fillStyle = nodeColor;
+  ctx.fill();
+
+  // Node name
+  ctx.fillStyle = '#e8e4df';
+  ctx.font = `600 11px -apple-system, system-ui, sans-serif`;
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  
+  const displayName = node.name || 'Node';
+  ctx.fillText(displayName, x + 10, y + SCENE_NODE_H / 2 - 4);
+
+  // Node type (smaller, below name)
+  ctx.fillStyle = '#706c66';
+  ctx.font = `9px -apple-system, system-ui, sans-serif`;
+  ctx.fillText(node.type, x + 10, y + SCENE_NODE_H / 2 + 7);
+
+  // Script indicator
+  if (node.script) {
+    ctx.fillStyle = '#a6e3a1';
+    ctx.font = `10px -apple-system, system-ui, sans-serif`;
+    ctx.textAlign = 'right';
+    ctx.fillText('📜', x + w - 6, y + SCENE_NODE_H / 2);
+    ctx.textAlign = 'left';
+  }
+
+  // Sibling index indicator (for node order)
+  if (node.index !== undefined && node.index > 0) {
+    ctx.fillStyle = '#4a5568';
+    ctx.font = `9px -apple-system, system-ui, sans-serif`;
+    ctx.textAlign = 'right';
+    ctx.fillText(`#${node.index}`, x + w - 6, y + 10);
+    ctx.textAlign = 'left';
+  }
+}
+
+function getSceneColor(scenePath) {
+  // Generate consistent color based on path
+  const colors = ['#89dceb', '#a6e3a1', '#f9e2af', '#cba6f7', '#f38ba8', '#fab387'];
+  let hash = 0;
+  for (let i = 0; i < scenePath.length; i++) {
+    hash = scenePath.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  return colors[Math.abs(hash) % colors.length];
+}
+
+function getNodeTypeColor(nodeType) {
+  // Godot's actual node type colors
+  const GODOT_GREEN = '#8eef97';   // Control/UI nodes
+  const GODOT_BLUE = '#8da5f3';    // Node2D nodes
+  const GODOT_RED = '#fc7f7f';     // Node3D nodes
+  const GODOT_GRAY = '#b2b2b2';    // Base Node
+  
+  // Control/UI nodes (green)
+  const controlTypes = [
+    'Control', 'Label', 'Button', 'LineEdit', 'TextEdit', 'RichTextLabel',
+    'Panel', 'PanelContainer', 'Container', 'BoxContainer', 'VBoxContainer', 
+    'HBoxContainer', 'GridContainer', 'MarginContainer', 'ScrollContainer',
+    'TabContainer', 'ProgressBar', 'TextureRect', 'ColorRect', 'NinePatchRect',
+    'CheckBox', 'CheckButton', 'OptionButton', 'SpinBox', 'Slider', 'HSlider',
+    'VSlider', 'Tree', 'ItemList', 'MenuButton', 'LinkButton', 'CanvasLayer'
+  ];
+  
+  // Node2D nodes (blue)
+  const node2DTypes = [
+    'Node2D', 'Sprite2D', 'AnimatedSprite2D', 'CharacterBody2D', 'RigidBody2D',
+    'StaticBody2D', 'Area2D', 'CollisionShape2D', 'CollisionPolygon2D',
+    'Camera2D', 'Path2D', 'PathFollow2D', 'Line2D', 'Polygon2D', 'TileMap',
+    'TileMapLayer', 'Marker2D', 'RemoteTransform2D', 'VisibleOnScreenNotifier2D',
+    'GPUParticles2D', 'CPUParticles2D', 'LightOccluder2D', 'PointLight2D',
+    'DirectionalLight2D', 'AudioStreamPlayer2D', 'NavigationRegion2D'
+  ];
+  
+  // Node3D nodes (red)
+  const node3DTypes = [
+    'Node3D', 'Sprite3D', 'AnimatedSprite3D', 'CharacterBody3D', 'RigidBody3D',
+    'StaticBody3D', 'Area3D', 'CollisionShape3D', 'CollisionPolygon3D',
+    'Camera3D', 'MeshInstance3D', 'MultiMeshInstance3D', 'CSGBox3D',
+    'CSGCylinder3D', 'CSGSphere3D', 'CSGMesh3D', 'Path3D', 'PathFollow3D',
+    'GPUParticles3D', 'CPUParticles3D', 'OmniLight3D', 'SpotLight3D',
+    'DirectionalLight3D', 'AudioStreamPlayer3D', 'NavigationRegion3D'
+  ];
+  
+  // Check exact matches first, then partial
+  for (const type of controlTypes) {
+    if (nodeType === type || nodeType.includes(type)) return GODOT_GREEN;
+  }
+  for (const type of node2DTypes) {
+    if (nodeType === type || nodeType.includes(type)) return GODOT_BLUE;
+  }
+  for (const type of node3DTypes) {
+    if (nodeType === type || nodeType.includes(type)) return GODOT_RED;
+  }
+  
+  // Fallback: check for 2D/3D suffix
+  if (nodeType.endsWith('2D')) return GODOT_BLUE;
+  if (nodeType.endsWith('3D')) return GODOT_RED;
+  
+  return GODOT_GRAY; // Default gray for base Node
 }
 
 function drawSceneViewPlaceholder() {
   ctx.fillStyle = '#706c66';
   ctx.font = `16px -apple-system, system-ui, sans-serif`;
   ctx.textAlign = 'center';
-  ctx.fillText('Scene view coming soon...', 0, 0);
-  ctx.fillText('Requires scene mapping tool in Godot', 0, 24);
+  ctx.fillText('No scenes found', 0, 0);
+  ctx.fillText('Create a .tscn file in your project', 0, 24);
   ctx.textAlign = 'left';
 }
+
+// Export scene hit testing
+export function sceneHitTest(wx, wy) {
+  if (!sceneData || !sceneData.scenes) return null;
+
+  if (expandedScene && expandedSceneHierarchy) {
+    // Hit test expanded scene nodes
+    const treeLayout = calculateTreeLayout(expandedSceneHierarchy);
+    for (let i = treeLayout.nodes.length - 1; i >= 0; i--) {
+      const node = treeLayout.nodes[i];
+      if (wx >= node.x && wx <= node.x + node.width &&
+          wy >= node.y && wy <= node.y + SCENE_NODE_H) {
+        return { type: 'sceneNode', node, scenePath: expandedScene };
+      }
+    }
+    return null;
+  } else {
+    // Hit test scene cards
+    for (const scene of sceneData.scenes) {
+      const pos = scenePositions[scene.path];
+      if (!pos) continue;
+      
+      if (wx >= pos.x && wx <= pos.x + SCENE_CARD_W &&
+          wy >= pos.y && wy <= pos.y + SCENE_CARD_H) {
+        return { type: 'sceneCard', scene, scenePath: scene.path };
+      }
+    }
+    return null;
+  }
+}
+
+export { SCENE_CARD_W, SCENE_CARD_H, SCENE_NODE_H };
 
 export function roundRect(ctx, x, y, w, h, r) {
   ctx.moveTo(x + r, y);

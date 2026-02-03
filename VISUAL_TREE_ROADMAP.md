@@ -9,10 +9,18 @@
 - [x] Right-click context menu
 - [x] New script creation
 - [x] Draggable/resizable panels
+- [x] Scene View tab (Phase 4 - Core)
+  - Scene overview with cards showing scene info
+  - Click scene → expand to full node hierarchy tree
+  - Visual node tree with parent-child connections
+  - Sibling order indicators (for 2D draw order)
+  - Click node → dynamic properties panel
+  - Inline editing of all node properties
+  - Property controls: toggles, sliders, vectors, colors, enums
+  - Back navigation to scene overview
 
 ## In Progress
 - [ ] Function deletion with usage check
-- [ ] Scene view tab
 
 ## Planned
 
@@ -25,11 +33,11 @@
 - Script templates (Node2D, State Machine, Singleton, etc.)
 - Delete/rename scripts
 
-### Phase 4: Scene View
-- Separate "Scenes" tab
-- Scene nodes showing hierarchy
-- Click scene → dim unrelated, show connected scripts
-- Breadcrumb navigation
+### Phase 4: Scene View (Enhancements)
+- Drag to reorder siblings (change draw order)
+- Right-click context menu on scene nodes (add child, delete, rename)
+- Drag scripts onto scene nodes to attach
+- Cross-scene signal visualization
 
 ### Phase 5: Advanced
 - Minimap

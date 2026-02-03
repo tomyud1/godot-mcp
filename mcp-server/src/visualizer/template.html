@@ -21,9 +21,9 @@
   <div class="item"><div class="line" style="background:var(--edge-signal);height:0;border-top:2px dotted var(--edge-signal)"></div> signal</div>
 </div>
 
-<div id="zoom-indicator" onclick="resetZoom()" title="Click to reset zoom">
-  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/><path d="M8 11h6"/><path d="M11 8v6"/></svg>
-  <span class="zoom-text" id="zoom-text">100%</span>
+<div id="zoom-indicator" title="Click to reset, or type custom zoom">
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="2" onclick="resetZoom()" style="cursor:pointer"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/><path d="M8 11h6"/><path d="M11 8v6"/></svg>
+  <input type="text" class="zoom-input" id="zoom-text" value="100%" onchange="setCustomZoom(this.value)" onkeydown="if(event.key==='Enter'){this.blur()}" onclick="this.select()">
 </div>
 
 <div id="detail-panel">
@@ -40,6 +40,15 @@
 <div id="view-tabs">
   <button class="active" onclick="switchView('scripts')">Scripts</button>
   <button onclick="switchView('scenes')">Scenes</button>
+</div>
+
+<!-- Scene Back Button (shown when scene is expanded) -->
+<div id="scene-back-btn" style="display:none" onclick="goBackToSceneOverview()">
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+    <path d="M19 12H5M12 19l-7-7 7-7"/>
+  </svg>
+  <span>← Back to Scenes</span>
+  <span class="scene-name"></span>
 </div>
 
 <!-- Context Menu -->

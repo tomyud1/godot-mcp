@@ -21,8 +21,8 @@ func _enter_tree() -> void:
 	# Create tool executor
 	_tool_executor = ToolExecutorScript.new()
 	_tool_executor.name = "ToolExecutor"
-	_tool_executor.set_editor_plugin(self)
-	add_child(_tool_executor)
+	add_child(_tool_executor)  # _ready() runs here, creating child tools
+	_tool_executor.set_editor_plugin(self)  # Now _visualizer_tools exists
 
 	# Connect signals
 	_mcp_client.connected.connect(_on_connected)

@@ -148,7 +148,7 @@ func get_node_properties(args: Dictionary) -> Dictionary:
 
 	# Inheritance chain
 	var chain: Array = []
-	var cls := node_type
+	var cls: String = node_type
 	while cls != "":
 		chain.append(cls)
 		cls = ClassDB.get_parent_class(cls)

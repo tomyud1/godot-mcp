@@ -620,3 +620,264 @@ func set_sprite_texture(args: Dictionary) -> Dictionary:
 		return err
 
 	return {"ok": true, "message": "Set %s texture on node '%s'" % [texture_type, node_path]}
+
+# =============================================================================
+# get_scene_hierarchy (for visualizer)
+# =============================================================================
+func get_scene_hierarchy(args: Dictionary) -> Dictionary:
+	"""Get the full scene hierarchy with node information for the visualizer."""
+	var scene_path: String = _ensure_res_path(str(args.get("scene_path", "")))
+
+	if scene_path.strip_edges() == "res://":
+		return {"ok": false, "error": "Missing 'scene_path'"}
+
+	var result := _load_scene(scene_path)
+	if not result[1].is_empty():
+		return result[1]
+
+	var root: Node = result[0]
+	var hierarchy = _build_hierarchy_recursive(root, ".")
+	root.queue_free()
+
+	return {"ok": true, "scene_path": scene_path, "hierarchy": hierarchy}
+
+func _build_hierarchy_recursive(node: Node, path: String) -> Dictionary:
+	"""Build node hierarchy with all info needed for visualizer."""
+	var data := {
+		"name": str(node.name),
+		"type": node.get_class(),
+		"path": path,
+		"children": [],
+		"child_count": node.get_child_count()
+	}
+
+	# Check for attached script
+	var script = node.get_script()
+	if script:
+		data["script"] = script.resource_path
+
+	# Get node index (sibling order)
+	var parent = node.get_parent()
+	if parent:
+		data["index"] = node.get_index()
+
+	# Build children (preserving order for 2D draw order)
+	for i in range(node.get_child_count()):
+		var child = node.get_child(i)
+		var child_path = child.name if path == "." else path + "/" + child.name
+		data["children"].append(_build_hierarchy_recursive(child, child_path))
+
+	return data
+
+# =============================================================================
+# get_scene_node_properties (dynamic property fetching)
+# =============================================================================
+func get_scene_node_properties(args: Dictionary) -> Dictionary:
+	"""Get all properties of a specific node in a scene with their current values."""
+	var scene_path: String = _ensure_res_path(str(args.get("scene_path", "")))
+	var node_path: String = str(args.get("node_path", "."))
+
+	if scene_path.strip_edges() == "res://":
+		return {"ok": false, "error": "Missing 'scene_path'"}
+
+	var result := _load_scene(scene_path)
+	if not result[1].is_empty():
+		return result[1]
+
+	var root: Node = result[0]
+	var target = _find_node(root, node_path)
+	if not target:
+		root.queue_free()
+		return {"ok": false, "error": "Node not found: " + node_path}
+
+	var node_type = target.get_class()
+	var properties: Array = []
+	var categories: Dictionary = {}  # category -> [properties]
+
+	# Get property list with full metadata
+	for prop in target.get_property_list():
+		var prop_name: String = prop["name"]
+
+		# Skip internal/private properties
+		if prop_name.begins_with("_"):
+			continue
+		if prop_name in ["script", "owner", "scene_file_path", "unique_name_in_owner", "editor_description"]:
+			continue
+
+		# Only include editor-visible properties
+		var usage = prop.get("usage", 0)
+		if not (usage & PROPERTY_USAGE_EDITOR):
+			continue
+
+		# Get current value
+		var current_value = target.get(prop_name)
+
+		var prop_info := {
+			"name": prop_name,
+			"type": prop["type"],
+			"type_name": _type_id_to_name(prop["type"]),
+			"hint": prop.get("hint", 0),
+			"hint_string": prop.get("hint_string", ""),
+			"value": _serialize_value(current_value),
+			"usage": usage
+		}
+
+		# Determine category from class hierarchy
+		var category = _get_property_category(target, prop_name)
+		prop_info["category"] = category
+
+		if not categories.has(category):
+			categories[category] = []
+		categories[category].append(prop_info)
+		properties.append(prop_info)
+
+	# Get inheritance chain
+	var chain: Array = []
+	var cls: String = node_type
+	while cls != "":
+		chain.append(cls)
+		cls = ClassDB.get_parent_class(cls)
+
+	root.queue_free()
+
+	return {
+		"ok": true,
+		"scene_path": scene_path,
+		"node_path": node_path,
+		"node_type": node_type,
+		"node_name": target.name,
+		"inheritance_chain": chain,
+		"properties": properties,
+		"categories": categories,
+		"property_count": properties.size()
+	}
+
+func _type_id_to_name(type_id: int) -> String:
+	"""Convert Godot type ID to human-readable name."""
+	match type_id:
+		TYPE_NIL: return "null"
+		TYPE_BOOL: return "bool"
+		TYPE_INT: return "int"
+		TYPE_FLOAT: return "float"
+		TYPE_STRING: return "String"
+		TYPE_VECTOR2: return "Vector2"
+		TYPE_VECTOR2I: return "Vector2i"
+		TYPE_RECT2: return "Rect2"
+		TYPE_RECT2I: return "Rect2i"
+		TYPE_VECTOR3: return "Vector3"
+		TYPE_VECTOR3I: return "Vector3i"
+		TYPE_TRANSFORM2D: return "Transform2D"
+		TYPE_VECTOR4: return "Vector4"
+		TYPE_VECTOR4I: return "Vector4i"
+		TYPE_PLANE: return "Plane"
+		TYPE_QUATERNION: return "Quaternion"
+		TYPE_AABB: return "AABB"
+		TYPE_BASIS: return "Basis"
+		TYPE_TRANSFORM3D: return "Transform3D"
+		TYPE_PROJECTION: return "Projection"
+		TYPE_COLOR: return "Color"
+		TYPE_STRING_NAME: return "StringName"
+		TYPE_NODE_PATH: return "NodePath"
+		TYPE_RID: return "RID"
+		TYPE_OBJECT: return "Object"
+		TYPE_CALLABLE: return "Callable"
+		TYPE_SIGNAL: return "Signal"
+		TYPE_DICTIONARY: return "Dictionary"
+		TYPE_ARRAY: return "Array"
+		TYPE_PACKED_BYTE_ARRAY: return "PackedByteArray"
+		TYPE_PACKED_INT32_ARRAY: return "PackedInt32Array"
+		TYPE_PACKED_INT64_ARRAY: return "PackedInt64Array"
+		TYPE_PACKED_FLOAT32_ARRAY: return "PackedFloat32Array"
+		TYPE_PACKED_FLOAT64_ARRAY: return "PackedFloat64Array"
+		TYPE_PACKED_STRING_ARRAY: return "PackedStringArray"
+		TYPE_PACKED_VECTOR2_ARRAY: return "PackedVector2Array"
+		TYPE_PACKED_VECTOR3_ARRAY: return "PackedVector3Array"
+		TYPE_PACKED_COLOR_ARRAY: return "PackedColorArray"
+		_: return "Variant"
+
+func _get_property_category(node: Node, prop_name: String) -> String:
+	"""Determine which class in the hierarchy defines this property."""
+	var cls: String = node.get_class()
+	while cls != "":
+		# Check if this class defines the property (not inherited)
+		var class_props = ClassDB.class_get_property_list(cls, true)  # true = no inheritance
+		for prop in class_props:
+			if prop["name"] == prop_name:
+				return cls
+		cls = ClassDB.get_parent_class(cls)
+	return node.get_class()
+
+# =============================================================================
+# set_scene_node_property (for visualizer inline editing)
+# =============================================================================
+func set_scene_node_property(args: Dictionary) -> Dictionary:
+	"""Set a property on a node in a scene (supports complex types)."""
+	var scene_path: String = _ensure_res_path(str(args.get("scene_path", "")))
+	var node_path: String = str(args.get("node_path", "."))
+	var property_name: String = str(args.get("property_name", ""))
+	var value = args.get("value")
+	var value_type: int = int(args.get("value_type", -1))
+
+	if scene_path.strip_edges() == "res://":
+		return {"ok": false, "error": "Missing 'scene_path'"}
+	if property_name.strip_edges().is_empty():
+		return {"ok": false, "error": "Missing 'property_name'"}
+
+	var result := _load_scene(scene_path)
+	if not result[1].is_empty():
+		return result[1]
+
+	var root: Node = result[0]
+	var target = _find_node(root, node_path)
+	if not target:
+		root.queue_free()
+		return {"ok": false, "error": "Node not found: " + node_path}
+
+	# Parse value based on type
+	var parsed_value = _parse_typed_value(value, value_type)
+	var old_value = target.get(property_name)
+
+	# Set the property
+	target.set(property_name, parsed_value)
+
+	var err := _save_scene(root, scene_path)
+	if not err.is_empty():
+		return err
+
+	return {
+		"ok": true,
+		"scene_path": scene_path,
+		"node_path": node_path,
+		"property_name": property_name,
+		"old_value": _serialize_value(old_value),
+		"new_value": _serialize_value(parsed_value),
+		"message": "Set %s.%s" % [node_path, property_name]
+	}
+
+func _parse_typed_value(value, type_hint: int):
+	"""Parse a value based on its type hint."""
+	# If it's already the right type, return as-is
+	if type_hint == -1:
+		return _parse_value(value)
+
+	# Handle dictionary-encoded complex types
+	if typeof(value) == TYPE_DICTIONARY:
+		if value.has("type"):
+			return _parse_value(value)
+
+		# Parse based on type_hint
+		match type_hint:
+			TYPE_VECTOR2:
+				return Vector2(value.get("x", 0), value.get("y", 0))
+			TYPE_VECTOR2I:
+				return Vector2i(value.get("x", 0), value.get("y", 0))
+			TYPE_VECTOR3:
+				return Vector3(value.get("x", 0), value.get("y", 0), value.get("z", 0))
+			TYPE_VECTOR3I:
+				return Vector3i(value.get("x", 0), value.get("y", 0), value.get("z", 0))
+			TYPE_COLOR:
+				return Color(value.get("r", 1), value.get("g", 1), value.get("b", 1), value.get("a", 1))
+			TYPE_RECT2:
+				return Rect2(value.get("x", 0), value.get("y", 0), value.get("width", 0), value.get("height", 0))
+
+	return value

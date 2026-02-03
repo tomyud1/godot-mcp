@@ -2,12 +2,18 @@
  * Detail panel, inline editing, function viewer, and section management
  */
 
-import { nodes, edges, selectedNode, setSelectedNode, esc } from './state.js';
+import {
+  nodes, edges, selectedNode, setSelectedNode, esc,
+  selectedSceneNode, setSelectedSceneNode,
+  sceneNodeProperties, setSceneNodeProperties,
+  expandedScene
+} from './state.js';
 import { sendCommand } from './websocket.js';
 import { highlightGDScript } from './syntax.js';
 import { draw } from './canvas.js';
 
 let detailPanel;
+let currentPanelMode = 'script'; // 'script' or 'sceneNode'
 
 export function initPanel() {
   detailPanel = document.getElementById('detail-panel');
@@ -723,3 +729,365 @@ function highlightLineInViewer(viewer, funcName, targetLine, nodeData) {
     console.log(`Line index ${relativeLineIndex} out of range (0-${lines.length - 1})`);
   }
 }
+
+// ============================================================================
+// SCENE NODE PROPERTIES PANEL
+// ============================================================================
+
+export async function openSceneNodePanel(scenePath, node) {
+  currentPanelMode = 'sceneNode';
+  setSelectedSceneNode(node);
+
+  // Show loading state
+  document.getElementById('panel-title').textContent = node.name;
+  document.getElementById('panel-path').textContent = `${node.type} • ${node.path}`;
+  document.getElementById('panel-body').innerHTML = '<div class="loading-state">Loading properties...</div>';
+  detailPanel.classList.add('open');
+
+  try {
+    // Fetch properties from Godot
+    const result = await sendCommand('get_scene_node_properties', {
+      scene_path: scenePath,
+      node_path: node.path
+    });
+
+    if (result.ok) {
+      setSceneNodeProperties(result);
+      renderSceneNodePanel(result, scenePath, node);
+    } else {
+      document.getElementById('panel-body').innerHTML = `<div class="error-state">Failed to load properties: ${result.error}</div>`;
+    }
+  } catch (err) {
+    console.error('Failed to fetch node properties:', err);
+    document.getElementById('panel-body').innerHTML = `<div class="error-state">Error: ${err.message}</div>`;
+  }
+}
+
+export function closeSceneNodePanel() {
+  if (currentPanelMode === 'sceneNode') {
+    setSelectedSceneNode(null);
+    setSceneNodeProperties(null);
+    detailPanel.classList.remove('open');
+    draw();
+  }
+}
+
+function renderSceneNodePanel(data, scenePath, node) {
+  document.getElementById('panel-title').textContent = data.node_name;
+  document.getElementById('panel-path').textContent = `${data.node_type} • ${data.node_path}`;
+
+  let html = '';
+
+  // Meta badges
+  html += `<div class="meta-row">`;
+  html += `<div class="meta-badge"><span>${data.node_type}</span></div>`;
+  html += `<div class="meta-badge">${data.property_count} <span>properties</span></div>`;
+  if (node.script) {
+    html += `<div class="meta-badge script-badge" onclick="jumpToScript('${esc(node.script)}')">📜 <span>${node.script.split('/').pop()}</span></div>`;
+  }
+  html += `</div>`;
+
+  // Render categories
+  const categories = data.categories || {};
+  const categoryOrder = data.inheritance_chain || Object.keys(categories);
+
+  for (const category of categoryOrder) {
+    const props = categories[category];
+    if (!props || props.length === 0) continue;
+
+    html += `<div class="section property-section" data-category="${esc(category)}">`;
+    html += `<div class="section-header clickable" onclick="togglePropertySection(this)">`;
+    html += `<span>${category}</span>`;
+    html += `<span class="section-count">${props.length}</span>`;
+    html += `</div>`;
+    html += `<div class="property-list">`;
+
+    for (const prop of props) {
+      html += renderPropertyRow(prop, scenePath, data.node_path);
+    }
+
+    html += `</div></div>`;
+  }
+
+  document.getElementById('panel-body').innerHTML = html;
+  initPropertyEditing(scenePath, data.node_path);
+}
+
+// Convert snake_case to Title Case for display
+function formatPropertyName(name) {
+  return name
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, c => c.toUpperCase());
+}
+
+function renderPropertyRow(prop, scenePath, nodePath) {
+  const { name, type, type_name, value, hint, hint_string } = prop;
+  const displayName = formatPropertyName(name);
+
+  let html = `<div class="property-row" data-prop="${esc(name)}" data-type="${type}">`;
+  html += `<label class="property-name" title="${esc(name)}">${esc(displayName)}</label>`;
+  html += `<div class="property-value">`;
+
+  // Render appropriate control based on type
+  switch (type) {
+    case 1: // TYPE_BOOL
+      const boolChecked = value === true ? 'checked' : '';
+      html += `<label class="toggle-switch">
+        <input type="checkbox" ${boolChecked} data-prop="${esc(name)}" data-type="${type}">
+        <span class="toggle-slider"></span>
+      </label>`;
+      break;
+
+    case 2: // TYPE_INT
+      if (hint === 2 && hint_string) { // PROPERTY_HINT_ENUM
+        html += renderEnumSelect(name, type, value, hint_string);
+      } else if (hint === 1 && hint_string) { // PROPERTY_HINT_RANGE
+        html += renderRangeSlider(name, type, value, hint_string, true);
+      } else {
+        html += `<input type="number" class="property-input" value="${value ?? 0}" step="1" data-prop="${esc(name)}" data-type="${type}">`;
+      }
+      break;
+
+    case 3: // TYPE_FLOAT
+      if (hint === 1 && hint_string) { // PROPERTY_HINT_RANGE
+        html += renderRangeSlider(name, type, value, hint_string, false);
+      } else {
+        html += `<input type="number" class="property-input" value="${value ?? 0}" step="0.01" data-prop="${esc(name)}" data-type="${type}">`;
+      }
+      break;
+
+    case 4: // TYPE_STRING
+      html += `<input type="text" class="property-input" value="${esc(value || '')}" data-prop="${esc(name)}" data-type="${type}">`;
+      break;
+
+    case 5: // TYPE_VECTOR2
+      html += renderVector2Input(name, type, value);
+      break;
+
+    case 6: // TYPE_VECTOR2I
+      html += renderVector2Input(name, type, value, true);
+      break;
+
+    case 9: // TYPE_VECTOR3
+      html += renderVector3Input(name, type, value);
+      break;
+
+    case 10: // TYPE_VECTOR3I
+      html += renderVector3Input(name, type, value, true);
+      break;
+
+    case 20: // TYPE_COLOR
+      html += renderColorInput(name, type, value);
+      break;
+
+    case 24: // TYPE_OBJECT (Resource)
+      if (value && value.type === 'Resource') {
+        html += `<span class="resource-path">${esc(value.path || 'null')}</span>`;
+      } else {
+        html += `<span class="resource-path">null</span>`;
+      }
+      break;
+
+    default:
+      // Display value as text for unsupported types
+      const displayValue = typeof value === 'object' ? JSON.stringify(value) : String(value ?? 'null');
+      html += `<span class="property-readonly">${esc(displayValue.substring(0, 50))}${displayValue.length > 50 ? '...' : ''}</span>`;
+  }
+
+  html += `</div></div>`;
+  return html;
+}
+
+function renderEnumSelect(name, type, value, hintString) {
+  const options = hintString.split(',').map(opt => {
+    const parts = opt.split(':');
+    return { value: parts.length > 1 ? parseInt(parts[0]) : opt.trim(), label: parts.length > 1 ? parts[1].trim() : opt.trim() };
+  });
+
+  let html = `<select class="property-select" data-prop="${esc(name)}" data-type="${type}">`;
+  for (const opt of options) {
+    const selected = opt.value === value ? 'selected' : '';
+    html += `<option value="${opt.value}" ${selected}>${esc(opt.label)}</option>`;
+  }
+  html += `</select>`;
+  return html;
+}
+
+function renderRangeSlider(name, type, value, hintString, isInt) {
+  const parts = hintString.split(',');
+  const min = parseFloat(parts[0]) || 0;
+  const max = parseFloat(parts[1]) || 100;
+  const step = parts[2] ? parseFloat(parts[2]) : (isInt ? 1 : 0.01);
+
+  return `<div class="range-input-group">
+    <input type="range" class="property-range" value="${value ?? min}" min="${min}" max="${max}" step="${step}" data-prop="${esc(name)}" data-type="${type}">
+    <input type="number" class="property-input range-number" value="${value ?? min}" min="${min}" max="${max}" step="${step}" data-prop="${esc(name)}" data-type="${type}">
+  </div>`;
+}
+
+function renderVector2Input(name, type, value, isInt = false) {
+  const x = value?.x ?? 0;
+  const y = value?.y ?? 0;
+  const step = isInt ? '1' : '0.01';
+
+  return `<div class="vector-input-group" data-prop="${esc(name)}" data-type="${type}">
+    <label>x</label><input type="number" class="property-input vec-x" value="${x}" step="${step}" data-component="x">
+    <label>y</label><input type="number" class="property-input vec-y" value="${y}" step="${step}" data-component="y">
+  </div>`;
+}
+
+function renderVector3Input(name, type, value, isInt = false) {
+  const x = value?.x ?? 0;
+  const y = value?.y ?? 0;
+  const z = value?.z ?? 0;
+  const step = isInt ? '1' : '0.01';
+
+  return `<div class="vector-input-group vec3" data-prop="${esc(name)}" data-type="${type}">
+    <label>x</label><input type="number" class="property-input vec-x" value="${x}" step="${step}" data-component="x">
+    <label>y</label><input type="number" class="property-input vec-y" value="${y}" step="${step}" data-component="y">
+    <label>z</label><input type="number" class="property-input vec-z" value="${z}" step="${step}" data-component="z">
+  </div>`;
+}
+
+function renderColorInput(name, type, value) {
+  const r = Math.round((value?.r ?? 1) * 255);
+  const g = Math.round((value?.g ?? 1) * 255);
+  const b = Math.round((value?.b ?? 1) * 255);
+  const a = value?.a ?? 1;
+  const hex = `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
+
+  return `<div class="color-input-group" data-prop="${esc(name)}" data-type="${type}">
+    <input type="color" class="property-color" value="${hex}" data-prop="${esc(name)}">
+    <input type="number" class="property-input color-alpha" value="${a}" min="0" max="1" step="0.01" placeholder="α" data-component="a">
+  </div>`;
+}
+
+function initPropertyEditing(scenePath, nodePath) {
+  // Boolean toggles
+  document.querySelectorAll('.property-row input[type="checkbox"]').forEach(el => {
+    el.addEventListener('change', () => {
+      const propName = el.dataset.prop;
+      const value = el.checked;
+      saveSceneNodeProperty(scenePath, nodePath, propName, value, parseInt(el.dataset.type));
+    });
+  });
+
+  // Number and text inputs
+  document.querySelectorAll('.property-row input.property-input:not(.vec-x):not(.vec-y):not(.vec-z):not(.color-alpha):not(.range-number)').forEach(el => {
+    el.addEventListener('change', () => {
+      const propName = el.dataset.prop;
+      const type = parseInt(el.dataset.type);
+      let value = el.value;
+      if (type === 2 || type === 3) value = parseFloat(value);
+      saveSceneNodeProperty(scenePath, nodePath, propName, value, type);
+    });
+  });
+
+  // Select dropdowns
+  document.querySelectorAll('.property-row select.property-select').forEach(el => {
+    el.addEventListener('change', () => {
+      const propName = el.dataset.prop;
+      const type = parseInt(el.dataset.type);
+      saveSceneNodeProperty(scenePath, nodePath, propName, parseInt(el.value), type);
+    });
+  });
+
+  // Range sliders (sync with number input)
+  document.querySelectorAll('.range-input-group').forEach(group => {
+    const range = group.querySelector('input[type="range"]');
+    const number = group.querySelector('input[type="number"]');
+
+    range.addEventListener('input', () => {
+      number.value = range.value;
+    });
+    range.addEventListener('change', () => {
+      const propName = range.dataset.prop;
+      const type = parseInt(range.dataset.type);
+      saveSceneNodeProperty(scenePath, nodePath, propName, parseFloat(range.value), type);
+    });
+    number.addEventListener('change', () => {
+      range.value = number.value;
+      const propName = number.dataset.prop;
+      const type = parseInt(number.dataset.type);
+      saveSceneNodeProperty(scenePath, nodePath, propName, parseFloat(number.value), type);
+    });
+  });
+
+  // Vector inputs
+  document.querySelectorAll('.vector-input-group').forEach(group => {
+    const propName = group.dataset.prop;
+    const type = parseInt(group.dataset.type);
+    const inputs = group.querySelectorAll('input');
+
+    inputs.forEach(input => {
+      input.addEventListener('change', () => {
+        const x = parseFloat(group.querySelector('.vec-x').value);
+        const y = parseFloat(group.querySelector('.vec-y').value);
+        const zInput = group.querySelector('.vec-z');
+        const value = zInput ? { x, y, z: parseFloat(zInput.value) } : { x, y };
+        saveSceneNodeProperty(scenePath, nodePath, propName, value, type);
+      });
+    });
+  });
+
+  // Color inputs
+  document.querySelectorAll('.color-input-group').forEach(group => {
+    const propName = group.dataset.prop;
+    const type = parseInt(group.dataset.type);
+    const colorInput = group.querySelector('input[type="color"]');
+    const alphaInput = group.querySelector('.color-alpha');
+
+    const saveColor = () => {
+      const hex = colorInput.value;
+      const r = parseInt(hex.substr(1, 2), 16) / 255;
+      const g = parseInt(hex.substr(3, 2), 16) / 255;
+      const b = parseInt(hex.substr(5, 2), 16) / 255;
+      const a = parseFloat(alphaInput.value);
+      saveSceneNodeProperty(scenePath, nodePath, propName, { r, g, b, a }, type);
+    };
+
+    colorInput.addEventListener('change', saveColor);
+    alphaInput.addEventListener('change', saveColor);
+  });
+}
+
+async function saveSceneNodeProperty(scenePath, nodePath, propName, value, valueType) {
+  console.log(`Saving property: ${propName} =`, value);
+
+  try {
+    const result = await sendCommand('set_scene_node_property', {
+      scene_path: scenePath,
+      node_path: nodePath,
+      property_name: propName,
+      value: value,
+      value_type: valueType
+    });
+
+    if (result.ok) {
+      console.log(`Property ${propName} saved successfully`);
+    } else {
+      console.error('Failed to save property:', result.error);
+      alert('Failed to save: ' + (result.error || 'Unknown error'));
+    }
+  } catch (err) {
+    console.error('Failed to save property:', err);
+    alert('Failed to save: ' + err.message);
+  }
+}
+
+// Toggle property section visibility
+window.togglePropertySection = function(header) {
+  const section = header.closest('.property-section');
+  section.classList.toggle('collapsed');
+};
+
+// Jump to script in scripts view
+window.jumpToScript = function(scriptPath) {
+  // Switch to scripts view and select the script
+  window.switchView('scripts');
+  // Find and select the node
+  const scriptNode = nodes.find(n => n.path === scriptPath);
+  if (scriptNode) {
+    setTimeout(() => openPanel(scriptNode), 100);
+  }
+};

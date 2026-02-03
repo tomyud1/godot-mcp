@@ -2,10 +2,16 @@
  * Context menu, new script modal, and view switching
  */
 
-import { nodes, edges, setCurrentView, setSceneData, getFolderColor } from './state.js';
+import {
+  nodes, edges, setCurrentView, setSceneData, getFolderColor,
+  setExpandedScene, setExpandedSceneHierarchy, setSelectedSceneNode,
+  setHoveredSceneNode, expandedScene
+} from './state.js';
 import { sendCommand } from './websocket.js';
 import { draw, getCanvas, roundRect, getContext, clearPositions, fitToView } from './canvas.js';
 import { initLayout } from './layout.js';
+import { closePanel, closeSceneNodePanel } from './panel.js';
+import { updateStats } from './events.js';
 
 let contextMenu;
 
@@ -137,8 +143,23 @@ window.resetLayout = function () {
 
 // ---- View Switching (Scripts/Scenes) ----
 window.switchView = function (view) {
-  const currentView = document.querySelector('#view-tabs button.active')?.textContent.toLowerCase();
-  if (view === currentView) return;
+  const currentViewTab = document.querySelector('#view-tabs button.active')?.textContent.toLowerCase();
+  if (view === currentViewTab) return;
+
+  // Close any open panels
+  if (view === 'scripts') {
+    closeSceneNodePanel();
+    // Clear scene state
+    setExpandedScene(null);
+    setExpandedSceneHierarchy(null);
+    setSelectedSceneNode(null);
+    setHoveredSceneNode(null);
+    // Hide scene back button
+    const backBtn = document.getElementById('scene-back-btn');
+    if (backBtn) backBtn.style.display = 'none';
+  } else {
+    closePanel();
+  }
 
   setCurrentView(view);
 
@@ -147,9 +168,16 @@ window.switchView = function (view) {
     btn.classList.toggle('active', btn.textContent.toLowerCase() === view);
   });
 
+  // Update search placeholder
+  const searchInput = document.getElementById('search');
+  if (searchInput) {
+    searchInput.placeholder = view === 'scripts' ? 'Search scripts...' : 'Search scenes...';
+  }
+
   if (view === 'scenes') {
     loadSceneView();
   } else {
+    updateStats();
     draw();
   }
 };
@@ -160,6 +188,7 @@ async function loadSceneView() {
     const result = await sendCommand('map_scenes', { root: 'res://' });
     if (result.ok) {
       setSceneData(result.scene_map);
+      updateStats();
       draw();
     } else {
       console.error('Failed to load scenes:', result.error);

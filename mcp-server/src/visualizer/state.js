@@ -82,12 +82,61 @@ export const edges = PROJECT_DATA.edges;
 export let currentView = 'scripts';
 export let sceneData = null;
 
+// Scene view state
+export let expandedScene = null;        // The scene currently expanded (path)
+export let expandedSceneHierarchy = null; // Full hierarchy of expanded scene
+export let selectedSceneNode = null;    // Currently selected node in scene tree
+export let hoveredSceneNode = null;     // Node being hovered over
+export let sceneNodeProperties = null;  // Properties of selected scene node
+
+// Scene positions (for scene cards in overview)
+export const scenePositions = {};
+
 export function setCurrentView(view) {
   currentView = view;
+  // Clear scene-specific state when switching views
+  if (view === 'scripts') {
+    expandedScene = null;
+    expandedSceneHierarchy = null;
+    selectedSceneNode = null;
+    hoveredSceneNode = null;
+    sceneNodeProperties = null;
+  }
 }
 
 export function setSceneData(data) {
   sceneData = data;
+}
+
+export function setExpandedScene(scenePath) {
+  expandedScene = scenePath;
+  if (!scenePath) {
+    expandedSceneHierarchy = null;
+    selectedSceneNode = null;
+    hoveredSceneNode = null;
+    sceneNodeProperties = null;
+  }
+}
+
+export function setExpandedSceneHierarchy(hierarchy) {
+  expandedSceneHierarchy = hierarchy;
+}
+
+export function setSelectedSceneNode(node) {
+  selectedSceneNode = node;
+  sceneNodeProperties = null; // Clear until loaded
+}
+
+export function setHoveredSceneNode(node) {
+  hoveredSceneNode = node;
+}
+
+export function setSceneNodeProperties(props) {
+  sceneNodeProperties = props;
+}
+
+export function setScenePosition(scenePath, x, y) {
+  scenePositions[scenePath] = { x, y };
 }
 
 // Delete operation state
