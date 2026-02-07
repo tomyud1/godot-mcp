@@ -440,6 +440,116 @@ func move_node(args: Dictionary) -> Dictionary:
 	return {"ok": true, "message": "Moved '%s' to '%s'" % [node_path, new_parent_path]}
 
 # =============================================================================
+# duplicate_node
+# =============================================================================
+func duplicate_node(args: Dictionary) -> Dictionary:
+	var scene_path: String = _ensure_res_path(str(args.get("scene_path", "")))
+	var node_path: String = str(args.get("node_path", ""))
+	var new_name: String = str(args.get("new_name", ""))
+
+	if scene_path.strip_edges() == "res://":
+		return {"ok": false, "error": "Missing 'scene_path'"}
+	if node_path.strip_edges().is_empty() or node_path == ".":
+		return {"ok": false, "error": "Cannot duplicate root node"}
+
+	var result := _load_scene(scene_path)
+	if not result[1].is_empty():
+		return result[1]
+
+	var root: Node = result[0]
+	var target = root.get_node_or_null(node_path)
+	if not target:
+		root.queue_free()
+		return {"ok": false, "error": "Node not found: " + node_path}
+
+	var parent = target.get_parent()
+	if not parent:
+		root.queue_free()
+		return {"ok": false, "error": "Cannot duplicate - no parent"}
+
+	# Duplicate the node
+	var duplicate = target.duplicate()
+	
+	# Generate unique name if not provided
+	if new_name.is_empty():
+		var base_name = target.name
+		var counter = 2
+		new_name = base_name + str(counter)
+		while parent.has_node(NodePath(new_name)):
+			counter += 1
+			new_name = base_name + str(counter)
+	
+	duplicate.name = new_name
+	parent.add_child(duplicate)
+	
+	# Set owner for all duplicated nodes
+	_set_owner_recursive(duplicate, root)
+	
+	# Move duplicate right after original
+	var original_index = target.get_index()
+	parent.move_child(duplicate, original_index + 1)
+
+	var err := _save_scene(root, scene_path)
+	if not err.is_empty():
+		return err
+
+	return {"ok": true, "new_name": new_name, 
+		"message": "Duplicated '%s' as '%s'" % [node_path, new_name]}
+
+
+func _set_owner_recursive(node: Node, owner: Node) -> void:
+	node.owner = owner
+	for child in node.get_children():
+		_set_owner_recursive(child, owner)
+
+
+# =============================================================================
+# reorder_node - simpler function just for changing sibling order
+# =============================================================================
+func reorder_node(args: Dictionary) -> Dictionary:
+	var scene_path: String = _ensure_res_path(str(args.get("scene_path", "")))
+	var node_path: String = str(args.get("node_path", ""))
+	var new_index: int = int(args.get("new_index", -1))
+
+	if scene_path.strip_edges() == "res://":
+		return {"ok": false, "error": "Missing 'scene_path'"}
+	if node_path.strip_edges().is_empty() or node_path == ".":
+		return {"ok": false, "error": "Cannot reorder root node"}
+
+	var result := _load_scene(scene_path)
+	if not result[1].is_empty():
+		return result[1]
+
+	var root: Node = result[0]
+	var target = root.get_node_or_null(node_path)
+	if not target:
+		root.queue_free()
+		return {"ok": false, "error": "Node not found: " + node_path}
+
+	var parent = target.get_parent()
+	if not parent:
+		root.queue_free()
+		return {"ok": false, "error": "Cannot reorder - no parent"}
+
+	var old_index = target.get_index()
+	var max_index = parent.get_child_count() - 1
+	new_index = clampi(new_index, 0, max_index)
+	
+	if old_index == new_index:
+		root.queue_free()
+		return {"ok": true, "message": "No change needed"}
+
+	parent.move_child(target, new_index)
+
+	var err := _save_scene(root, scene_path)
+	if not err.is_empty():
+		return err
+
+	return {"ok": true, "old_index": old_index, "new_index": new_index,
+		"message": "Moved '%s' from index %d to %d" % [node_path, old_index, new_index]}
+
+
+# =============================================================================
 # attach_script
 # =============================================================================
 func attach_script(args: Dictionary) -> Dictionary:

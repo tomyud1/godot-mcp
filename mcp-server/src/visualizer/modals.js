@@ -157,6 +157,9 @@ window.switchView = function (view) {
     // Hide scene back button
     const backBtn = document.getElementById('scene-back-btn');
     if (backBtn) backBtn.style.display = 'none';
+    // Show legend for scripts view
+    const legend = document.getElementById('legend');
+    if (legend) legend.classList.remove('hidden');
   } else {
     closePanel();
   }

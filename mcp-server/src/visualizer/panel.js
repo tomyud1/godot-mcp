@@ -6,7 +6,7 @@ import {
   nodes, edges, selectedNode, setSelectedNode, esc,
   selectedSceneNode, setSelectedSceneNode,
   sceneNodeProperties, setSceneNodeProperties,
-  expandedScene
+  expandedScene, scriptToScenes
 } from './state.js';
 import { sendCommand } from './websocket.js';
 import { highlightGDScript } from './syntax.js';
@@ -39,6 +39,22 @@ export function openPanel(node) {
   html += `<div class="meta-badge">extends <span>${node.extends || 'Node'}</span></div>`;
   if (node.class_name) html += `<div class="meta-badge">class <span>${esc(node.class_name)}</span></div>`;
   html += `</div>`;
+  
+  // Scene usage (if this script is used in scenes)
+  const usedInScenes = scriptToScenes[node.path];
+  if (usedInScenes && usedInScenes.length > 0) {
+    html += `<div class="section scene-usage-section">`;
+    html += `<div class="section-header">Used in Scenes <span class="section-count">${usedInScenes.length}</span></div>`;
+    html += `<ul class="item-list scene-list">`;
+    for (const scene of usedInScenes) {
+      html += `<li class="scene-link" onclick="jumpToScene('${esc(scene.path)}')">`;
+      html += `<span class="scene-icon">📦</span>`;
+      html += `<span class="scene-name">${esc(scene.name)}</span>`;
+      html += `</li>`;
+    }
+    html += `</ul>`;
+    html += `</div>`;
+  }
 
   // Variables - split into @export and regular
   const exportVars = (node.variables || []).filter(v => v.exported);
@@ -1090,4 +1106,15 @@ window.jumpToScript = function(scriptPath) {
   if (scriptNode) {
     setTimeout(() => openPanel(scriptNode), 100);
   }
+};
+
+// Jump to scene in scenes view
+window.jumpToScene = function(scenePath) {
+  // Switch to scenes view and expand the scene
+  closePanel();
+  window.switchView('scenes');
+  // Trigger scene expansion after view switch
+  setTimeout(() => {
+    window.expandSceneFromPanel && window.expandSceneFromPanel(scenePath);
+  }, 100);
 };

@@ -978,3 +978,46 @@ func _internal_move_scene_node(args: Dictionary) -> Dictionary:
 	if _scene_tools_ref and _scene_tools_ref.has_method("move_node"):
 		return _scene_tools_ref.move_node(args)
 	return {"ok": false, "error": "Scene tools not available"}
+
+
+# Simpler aliases for context menu actions
+func _internal_add_node(args: Dictionary) -> Dictionary:
+	"""Add a node to a scene."""
+	if _scene_tools_ref and _scene_tools_ref.has_method("add_node"):
+		return _scene_tools_ref.add_node(args)
+	return {"ok": false, "error": "Scene tools not available"}
+
+
+func _internal_remove_node(args: Dictionary) -> Dictionary:
+	"""Remove a node from a scene."""
+	if _scene_tools_ref and _scene_tools_ref.has_method("remove_node"):
+		return _scene_tools_ref.remove_node(args)
+	return {"ok": false, "error": "Scene tools not available"}
+
+
+func _internal_rename_node(args: Dictionary) -> Dictionary:
+	"""Rename a node in a scene."""
+	if _scene_tools_ref and _scene_tools_ref.has_method("rename_node"):
+		return _scene_tools_ref.rename_node(args)
+	return {"ok": false, "error": "Scene tools not available"}
+
+
+func _internal_move_node(args: Dictionary) -> Dictionary:
+	"""Move/reorder a node in a scene."""
+	if _scene_tools_ref and _scene_tools_ref.has_method("move_node"):
+		return _scene_tools_ref.move_node(args)
+	return {"ok": false, "error": "Scene tools not available"}
+
+
+func _internal_duplicate_node(args: Dictionary) -> Dictionary:
+	"""Duplicate a node in a scene."""
+	if _scene_tools_ref and _scene_tools_ref.has_method("duplicate_node"):
+		return _scene_tools_ref.duplicate_node(args)
+	return {"ok": false, "error": "Scene tools not available"}
+
+
+func _internal_reorder_node(args: Dictionary) -> Dictionary:
+	"""Reorder a node within its parent (change sibling index)."""
+	if _scene_tools_ref and _scene_tools_ref.has_method("reorder_node"):
+		return _scene_tools_ref.reorder_node(args)
+	return {"ok": false, "error": "Scene tools not available"}

@@ -104,8 +104,33 @@ export function setCurrentView(view) {
   }
 }
 
+// Script to scenes mapping (which scripts are used in which scenes)
+export const scriptToScenes = {};
+
 export function setSceneData(data) {
   sceneData = data;
+  
+  // Build script-to-scenes mapping
+  for (const key in scriptToScenes) {
+    delete scriptToScenes[key];
+  }
+  
+  if (data && data.scenes) {
+    for (const scene of data.scenes) {
+      const sceneName = scene.name || scene.path.split('/').pop().replace('.tscn', '');
+      if (scene.scripts) {
+        for (const scriptPath of scene.scripts) {
+          if (!scriptToScenes[scriptPath]) {
+            scriptToScenes[scriptPath] = [];
+          }
+          scriptToScenes[scriptPath].push({
+            path: scene.path,
+            name: sceneName
+          });
+        }
+      }
+    }
+  }
 }
 
 export function setExpandedScene(scenePath) {

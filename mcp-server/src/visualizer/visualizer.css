@@ -146,6 +146,48 @@ canvas.dragging { cursor: grabbing; }
   margin: 6px 0;
 }
 
+/* Scene Context Menu - reuse context menu styles */
+#scene-context-menu {
+  position: fixed;
+  z-index: 500;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 0;
+  min-width: 180px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+  display: none;
+}
+
+#scene-context-menu.visible { display: block; }
+
+#scene-context-menu .menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+#scene-context-menu .menu-item:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+#scene-context-menu .menu-item.danger { color: #f38ba8; }
+#scene-context-menu .menu-item.danger:hover { background: rgba(243, 139, 168, 0.1); }
+
+#scene-context-menu .menu-item svg { flex-shrink: 0; opacity: 0.7; }
+
+#scene-context-menu .menu-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 6px 0;
+}
+
 /* Modal */
 .modal {
   position: fixed;
@@ -508,6 +550,23 @@ canvas.dragging { cursor: grabbing; }
 .item-list li:hover { background: var(--bg-secondary); }
 .item-list li.clickable { cursor: pointer; }
 .item-list li.clickable:hover { background: var(--bg-tertiary); }
+
+/* Scene usage list */
+.scene-usage-section { margin-bottom: 16px; }
+.scene-list li.scene-link {
+  cursor: pointer;
+  font-family: -apple-system, system-ui, sans-serif;
+}
+.scene-list li.scene-link:hover {
+  background: rgba(166, 227, 161, 0.1);
+}
+.scene-list .scene-icon {
+  font-size: 14px;
+}
+.scene-list .scene-name {
+  color: #a6e3a1;
+  font-weight: 500;
+}
 
 /* Inline editable items */
 .item-list li .item-actions {

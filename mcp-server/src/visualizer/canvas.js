@@ -8,7 +8,7 @@ import {
   currentView, sceneData, expandedScene, expandedSceneHierarchy,
   selectedSceneNode, hoveredSceneNode, scenePositions,
   setExpandedScene, setSelectedSceneNode, setHoveredSceneNode,
-  setScenePosition
+  setScenePosition, scriptToScenes
 } from './state.js';
 
 let canvas, ctx;
@@ -379,6 +379,24 @@ export function draw() {
     // Lines (yellow/amber)
     ctx.fillStyle = '#f9e2af';
     ctx.fillText(n.line_count + 'L', subX, subY);
+    
+    // Scene usage badge (top-right corner)
+    const usedInScenes = scriptToScenes[n.path];
+    if (usedInScenes && usedInScenes.length > 0) {
+      const badgeX = x + NODE_W - 8;
+      const badgeY = y + 8;
+      
+      ctx.fillStyle = 'rgba(166, 227, 161, 0.2)';
+      ctx.beginPath();
+      ctx.roundRect(badgeX - 20, badgeY - 4, 24, 14, 3);
+      ctx.fill();
+      
+      ctx.fillStyle = '#a6e3a1';
+      ctx.font = `600 9px -apple-system, system-ui, sans-serif`;
+      ctx.textAlign = 'right';
+      ctx.fillText('📦' + usedInScenes.length, badgeX, badgeY + 4);
+      ctx.textAlign = 'left';
+    }
   }
 
   ctx.globalAlpha = 1;
@@ -632,16 +650,20 @@ function drawSceneNode(node) {
   const w = node.width;
   const isSelected = selectedSceneNode && selectedSceneNode.path === node.path;
   const isHovered = hoveredSceneNode && hoveredSceneNode.nodePath === node.path;
+  const isHighlighted = node.highlighted !== false; // Default to true if not set
 
   // Node type color
   const nodeColor = getNodeTypeColor(node.type);
+  
+  // Dim non-highlighted nodes when searching
+  ctx.globalAlpha = isHighlighted ? 1 : 0.25;
 
   // Shadow
   ctx.shadowColor = 'rgba(0,0,0,0.25)';
   ctx.shadowBlur = isHovered ? 12 : 6;
   ctx.shadowOffsetY = 2;
 
-  // Background
+  // Background - highlight matching nodes with a glow
   ctx.beginPath();
   roundRect(ctx, x, y, w, SCENE_NODE_H, 6);
   ctx.fillStyle = isSelected ? '#35353b' : isHovered ? '#303036' : '#242428';
@@ -650,9 +672,11 @@ function drawSceneNode(node) {
   ctx.shadowBlur = 0;
   ctx.shadowOffsetY = 0;
 
-  // Border
-  ctx.strokeStyle = isSelected ? nodeColor : isHovered ? nodeColor : '#3a3a40';
-  ctx.lineWidth = isSelected ? 2 : 1;
+  // Border - use accent color for highlighted search results
+  const borderColor = isSelected ? nodeColor : isHovered ? nodeColor : 
+                      (isHighlighted && searchTerm ? '#f9e2af' : '#3a3a40');
+  ctx.strokeStyle = borderColor;
+  ctx.lineWidth = (isSelected || (isHighlighted && searchTerm)) ? 2 : 1;
   ctx.stroke();
 
   // Left accent
@@ -692,6 +716,9 @@ function drawSceneNode(node) {
     ctx.fillText(`#${node.index}`, x + w - 6, y + 10);
     ctx.textAlign = 'left';
   }
+  
+  // Reset alpha
+  ctx.globalAlpha = 1;
 }
 
 function getSceneColor(scenePath) {
