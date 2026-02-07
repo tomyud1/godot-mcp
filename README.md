@@ -44,7 +44,7 @@ Works with any MCP-compatible client.
 
 Copy the `godot-plugin/addons/godot_mcp/` folder into your Godot project's `addons/` directory. Then enable it: Project → Project Settings → Plugins → **Godot MCP** → Enable.
 
-### 3. Restart Godot
+### 3. Restart Project
 
 Check the **top-right corner** of the editor. You should see **MCP Connected** in green. You're ready to go — start talking to your AI about your game.
 
