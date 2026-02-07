@@ -72,18 +72,11 @@ Run `map_project` and get a browser-based explorer at `localhost:6510`:
 - Scene view with node property editing
 - Find usages before refactoring
 
-### What Developers Are Saying AI + Godot Is Missing
+### LIMITATIONS
 
-| Problem | Godot MCP |
-|---------|-----------|
-| AI can't see my project — constant copy-pasting | **Solved** — AI reads/writes directly |
-| `.tscn` files are unreadable to AI | **Solved** — structured scene tools |
-| "What properties does this node have?" | **Solved** — full property discovery |
-| Debugging is slow — digging through console | **Solved** — AI reads errors and dumps scene tree |
-| Can't see the big picture of my project | **Solved** — interactive visualizer |
-| Need placeholder art to prototype | **Solved** — SVG generation + AI art pipelines |
-| Refactoring breaks things | **Partially solved** — rename with references + find usages |
-| AI hallucinates wrong Godot APIs | **Partially solved** — AI sees your actual project context |
+AI cannot create 100% of the game by iteself.
+- It struggles with creating UI elements, manipulating node properties, create and compositing scenes.
+- Its still in a testing phase, so I will appreciate any feedback!
 
 ---
 
@@ -110,7 +103,6 @@ Run `map_project` and get a browser-based explorer at `localhost:6510`:
 
 - **Local only** — runs on localhost, no remote connections
 - **Single connection** — one Godot instance at a time
-- **Editor only** — works in the editor, not in exported games
 - **No undo** — changes save directly (use version control)
 - **No runtime control** — can't press play or simulate input
 - **AI is still limited in Godot knowledge** — it can't create 100% of the game alone, but it can help debug, write scripts, and tag along for the journey
