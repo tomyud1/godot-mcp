@@ -8,9 +8,11 @@ class_name ProjectTools
 
 var _editor_plugin: EditorPlugin = null
 
-# Buffer for capturing console output
-var _console_buffer: Array = []
-const MAX_CONSOLE_LINES := 500
+# Cached reference to the editor Output panel's RichTextLabel.
+var _editor_log_rtl: RichTextLabel = null
+
+# Character offset for clear_console_log.
+var _clear_char_offset: int = 0
 
 func set_editor_plugin(plugin: EditorPlugin) -> void:
 	_editor_plugin = plugin
@@ -187,103 +189,154 @@ func _serialize_value(value) -> Variant:
 		_: return value
 
 # =============================================================================
+# Editor Output Panel access
+# =============================================================================
+# We read directly from the editor's internal EditorLog RichTextLabel.
+# This is real-time and matches exactly what the user sees in the Output panel.
+# =============================================================================
+
+func _get_editor_log_rtl() -> RichTextLabel:
+	"""Find (and cache) the RichTextLabel inside the editor's Output panel."""
+	if is_instance_valid(_editor_log_rtl):
+		return _editor_log_rtl
+	if not _editor_plugin:
+		return null
+	var base := _editor_plugin.get_editor_interface().get_base_control()
+	var editor_log := _find_node_by_class(base, "EditorLog")
+	if editor_log:
+		_editor_log_rtl = _find_child_rtl(editor_log)
+	return _editor_log_rtl
+
+func _find_node_by_class(root: Node, cls_name: String) -> Node:
+	if root.get_class() == cls_name:
+		return root
+	for child in root.get_children():
+		var found := _find_node_by_class(child, cls_name)
+		if found:
+			return found
+	return null
+
+func _find_child_rtl(node: Node) -> RichTextLabel:
+	for child in node.get_children():
+		if child is RichTextLabel:
+			return child
+		var found := _find_child_rtl(child)
+		if found:
+			return found
+	return null
+
+func _read_output_panel_lines() -> Array:
+	"""Return all non-empty lines from the editor Output panel (after clear offset)."""
+	var rtl := _get_editor_log_rtl()
+	if not rtl:
+		return []
+	var full_text: String = rtl.get_parsed_text()
+	if _clear_char_offset > 0 and _clear_char_offset < full_text.length():
+		full_text = full_text.substr(_clear_char_offset)
+	elif _clear_char_offset >= full_text.length():
+		return []
+	var lines: Array = []
+	for line in full_text.split("\n"):
+		if not line.strip_edges().is_empty():
+			lines.append(line)
+	return lines
+
+# =============================================================================
 # get_console_log
 # =============================================================================
 func get_console_log(args: Dictionary) -> Dictionary:
 	var max_lines: int = int(args.get("max_lines", 50))
 
-	# Try to read the editor log file
-	var log_path := _get_editor_log_path()
-	if log_path.is_empty() or not FileAccess.file_exists(log_path):
-		return {"ok": true, "lines": [], "line_count": 0,
-			"message": "Console log not available. Check Godot editor output panel."}
+	var rtl := _get_editor_log_rtl()
+	if not rtl:
+		return {"ok": false,
+			"error": "Could not access the Godot editor Output panel. Make sure the MCP plugin is enabled and running inside the Godot editor."}
 
-	var file := FileAccess.open(log_path, FileAccess.READ)
-	if not file:
-		return {"ok": false, "error": "Cannot read log file"}
-
-	# Read all lines and return the last max_lines
-	var all_lines: Array = []
-	while not file.eof_reached():
-		all_lines.append(file.get_line())
-	file.close()
-
+	var all_lines := _read_output_panel_lines()
 	var start := maxi(0, all_lines.size() - max_lines)
 	var lines := all_lines.slice(start)
-
 	return {"ok": true, "lines": lines, "line_count": lines.size(),
 		"content": "\n".join(lines)}
-
-func _get_editor_log_path() -> String:
-	# Godot stores editor logs in user data directory
-	var log_dir := OS.get_user_data_dir().get_base_dir()
-	var log_path := log_dir.path_join("godot/editor_logs/godot.log")
-	if FileAccess.file_exists(log_path):
-		return log_path
-	# Alternative location
-	log_path = OS.get_user_data_dir().path_join("logs/godot.log")
-	if FileAccess.file_exists(log_path):
-		return log_path
-	return ""
 
 # =============================================================================
 # get_errors
 # =============================================================================
+const _ERROR_PREFIXES: PackedStringArray = [
+	"ERROR:", "SCRIPT ERROR:", "USER ERROR:",
+	"WARNING:", "USER WARNING:", "SCRIPT WARNING:",
+	"Parse Error:", "Invalid",
+]
+
 func get_errors(args: Dictionary) -> Dictionary:
 	var max_errors: int = int(args.get("max_errors", 50))
+	var include_warnings: bool = bool(args.get("include_warnings", true))
 
-	var log_path := _get_editor_log_path()
-	if log_path.is_empty() or not FileAccess.file_exists(log_path):
-		return {"ok": true, "errors": [], "error_count": 0,
-			"message": "Error log not available"}
+	var rtl := _get_editor_log_rtl()
+	if not rtl:
+		return {"ok": false,
+			"error": "Could not access the Godot editor Output panel. Make sure the MCP plugin is enabled and running inside the Godot editor."}
 
-	var file := FileAccess.open(log_path, FileAccess.READ)
-	if not file:
-		return {"ok": false, "error": "Cannot read log file"}
+	var all_lines := _read_output_panel_lines()
 
-	var errors: Array = []
-	while not file.eof_reached() and errors.size() < max_errors:
-		var line := file.get_line()
-		# Look for error patterns
-		if "ERROR" in line or "error" in line.to_lower():
-			var error_info := {"message": line.strip_edges()}
+	var all_errors: Array = []
+	for i in range(all_lines.size()):
+		var line: String = all_lines[i].strip_edges()
+		if line.is_empty():
+			continue
 
-			# Try to extract file:line info
-			var regex_match := _extract_file_line(line)
-			if not regex_match.is_empty():
-				error_info["file"] = regex_match.get("file", "")
-				error_info["line"] = regex_match.get("line", 0)
+		var is_error := false
+		var severity := "error"
+		for prefix in _ERROR_PREFIXES:
+			if line.begins_with(prefix):
+				is_error = true
+				if "WARNING" in prefix:
+					severity = "warning"
+				break
 
-			errors.append(error_info)
+		# Godot continuation lines:  "at: res://path/file.gd:123"
+		if not is_error and line.begins_with("at: ") and "res://" in line:
+			if all_errors.size() > 0:
+				var prev: Dictionary = all_errors[all_errors.size() - 1]
+				var loc := _extract_file_line(line)
+				if not loc.is_empty():
+					prev["file"] = loc.get("file", "")
+					prev["line"] = loc.get("line", 0)
+			continue
 
-	file.close()
+		if not is_error:
+			continue
+		if severity == "warning" and not include_warnings:
+			continue
 
+		var error_info := {"message": line, "severity": severity}
+		var loc := _extract_file_line(line)
+		if not loc.is_empty():
+			error_info["file"] = loc.get("file", "")
+			error_info["line"] = loc.get("line", 0)
+		all_errors.append(error_info)
+
+	# Return the most recent errors
+	var start := maxi(0, all_errors.size() - max_errors)
+	var errors := all_errors.slice(start)
 	return {"ok": true, "errors": errors, "error_count": errors.size(),
 		"summary": "%d error(s) found" % errors.size()}
 
 func _extract_file_line(text: String) -> Dictionary:
-	"""Try to extract file path and line number from an error message."""
-	# Pattern: res://path/file.gd:123
 	var idx := text.find("res://")
 	if idx == -1:
 		return {}
-
 	var rest := text.substr(idx)
-	var colon_idx := rest.find(":", 6)  # Skip "res://"
+	var colon_idx := rest.find(":", 6)
 	if colon_idx == -1:
 		return {"file": rest.strip_edges()}
-
 	var file_path := rest.substr(0, colon_idx)
 	var after_colon := rest.substr(colon_idx + 1)
-
-	# Try to parse line number
 	var line_str := ""
 	for c in after_colon:
 		if c.is_valid_int():
 			line_str += c
 		else:
 			break
-
 	if not line_str.is_empty():
 		return {"file": file_path, "line": int(line_str)}
 	return {"file": file_path}
@@ -292,13 +345,16 @@ func _extract_file_line(text: String) -> Dictionary:
 # clear_console_log
 # =============================================================================
 func clear_console_log(_args: Dictionary) -> Dictionary:
-	var log_path := _get_editor_log_path()
-	if log_path.is_empty():
-		return {"ok": true, "message": "No log file to clear"}
+	var rtl := _get_editor_log_rtl()
+	if not rtl:
+		return {"ok": false,
+			"error": "Could not access the Godot editor Output panel. Make sure the MCP plugin is enabled and running inside the Godot editor."}
 
-	# We can't actually clear the editor log while Godot is running
-	# But we can note the current position to ignore previous entries
-	return {"ok": true, "message": "Console log clear acknowledged. New errors will be tracked from this point."}
+	# Actually clear the editor Output panel
+	rtl.clear()
+	_clear_char_offset = 0
+	return {"ok": true,
+		"message": "Console log cleared."}
 
 # =============================================================================
 # open_in_godot

@@ -47,7 +47,7 @@ Install the Godot plugin, point your AI client at the MCP server, and start buil
 ### Script Operations (6 tools)
 | Tool | What it does |
 |------|-------------|
-| `apply_diff_preview` | Apply targeted code edits to GDScript files |
+| `edit_script` | Apply targeted code edits to GDScript files |
 | `validate_script` | Check GDScript syntax without running |
 | `list_scripts` | List all `.gd` files in the project |
 | `create_folder` | Create directories |
@@ -67,13 +67,10 @@ Install the Godot plugin, point your AI client at the MCP server, and start buil
 | `open_in_godot` | Open a file in the editor (jumps to line for scripts) |
 | `scene_tree_dump` | Dump the running scene tree for debugging |
 
-### Asset Generation (4 tools)
+### Asset Generation (1 tool)
 | Tool | What it does |
 |------|-------------|
 | `generate_2d_asset` | Generate 2D sprites from SVG code |
-| `search_comfyui_nodes` | Search 10,500+ ComfyUI nodes for AI art pipelines |
-| `inspect_runninghub_workflow` | Inspect RunningHub workflow parameters |
-| `customize_and_run_workflow` | Execute RunningHub workflows for asset generation |
 
 ### Visualization (1 tool)
 | Tool | What it does |
@@ -112,8 +109,6 @@ Install the Godot plugin, point your AI client at the MCP server, and start buil
 
 ### Asset Pipeline
 - Generate 2D placeholder sprites from SVG descriptions
-- ComfyUI node search for AI art workflow building
-- RunningHub integration for automated asset generation
 
 ### Interactive Visualizer
 - **Browser-based project explorer** served at `localhost:6510`
@@ -138,7 +133,7 @@ Install the Godot plugin, point your AI client at the MCP server, and start buil
 | **"Debugging is slow"** — checking console, finding errors | **Solved** | AI reads console logs, extracts errors, dumps the scene tree |
 | **"I can't visualize my project structure"** — hard to see the big picture | **Solved** | Interactive visualizer maps scripts, scenes, and their connections |
 | **"Setting up input maps / collision layers is tedious"** | **Solved** | AI reads and understands your input map and collision layers |
-| **"I need placeholder art to prototype"** | **Solved** | SVG-based 2D asset generation, ComfyUI/RunningHub integration |
+| **"I need placeholder art to prototype"** | **Partially solved** | SVG-based 2D asset generation |
 | **"Refactoring is scary"** — renaming breaks things | **Partially solved** | File rename with reference updates + find usages in visualizer |
 | **"GDScript has no LSP-quality AI support"** | **Partially solved** | Syntax validation + property discovery, but no autocomplete or go-to-definition |
 | **"AI generates code for the wrong Godot version"** | **Partially solved** | AI sees your actual project settings and node types, reducing hallucination |

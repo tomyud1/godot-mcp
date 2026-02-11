@@ -72,7 +72,7 @@ func _init_tools() -> void:
 		"set_scene_node_property": [_scene_tools, "set_scene_node_property"],
 
 		# Script/file management tools
-		"apply_diff_preview": [_script_tools, "apply_diff_preview"],
+		"edit_script": [_script_tools, "edit_script"],
 		"validate_script": [_script_tools, "validate_script"],
 		"list_scripts": [_script_tools, "list_scripts"],
 		"create_folder": [_script_tools, "create_folder"],
@@ -92,9 +92,9 @@ func _init_tools() -> void:
 
 		# Asset generation tools
 		"generate_2d_asset": [_asset_tools, "generate_2d_asset"],
-		"search_comfyui_nodes": [_asset_tools, "search_comfyui_nodes"],
-		"inspect_runninghub_workflow": [_asset_tools, "inspect_runninghub_workflow"],
-		"customize_and_run_workflow": [_asset_tools, "customize_and_run_workflow"],
+		# NOTE: RunningHub tools (inspect_runninghub_workflow, customize_and_run_workflow)
+		# are implemented in asset_tools.gd but not exposed as MCP tools yet.
+		# They require a RunningHub account and will be re-enabled later.
 
 		# Visualizer tools
 		"map_project": [_visualizer_tools, "map_project"],

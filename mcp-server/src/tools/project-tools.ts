@@ -73,20 +73,24 @@ export const projectTools: ToolDefinition[] = [
   },
   {
     name: 'get_errors',
-    description: 'Get ONLY errors from the Godot console with file paths and line numbers. More reliable than get_console_log for finding errors.',
+    description: 'Get errors and warnings from the Godot editor log with file paths, line numbers, and severity. Returns the most recent errors first.',
     inputSchema: {
       type: 'object',
       properties: {
         max_errors: {
           type: 'number',
           description: 'Maximum number of errors to return (default: 50)'
+        },
+        include_warnings: {
+          type: 'boolean',
+          description: 'Include warnings in addition to errors (default: true)'
         }
       }
     }
   },
   {
     name: 'clear_console_log',
-    description: 'Clear the persisted Godot editor output log.',
+    description: 'Mark the current position in the Godot editor log. Subsequent get_console_log and get_errors calls will only return output after this point.',
     inputSchema: {
       type: 'object',
       properties: {}
@@ -112,7 +116,7 @@ export const projectTools: ToolDefinition[] = [
   },
   {
     name: 'scene_tree_dump',
-    description: 'Dump the current running scene tree (names and structure).',
+    description: 'Dump the scene tree of the scene currently open in the Godot editor (node names, types, and attached scripts).',
     inputSchema: {
       type: 'object',
       properties: {}

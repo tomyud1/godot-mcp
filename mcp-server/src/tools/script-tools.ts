@@ -7,7 +7,7 @@ import type { ToolDefinition } from '../types.js';
 
 export const scriptTools: ToolDefinition[] = [
   {
-    name: 'apply_diff_preview',
+    name: 'edit_script',
     description: 'Apply a SMALL, SURGICAL code edit (1-10 lines) to GDScript files. Auto-applies changes. For large changes, call multiple times. ONLY for .gd files - NEVER for .tscn scene files.',
     inputSchema: {
       type: 'object',
@@ -106,7 +106,7 @@ export function getMockScriptToolResponse(toolName: string, args: Record<string,
   const mockNote = { _mock: true, _note: 'Connect Godot for real results.' };
 
   switch (toolName) {
-    case 'apply_diff_preview':
+    case 'edit_script':
       return { ok: true, message: 'Mock: Diff would be applied', ...mockNote };
     case 'validate_script':
       return { ok: true, path: args.path, valid: true, errors: [], ...mockNote };

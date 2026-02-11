@@ -60,7 +60,7 @@ Check the **top-right corner** of the editor. You should see **MCP Connected** i
 | **Scene Operations** | 11 | Create scenes, add/remove/move nodes, set properties, attach scripts, assign collision shapes and textures |
 | **Script Operations** | 6 | Apply code edits, validate syntax, rename/move files with reference updates |
 | **Project Tools** | 9 | Read project settings, input map, collision layers, console errors, scene tree dumps |
-| **Asset Generation** | 4 | Generate 2D sprites from SVG, ComfyUI node search, RunningHub workflow execution |
+| **Asset Generation** | 1 | Generate 2D sprites from SVG |
 | **Visualization** | 1 | Interactive browser-based project map |
 
 ### Interactive Visualizer

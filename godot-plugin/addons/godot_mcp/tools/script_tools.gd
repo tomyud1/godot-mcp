@@ -2,7 +2,7 @@
 extends Node
 class_name ScriptTools
 ## Script and file management tools for MCP.
-## Handles: apply_diff_preview, validate_script, list_scripts,
+## Handles: edit_script, validate_script, list_scripts,
 ##          create_folder, delete_file, rename_file
 
 var _editor_plugin: EditorPlugin = null
@@ -20,9 +20,9 @@ func _ensure_res_path(path: String) -> String:
 	return path
 
 # =============================================================================
-# apply_diff_preview - Simplified snippet replace without CodeApplier dependency
+# edit_script - Apply a small surgical code edit to a GDScript file
 # =============================================================================
-func apply_diff_preview(args: Dictionary) -> Dictionary:
+func edit_script(args: Dictionary) -> Dictionary:
 	var edit: Dictionary = args.get("edit", {})
 	if edit.is_empty():
 		return {"ok": false, "error": "Missing 'edit' payload"}
@@ -118,15 +118,31 @@ func validate_script(args: Dictionary) -> Dictionary:
 	if not FileAccess.file_exists(path):
 		return {"ok": false, "error": "File not found: " + path}
 
-	# Attempt to load the script - Godot will parse it
-	var script: GDScript = load(path)
+	# Read the source text directly from disk so we validate the *current*
+	# file contents, not a stale resource-cache entry.
+	var file := FileAccess.open(path, FileAccess.READ)
+	if not file:
+		return {"ok": false, "error": "Cannot read file: " + path}
+	var source_code := file.get_as_text()
+	file.close()
 
-	if script == null:
+	# Create a fresh GDScript instance and assign the source for parsing.
+	var script := GDScript.new()
+	script.source_code = source_code
+
+	# reload() triggers the parser/compiler and returns OK or an error code.
+	var err := script.reload()
+
+	if err != OK:
+		# Try to extract useful details from the Godot output log.
+		var errors := _collect_recent_script_errors(path)
 		return {
 			"ok": true,
 			"valid": false,
 			"path": path,
-			"message": "Script has syntax errors. Check Godot console for details."
+			"error_code": err,
+			"errors": errors,
+			"message": "Script has errors." + (" Details: " + "; ".join(errors) if errors.size() > 0 else " Check Godot console for details.")
 		}
 
 	if not script.can_instantiate():
@@ -134,7 +150,7 @@ func validate_script(args: Dictionary) -> Dictionary:
 			"ok": true,
 			"valid": false,
 			"path": path,
-			"message": "Script loaded but cannot be instantiated (may have errors)"
+			"message": "Script parsed but cannot be instantiated (may have dependency errors)"
 		}
 
 	return {
@@ -143,6 +159,58 @@ func validate_script(args: Dictionary) -> Dictionary:
 		"path": path,
 		"message": "No syntax errors found"
 	}
+
+func _collect_recent_script_errors(script_path: String) -> Array:
+	"""Grab recent SCRIPT ERROR / Parse Error lines from the editor Output panel
+	that mention the given script path.  Best-effort — returns [] if the panel
+	cannot be accessed."""
+	var errors: Array = []
+	if not _editor_plugin:
+		return errors
+
+	# Find the editor's Output panel RichTextLabel
+	var base := _editor_plugin.get_editor_interface().get_base_control()
+	var editor_log := _find_node_by_class(base, "EditorLog")
+	if not editor_log:
+		return errors
+	var rtl := _find_child_rtl(editor_log)
+	if not rtl:
+		return errors
+
+	var text: String = rtl.get_parsed_text()
+	var short_path := script_path.get_file()  # e.g. "player.gd"
+
+	for line in text.split("\n"):
+		line = line.strip_edges()
+		if line.is_empty():
+			continue
+		if short_path in line or script_path in line:
+			if line.begins_with("SCRIPT ERROR:") or line.begins_with("Parse Error:") \
+				or line.begins_with("ERROR:") or line.begins_with("at:"):
+				errors.append(line)
+
+	# Keep only the last 10 relevant lines
+	if errors.size() > 10:
+		errors = errors.slice(errors.size() - 10)
+	return errors
+
+func _find_node_by_class(root: Node, cls_name: String) -> Node:
+	if root.get_class() == cls_name:
+		return root
+	for child in root.get_children():
+		var found := _find_node_by_class(child, cls_name)
+		if found:
+			return found
+	return null
+
+func _find_child_rtl(node: Node) -> RichTextLabel:
+	for child in node.get_children():
+		if child is RichTextLabel:
+			return child
+		var found := _find_child_rtl(child)
+		if found:
+			return found
+	return null
 
 # =============================================================================
 # list_scripts
