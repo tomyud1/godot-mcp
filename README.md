@@ -71,6 +71,7 @@ Run `map_project` and get a browser-based explorer at `localhost:6510`:
 - Edit code directly in the visualizer — changes sync to Godot in real time
 - Scene view with node property editing
 - Find usages before refactoring
+<img width="1710" height="1107" alt="image" src="https://github.com/user-attachments/assets/a9faf163-8b8b-43da-93ec-c7a651e8ac60" />
 
 ### LIMITATIONS
 
