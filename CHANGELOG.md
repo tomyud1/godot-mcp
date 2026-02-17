@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1] - 2026-02-17
+
+### Changed
+- **Moved plugin to repo root** — `addons/godot_mcp/` is now at the repo root instead of nested under `godot-plugin/`, matching the Godot Asset Library expected layout
+- **Added `.gitattributes`** — Asset Library downloads now only include the `addons/` folder
+- **Updated install instructions** — README and SUMMARY reflect the new path
+
 ## [0.2.0] - 2026-02-11
 
 ### Fixed

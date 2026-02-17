@@ -42,7 +42,9 @@ Works with any MCP-compatible client.
 
 ### 2. Install the Godot plugin
 
-Copy the `godot-plugin/addons/godot_mcp/` folder into your Godot project's `addons/` directory. Then enable it: Project → Project Settings → Plugins → **Godot MCP** → Enable.
+Copy the `addons/godot_mcp/` folder into your Godot project's `addons/` directory. Then enable it: Project → Project Settings → Plugins → **Godot MCP** → Enable.
+
+Or install directly from the **Godot Asset Library**: AssetLib → search "Godot MCP" → Install.
 
 ### 3. Restart Project
 

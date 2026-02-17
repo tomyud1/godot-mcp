@@ -164,7 +164,7 @@ No installation needed — the server is on npm. Add to your AI client config:
 ```
 
 **2. Install the Godot plugin**
-Copy `godot-plugin/addons/godot_mcp/` into your project's `addons/` folder. Enable it in Project → Project Settings → Plugins.
+Copy `addons/godot_mcp/` into your project's `addons/` folder. Enable it in Project → Project Settings → Plugins. Or install from the **Godot Asset Library** inside the editor.
 
 **3. Restart Godot.** Check the top-right corner of the editor — you should see **MCP Connected** in green. You're ready to go.
 
