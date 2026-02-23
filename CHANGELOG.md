@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.2.2] - 2026-02-23
+
+### Fixed
+- **`create_scene` schema now valid for strict MCP clients** — added missing `items` field to the `nodes` array property, fixing Windsurf/Cascade rejecting the tool with "array schema missing items"
+
 ## [0.2.1] - 2026-02-17
 
 ### Changed

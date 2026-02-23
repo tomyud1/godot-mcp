@@ -26,6 +26,7 @@ export const sceneTools: ToolDefinition[] = [
         },
         nodes: {
           type: 'array',
+          items: { type: 'object', description: 'A node: {name, type, properties, script, children}' },
           description: 'Array of child nodes to add. Each node: {name, type, properties, script, children}.'
         },
         attach_script: {
