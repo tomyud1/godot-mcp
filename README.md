@@ -18,7 +18,7 @@ That's it — no manual file copying needed.
 
 ### 2. Add the server config to your AI client
 
-**Claude Desktop** — edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
+**Claude Desktop** — Settings → Developer → Edit Config → open the config file and paste:
 ```json
 {
   "mcpServers": {
