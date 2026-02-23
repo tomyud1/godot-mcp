@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.2.4] - 2026-02-23
+
+### Changed
+- **Published to official MCP registry** — `godot-mcp-server` is now listed at `registry.modelcontextprotocol.io` as `io.github.tomyud1/godot-mcp`
+- **Updated npm README** — fully reflects current features, tools, visualizer screenshot, and npx-based install
+- **Added `server.json`** — MCP registry manifest for automated discovery
+- **Updated `package.json`** — added `mcpName` and `repository` fields required by the MCP registry
+
+## [0.2.3] - 2026-02-23
+
+### Changed
+- Minor package metadata update (intermediate release during registry setup)
+
 ## [0.2.2] - 2026-02-23
 
 ### Fixed

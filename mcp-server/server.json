@@ -1,0 +1,21 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.tomyud1/godot-mcp",
+  "description": "MCP server for Godot game engine integration — control the Godot editor with AI",
+  "repository": {
+    "url": "https://github.com/tomyud1/godot-mcp",
+    "source": "github",
+    "subfolder": "mcp-server"
+  },
+  "version": "0.2.4",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "godot-mcp-server",
+      "version": "0.2.4",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}

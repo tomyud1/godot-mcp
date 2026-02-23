@@ -19,3 +19,10 @@ dist/
 # Environment
 .env
 .env.local
+
+# MCP registry tokens
+.mcpregistry_github_token
+.mcpregistry_registry_token
+
+# Cursor
+.cursor/

@@ -1,11 +1,16 @@
 {
   "name": "godot-mcp-server",
-  "version": "0.2.2",
+  "version": "0.2.4",
+  "mcpName": "io.github.tomyud1/godot-mcp",
   "description": "MCP server for Godot game engine integration",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tomyud1/godot-mcp.git"
+  },
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "godot-mcp-server": "./dist/index.js"
+    "godot-mcp-server": "dist/index.js"
   },
   "files": [
     "dist",

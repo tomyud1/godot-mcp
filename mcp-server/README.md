@@ -1,88 +1,131 @@
 # Godot MCP Server
 
-An MCP (Model Context Protocol) server that provides Godot game engine tools to AI assistants like Claude Desktop or RAGy.
+**Give your AI assistant full access to the Godot editor.**
 
-## Features
+Build games faster with Claude, Cursor, or any MCP-compatible AI — no copy-pasting, no context switching. The AI reads, writes, and manipulates your scenes, scripts, nodes, and project settings directly inside the running Godot editor.
 
-- **File Operations**: List directories, read files, search project, create scripts
-- **Scene Operations** (coming soon): Create/edit scenes, add/remove nodes
-- **Script Operations** (coming soon): Apply code edits, validate scripts
-- **Project Tools** (coming soon): Get project settings, input map, collision layers
+> Godot 4.x · 32 tools · Interactive project visualizer · MIT license
 
-## Installation
+---
 
-```bash
-cd mcp-server
-npm install
-npm run build
-```
+## Quick Start
 
-## Usage
+### 1. Add the MCP server to your AI client
 
-### With Claude Desktop
+No cloning or building required — runs directly via npx.
 
-Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json`):
-
+**Claude Desktop** — edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
 ```json
 {
   "mcpServers": {
     "godot": {
-      "command": "node",
-      "args": ["/Users/tomeryud/godot-mcp/mcp-server/dist/index.js"]
+      "command": "npx",
+      "args": ["-y", "godot-mcp-server"]
     }
   }
 }
 ```
 
-Then restart Claude Desktop.
-
-### With RAGy
-
-Add to RAGy's MCP client configuration (see RAGy documentation).
-
-### Standalone Testing
-
-Test with the MCP inspector:
-
-```bash
-npx @modelcontextprotocol/inspector node dist/index.js
+**Cursor** — add to MCP settings (Settings → MCP → Add Server):
+```json
+{
+  "mcpServers": {
+    "godot": {
+      "command": "npx",
+      "args": ["-y", "godot-mcp-server"]
+    }
+  }
+}
 ```
 
-## Development
+Works with any MCP-compatible client (Claude Code, Cline, Windsurf, etc.)
+
+### 2. Install the Godot plugin
+
+Copy the `addons/godot_mcp/` folder from the [GitHub repo](https://github.com/tomyud1/godot-mcp) into your Godot project's `addons/` directory. Then enable it: **Project → Project Settings → Plugins → Godot MCP → Enable**.
+
+Or install directly from the **Godot Asset Library**: AssetLib → search "Godot MCP" → Install.
+
+### 3. Connect
+
+Restart your Godot project. Check the **top-right corner** of the editor — you should see **MCP Connected** in green. You're ready to go.
+
+---
+
+## What Can It Do?
+
+### 32 Tools Across 6 Categories
+
+| Category | Tools | Examples |
+|---|---|---|
+| **File Operations** | 4 | Browse directories, read files, search project, create scripts |
+| **Scene Operations** | 11 | Create scenes, add/remove/move nodes, set properties, attach scripts, assign collision shapes and textures |
+| **Script Operations** | 6 | Apply code edits, validate syntax, rename/move files with reference updates |
+| **Project Tools** | 9 | Read project settings, input map, collision layers, console errors, scene tree dumps |
+| **Asset Generation** | 1 | Generate 2D sprites from SVG |
+| **Visualization** | 1 | Interactive browser-based project map |
+
+### Interactive Visualizer
+
+Run `map_project` and get a browser-based project explorer at `localhost:6510`:
+
+- Force-directed graph of all scripts and their relationships
+- Click any script to see variables, functions, signals, and connections
+- Edit code directly in the visualizer — changes sync to Godot in real time
+- Scene view with node property editing
+- Find usages before refactoring
+
+![Godot MCP Visualizer](https://github.com/user-attachments/assets/a9faf163-8b8b-43da-93ec-c7a651e8ac60)
+
+---
+
+## How It Works
+
+```
+┌─────────────┐    MCP (stdio)    ┌─────────────┐   WebSocket    ┌──────────────┐
+│  AI Client   │◄────────────────►│  MCP Server  │◄─────────────►│ Godot Editor │
+│  (Claude,    │                  │  (Node.js)   │   port 6505   │  (Plugin)    │
+│   Cursor)    │                  │              │               │              │
+└─────────────┘                  │  Visualizer  │               │  32 tool     │
+                                 │  HTTP :6510  │               │  handlers    │
+                                 └──────┬───────┘               └──────────────┘
+                                        │
+                                 ┌──────▼───────┐
+                                 │   Browser     │
+                                 │  Visualizer   │
+                                 └──────────────┘
+```
+
+The MCP server connects to the Godot editor via WebSocket through the Godot plugin. The AI never guesses at your project structure — it reads live state directly from the running editor.
+
+---
+
+## Current Limitations
+
+- **Local only** — runs on localhost, no remote connections
+- **Single connection** — one Godot instance at a time
+- **No undo** — changes save directly (use version control)
+- **AI has limited Godot knowledge** — it can help debug, write scripts, and build scenes, but can't create a complete game without guidance
+
+---
+
+## Build From Source
 
 ```bash
-# Watch mode (rebuild on changes)
-npm run watch
-
-# Build once
+git clone https://github.com/tomyud1/godot-mcp
+cd godot-mcp/mcp-server
+npm install
 npm run build
-
-# Run the server directly
-npm start
 ```
 
-## Architecture
+Then point your AI client at `mcp-server/dist/index.js` instead of using `npx`.
 
-```
-mcp-server/
-├── src/
-│   ├── index.ts          # Main MCP server entry point
-│   ├── types.ts          # TypeScript type definitions
-│   ├── godot-bridge.ts   # WebSocket connection to Godot (Phase 2)
-│   └── tools/
-│       ├── index.ts      # Tool registry
-│       ├── file-tools.ts # File operation tools
-│       └── ...           # More tool categories
-└── dist/                 # Compiled JavaScript
-```
-
-## Phases
-
-1. **Phase 1 (Current)**: Mock tools - returns fake data for testing
-2. **Phase 2**: WebSocket bridge - connects to Godot plugin
-3. **Phase 3**: Godot plugin - executes tools in Godot editor
-4. **Phase 4+**: Additional tools (scenes, scripts, etc.)
+---
 
 ## License
 
 MIT
+
+---
+
+**[GitHub](https://github.com/tomyud1/godot-mcp)** · **[Report Issues](https://github.com/tomyud1/godot-mcp/issues)**
