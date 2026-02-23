@@ -10,7 +10,11 @@ Build games faster with Claude, Cursor, or any MCP-compatible AI — no copy-pas
 
 ## Quick Start
 
-### 1. Add the MCP server to your AI client
+### 0. Install Node.js (one-time setup)
+
+Download and run the installer from **[nodejs.org](https://nodejs.org/en/download)** (LTS version). It's a standard installer — no terminal needed.
+
+### 1. Install the Godot plugin
 
 No cloning or building required — runs directly via npx.
 
