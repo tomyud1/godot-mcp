@@ -23,35 +23,35 @@ func _ensure_res_path(path: String) -> String:
 # edit_script - Apply a small surgical code edit to a GDScript file
 # =============================================================================
 func edit_script(args: Dictionary) -> Dictionary:
-	var edit: Dictionary = args.get("edit", {})
+	var edit: Dictionary = args.get(&"edit", {})
 	if edit.is_empty():
-		return {"ok": false, "error": "Missing 'edit' payload"}
+		return {&"ok": false, &"error": "Missing 'edit' payload"}
 
-	var path: String = str(edit.get("file", ""))
+	var path: String = str(edit.get(&"file", ""))
 	if path.is_empty():
-		return {"ok": false, "error": "Missing 'file' in edit"}
+		return {&"ok": false, &"error": "Missing 'file' in edit"}
 
 	path = _ensure_res_path(path)
 
 	if not FileAccess.file_exists(path):
-		return {"ok": false, "error": "File not found: " + path}
+		return {&"ok": false, &"error": "File not found: " + path}
 
-	var spec_type: String = str(edit.get("type", "snippet_replace"))
+	var spec_type: String = str(edit.get(&"type", "snippet_replace"))
 	if spec_type != "snippet_replace":
-		return {"ok": false, "error": "Only 'snippet_replace' type is supported"}
+		return {&"ok": false, &"error": "Only 'snippet_replace' type is supported"}
 
-	var old_snippet: String = str(edit.get("old_snippet", ""))
-	var new_snippet: String = str(edit.get("new_snippet", ""))
-	var context_before: String = str(edit.get("context_before", ""))
-	var context_after: String = str(edit.get("context_after", ""))
+	var old_snippet: String = str(edit.get(&"old_snippet", ""))
+	var new_snippet: String = str(edit.get(&"new_snippet", ""))
+	var context_before: String = str(edit.get(&"context_before", ""))
+	var context_after: String = str(edit.get(&"context_after", ""))
 
 	if old_snippet.is_empty():
-		return {"ok": false, "error": "Missing 'old_snippet' in edit"}
+		return {&"ok": false, &"error": "Missing 'old_snippet' in edit"}
 
 	# Read current file content
 	var file := FileAccess.open(path, FileAccess.READ)
 	if not file:
-		return {"ok": false, "error": "Cannot read file: " + path}
+		return {&"ok": false, &"error": "Cannot read file: " + path}
 	var content := file.get_as_text()
 	file.close()
 
@@ -70,21 +70,20 @@ func edit_script(args: Dictionary) -> Dictionary:
 				pos = after_ctx + snippet_pos
 
 	if pos == -1:
-		return {"ok": false, "error": "Could not find old_snippet in file. Make sure old_snippet matches the file content exactly."}
+		return {&"ok": false, &"error": "Could not find old_snippet in file. Make sure old_snippet matches the file content exactly."}
 
 	# Check for multiple occurrences
 	var second_pos := content.find(search_text, pos + 1)
 	if second_pos != -1 and context_before.is_empty() and context_after.is_empty():
-		return {"ok": false, "error": "old_snippet appears multiple times. Add context_before or context_after for disambiguation."}
+		return {&"ok": false, &"error": "old_snippet appears multiple times. Add context_before or context_after for disambiguation."}
 
 	# Apply the replacement
-	var original_content := content
 	var new_content := content.substr(0, pos) + new_snippet + content.substr(pos + old_snippet.length())
 
 	# Write back
 	file = FileAccess.open(path, FileAccess.WRITE)
 	if not file:
-		return {"ok": false, "error": "Cannot write file: " + path}
+		return {&"ok": false, &"error": "Cannot write file: " + path}
 	file.store_string(new_content)
 	file.close()
 
@@ -97,32 +96,32 @@ func edit_script(args: Dictionary) -> Dictionary:
 	_refresh_filesystem()
 
 	return {
-		"ok": true,
-		"path": path,
-		"added": added,
-		"removed": removed,
-		"auto_applied": true,
-		"message": "Applied edit to %s (+%d -%d lines)" % [path, added, removed]
+		&"ok": true,
+		&"path": path,
+		&"added": added,
+		&"removed": removed,
+		&"auto_applied": true,
+		&"message": "Applied edit to %s (+%d -%d lines)" % [path, added, removed]
 	}
 
 # =============================================================================
 # validate_script
 # =============================================================================
 func validate_script(args: Dictionary) -> Dictionary:
-	var path: String = str(args.get("path", ""))
+	var path: String = str(args.get(&"path", ""))
 	if path.strip_edges().is_empty():
-		return {"ok": false, "error": "Missing 'path'"}
+		return {&"ok": false, &"error": "Missing 'path'"}
 
 	path = _ensure_res_path(path)
 
 	if not FileAccess.file_exists(path):
-		return {"ok": false, "error": "File not found: " + path}
+		return {&"ok": false, &"error": "File not found: " + path}
 
 	# Read the source text directly from disk so we validate the *current*
 	# file contents, not a stale resource-cache entry.
 	var file := FileAccess.open(path, FileAccess.READ)
 	if not file:
-		return {"ok": false, "error": "Cannot read file: " + path}
+		return {&"ok": false, &"error": "Cannot read file: " + path}
 	var source_code := file.get_as_text()
 	file.close()
 
@@ -137,27 +136,27 @@ func validate_script(args: Dictionary) -> Dictionary:
 		# Try to extract useful details from the Godot output log.
 		var errors := _collect_recent_script_errors(path)
 		return {
-			"ok": true,
-			"valid": false,
-			"path": path,
-			"error_code": err,
-			"errors": errors,
-			"message": "Script has errors." + (" Details: " + "; ".join(errors) if errors.size() > 0 else " Check Godot console for details.")
+			&"ok": true,
+			&"valid": false,
+			&"path": path,
+			&"error_code": err,
+			&"errors": errors,
+			&"message": "Script has errors." + (" Details: " + "; ".join(errors) if errors.size() > 0 else " Check Godot console for details.")
 		}
 
 	if not script.can_instantiate():
 		return {
-			"ok": true,
-			"valid": false,
-			"path": path,
-			"message": "Script parsed but cannot be instantiated (may have dependency errors)"
+			&"ok": true,
+			&"valid": false,
+			&"path": path,
+			&"message": "Script parsed but cannot be instantiated (may have dependency errors)"
 		}
 
 	return {
-		"ok": true,
-		"valid": true,
-		"path": path,
-		"message": "No syntax errors found"
+		&"ok": true,
+		&"valid": true,
+		&"path": path,
+		&"message": "No syntax errors found"
 	}
 
 func _collect_recent_script_errors(script_path: String) -> Array:
@@ -180,7 +179,7 @@ func _collect_recent_script_errors(script_path: String) -> Array:
 	var text: String = rtl.get_parsed_text()
 	var short_path := script_path.get_file()  # e.g. "player.gd"
 
-	for line in text.split("\n"):
+	for line: String in text.split("\n"):
 		line = line.strip_edges()
 		if line.is_empty():
 			continue
@@ -197,14 +196,14 @@ func _collect_recent_script_errors(script_path: String) -> Array:
 func _find_node_by_class(root: Node, cls_name: String) -> Node:
 	if root.get_class() == cls_name:
 		return root
-	for child in root.get_children():
+	for child: Node in root.get_children():
 		var found := _find_node_by_class(child, cls_name)
 		if found:
 			return found
 	return null
 
 func _find_child_rtl(node: Node) -> RichTextLabel:
-	for child in node.get_children():
+	for child: Node in node.get_children():
 		if child is RichTextLabel:
 			return child
 		var found := _find_child_rtl(child)
@@ -216,74 +215,78 @@ func _find_child_rtl(node: Node) -> RichTextLabel:
 # list_scripts
 # =============================================================================
 func list_scripts(args: Dictionary) -> Dictionary:
-	var scripts: Array = []
+	var scripts: PackedStringArray = []
 	_collect_scripts("res://", scripts)
 
 	return {
-		"ok": true,
-		"scripts": scripts,
-		"count": scripts.size()
+		&"ok": true,
+		&"scripts": scripts,
+		&"count": scripts.size()
 	}
 
-func _collect_scripts(path: String, out: Array) -> void:
+const MAX_TRAVERSAL_DEPTH := 20
+
+func _collect_scripts(path: String, out: PackedStringArray, depth: int = 0) -> void:
+	if depth >= MAX_TRAVERSAL_DEPTH:
+		return
 	var dir := DirAccess.open(path)
 	if dir == null:
 		return
 
 	dir.list_dir_begin()
-	var name := dir.get_next()
-	while name != "":
-		if name.begins_with("."):
-			name = dir.get_next()
+	var file_name := dir.get_next()
+	while file_name != "":
+		if file_name.begins_with("."):
+			file_name = dir.get_next()
 			continue
 
-		var full_path := path.path_join(name)
+		var full_path := path.path_join(file_name)
 		if dir.current_is_dir():
-			_collect_scripts(full_path, out)
-		elif name.ends_with(".gd"):
+			_collect_scripts(full_path, out, depth + 1)
+		elif file_name.ends_with(".gd"):
 			out.append(full_path)
 
-		name = dir.get_next()
+		file_name = dir.get_next()
 	dir.list_dir_end()
 
 # =============================================================================
 # create_folder
 # =============================================================================
 func create_folder(args: Dictionary) -> Dictionary:
-	var path: String = str(args.get("path", ""))
+	var path: String = str(args.get(&"path", ""))
 	if path.strip_edges().is_empty():
-		return {"ok": false, "error": "Missing 'path'"}
+		return {&"ok": false, &"error": "Missing 'path'"}
 
 	path = _ensure_res_path(path)
 
 	if DirAccess.dir_exists_absolute(path):
-		return {"ok": true, "path": path, "message": "Directory already exists"}
+		return {&"ok": true, &"path": path, &"message": "Directory already exists"}
 
 	var err := DirAccess.make_dir_recursive_absolute(path)
 	if err != OK:
-		return {"ok": false, "error": "Failed to create directory: " + str(err)}
+		return {&"ok": false, &"error": "Failed to create directory: " + str(err)}
 
 	_refresh_filesystem()
 
-	return {"ok": true, "path": path, "message": "Directory created"}
+	return {&"ok": true, &"path": path, &"message": "Directory created"}
 
 # =============================================================================
 # delete_file
 # =============================================================================
 func delete_file(args: Dictionary) -> Dictionary:
-	var path: String = str(args.get("path", ""))
-	var confirm: bool = bool(args.get("confirm", false))
-	var create_backup: bool = bool(args.get("create_backup", true))
+	var path: String = str(args.get(&"path", ""))
+	var confirm: bool = bool(args.get(&"confirm", false))
+	var create_backup: bool = bool(args.get(&"create_backup", true))
 
 	if path.strip_edges().is_empty():
-		return {"ok": false, "error": "Missing 'path'"}
+		return {&"ok": false, &"error": "Missing 'path'"}
 	if not confirm:
-		return {"ok": false, "error": "Must set confirm=true to delete"}
+		return {&"ok": false, &"error": "Must set confirm=true to delete"}
 
 	path = _ensure_res_path(path)
 
 	if not FileAccess.file_exists(path):
-		return {"ok": false, "error": "File not found: " + path}
+		return {&"ok": false, &"error": "File not found: " + path}
 
 	# Create backup
 	if create_backup:
@@ -292,31 +295,31 @@ func delete_file(args: Dictionary) -> Dictionary:
 
 	var err := DirAccess.remove_absolute(path)
 	if err != OK:
-		return {"ok": false, "error": "Failed to delete file: " + str(err)}
+		return {&"ok": false, &"error": "Failed to delete file: " + str(err)}
 
 	_refresh_filesystem()
 
-	return {"ok": true, "path": path, "message": "File deleted" + (" (backup created)" if create_backup else "")}
+	return {&"ok": true, &"path": path, &"message": "File deleted" + (" (backup created)" if create_backup else "")}
 
 # =============================================================================
 # rename_file
 # =============================================================================
 func rename_file(args: Dictionary) -> Dictionary:
-	var old_path: String = str(args.get("old_path", ""))
-	var new_path: String = str(args.get("new_path", ""))
+	var old_path: String = str(args.get(&"old_path", ""))
+	var new_path: String = str(args.get(&"new_path", ""))
 
 	if old_path.strip_edges().is_empty():
-		return {"ok": false, "error": "Missing 'old_path'"}
+		return {&"ok": false, &"error": "Missing 'old_path'"}
 	if new_path.strip_edges().is_empty():
-		return {"ok": false, "error": "Missing 'new_path'"}
+		return {&"ok": false, &"error": "Missing 'new_path'"}
 
 	old_path = _ensure_res_path(old_path)
 	new_path = _ensure_res_path(new_path)
 
 	if not FileAccess.file_exists(old_path):
-		return {"ok": false, "error": "File not found: " + old_path}
+		return {&"ok": false, &"error": "File not found: " + old_path}
 	if FileAccess.file_exists(new_path):
-		return {"ok": false, "error": "Target already exists: " + new_path}
+		return {&"ok": false, &"error": "Target already exists: " + new_path}
 
 	# Ensure target directory exists
 	var dir_path := new_path.get_base_dir()
@@ -325,9 +328,9 @@ func rename_file(args: Dictionary) -> Dictionary:
 
 	var err := DirAccess.rename_absolute(old_path, new_path)
 	if err != OK:
-		return {"ok": false, "error": "Failed to rename: " + str(err)}
+		return {&"ok": false, &"error": "Failed to rename: " + str(err)}
 
 	_refresh_filesystem()
 
-	return {"ok": true, "old_path": old_path, "new_path": new_path,
-		"message": "Renamed %s to %s" % [old_path, new_path]}
+	return {&"ok": true, &"old_path": old_path, &"new_path": new_path,
+		&"message": "Renamed %s to %s" % [old_path, new_path]}
