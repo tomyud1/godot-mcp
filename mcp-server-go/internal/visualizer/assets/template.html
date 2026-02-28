@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Godot Project Map</title>
+<style>
+%%CSS%%
+</style>
+</head>
+<body>
+<div id="search-bar">
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+  <input type="text" id="search" placeholder="Search scripts..." />
+  <span class="stats" id="stats"></span>
+</div>
+
+<div id="legend">
+  <div class="item"><div class="line" style="background:var(--edge-extends)"></div> extends</div>
+  <div class="item"><div class="line" style="background:var(--edge-preload)"></div> preload</div>
+  <div class="item"><div class="line" style="background:var(--edge-signal);height:0;border-top:2px dotted var(--edge-signal)"></div> signal</div>
+</div>
+
+<div id="zoom-indicator" title="Click to reset, or type custom zoom">
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="2" onclick="resetZoom()" style="cursor:pointer"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/><path d="M8 11h6"/><path d="M11 8v6"/></svg>
+  <input type="text" class="zoom-input" id="zoom-text" value="100%" onchange="setCustomZoom(this.value)" onkeydown="if(event.key==='Enter'){this.blur()}" onclick="this.select()">
+</div>
+
+<div id="detail-panel">
+  <div id="panel-resize-handle"></div>
+  <div class="panel-header">
+    <button class="close-btn" onclick="closePanel()">&times;</button>
+    <h2 id="panel-title"></h2>
+    <div class="path" id="panel-path"></div>
+  </div>
+  <div class="panel-body" id="panel-body"></div>
+</div>
+
+<!-- View Tabs -->
+<div id="view-tabs">
+  <button class="active" onclick="switchView('scripts')">Scripts</button>
+  <button onclick="switchView('scenes')">Scenes</button>
+</div>
+
+<!-- Scene Back Button (shown when scene is expanded) -->
+<div id="scene-back-btn" style="display:none" onclick="goBackToSceneOverview()">
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+    <path d="M19 12H5M12 19l-7-7 7-7"/>
+  </svg>
+  <span>← Back to Scenes</span>
+  <span class="scene-name"></span>
+</div>
+
+<!-- Context Menu (Scripts) -->
+<div id="context-menu">
+  <div class="menu-item" onclick="createNewScript()">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+      <polyline points="14,2 14,8 20,8"/>
+      <line x1="12" y1="18" x2="12" y2="12"/>
+      <line x1="9" y1="15" x2="15" y2="15"/>
+    </svg>
+    New Script
+  </div>
+  <div class="menu-divider"></div>
+  <div class="menu-item" onclick="refreshProject()">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M23 4v6h-6M1 20v-6h6"/>
+      <path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/>
+    </svg>
+    Refresh
+  </div>
+  <div class="menu-item" onclick="resetLayout()">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <rect x="3" y="3" width="7" height="7"/>
+      <rect x="14" y="3" width="7" height="7"/>
+      <rect x="14" y="14" width="7" height="7"/>
+      <rect x="3" y="14" width="7" height="7"/>
+    </svg>
+    Reset Layout
+  </div>
+</div>
+
+<!-- Context Menu (Scene Nodes) -->
+<div id="scene-context-menu">
+  <div class="menu-item" onclick="sceneNodeAction('add_child')">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <circle cx="12" cy="12" r="10"/>
+      <line x1="12" y1="8" x2="12" y2="16"/>
+      <line x1="8" y1="12" x2="16" y2="12"/>
+    </svg>
+    Add Child Node
+  </div>
+  <div class="menu-item" onclick="sceneNodeAction('rename')">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+      <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+    </svg>
+    Rename
+  </div>
+  <div class="menu-item" onclick="sceneNodeAction('duplicate')">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+    </svg>
+    Duplicate
+  </div>
+  <div class="menu-divider"></div>
+  <div class="menu-item" onclick="sceneNodeAction('move_up')">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <polyline points="18 15 12 9 6 15"/>
+    </svg>
+    Move Up
+  </div>
+  <div class="menu-item" onclick="sceneNodeAction('move_down')">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <polyline points="6 9 12 15 18 9"/>
+    </svg>
+    Move Down
+  </div>
+  <div class="menu-divider"></div>
+  <div class="menu-item danger" onclick="sceneNodeAction('delete')">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <polyline points="3 6 5 6 21 6"/>
+      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+    </svg>
+    Delete
+  </div>
+</div>
+
+<!-- Floating Usage Panel -->
+<div id="usage-float-panel">
+  <div class="ufp-header" id="ufp-header">
+    <div class="ufp-info">
+      <div class="ufp-title" id="ufp-title">⚠ Delete Variable</div>
+      <div class="ufp-count" id="ufp-count"></div>
+    </div>
+    <div class="ufp-buttons">
+      <button class="refresh-btn" onclick="refreshUsages()" title="Re-scan for usages">↻</button>
+      <button class="close-btn" onclick="closeUsagePanel()" title="Cancel">×</button>
+    </div>
+  </div>
+  <div class="ufp-list" id="ufp-list"></div>
+  <div class="ufp-actions">
+    <button class="cancel" onclick="closeUsagePanel()">Cancel</button>
+    <button class="delete" id="ufp-delete-btn">Delete Anyway</button>
+  </div>
+  <div class="ufp-resize" id="ufp-resize"></div>
+</div>
+
+<!-- New Script Modal -->
+<div id="new-script-modal" class="modal" style="display:none">
+  <div class="modal-content">
+    <div class="modal-header">
+      <h3>Create New Script</h3>
+      <button class="close-btn" onclick="closeNewScriptModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label>Script Path</label>
+        <input type="text" id="new-script-path" placeholder="res://scripts/my_script.gd">
+      </div>
+      <div class="form-group">
+        <label>Extends</label>
+        <select id="new-script-extends">
+          <option value="Node">Node</option>
+          <option value="Node2D">Node2D</option>
+          <option value="Node3D">Node3D</option>
+          <option value="CharacterBody2D">CharacterBody2D</option>
+          <option value="CharacterBody3D">CharacterBody3D</option>
+          <option value="RigidBody2D">RigidBody2D</option>
+          <option value="Area2D">Area2D</option>
+          <option value="Control">Control</option>
+          <option value="Resource">Resource</option>
+          <option value="RefCounted">RefCounted</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Class Name (optional)</label>
+        <input type="text" id="new-script-classname" placeholder="MyClass">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="cancel" onclick="closeNewScriptModal()">Cancel</button>
+      <button class="confirm" onclick="submitNewScript()">Create</button>
+    </div>
+  </div>
+</div>
+
+<canvas id="canvas"></canvas>
+
+<script>
+%%SCRIPT%%
+</script>
+</body>
+</html>
