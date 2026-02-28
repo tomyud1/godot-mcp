@@ -10,31 +10,45 @@ Build games faster with Claude, Cursor, or any MCP-compatible AI — no copy-pas
 
 ## Quick Start
 
-### 0. Install Node.js (one-time setup)
-
-Download and run the installer from **[nodejs.org](https://nodejs.org/en/download)** (LTS version). It's a standard installer — no terminal needed.
-
 ### 1. Install the Godot plugin
 
 Inside the Godot editor, click the **AssetLib** tab at the top → search **"mcp"** → find **"Godot AI Assistant tools MCP"** → Install.
 
 That's it — no manual file copying needed.
 
-### 2. Add the server config to your AI client
+### 2. Install the MCP server
 
-**Claude Desktop** — Settings → Developer → Edit Config → open the config file and paste:
+**Option A: Pre-built binary (recommended, no runtime needed)**
+
+Download the binary for your platform from [GitHub Releases](https://github.com/tomyud1/godot-mcp/releases) and place it somewhere on your PATH (e.g., `~/.local/bin/` on Linux/macOS).
+
+**Option B: Via npm (requires Node.js)**
+
+Install [Node.js](https://nodejs.org/en/download) (LTS version), then use `npx` in the config below — it downloads the server automatically.
+
+### 3. Add the server config to your AI client
+
+**Using the pre-built binary:**
+
+**Claude Desktop** — Settings → Developer → Edit Config:
 ```json
 {
   "mcpServers": {
     "godot": {
-      "command": "npx",
-      "args": ["-y", "godot-mcp-server"]
+      "command": "godot-mcp-server"
     }
   }
 }
 ```
 
-**Cursor** — Settings → MCP → Add Server:
+**Claude Code** — run in terminal:
+```bash
+claude mcp add godot godot-mcp-server
+```
+
+**Using npm:**
+
+**Claude Desktop** / **Cursor** — Settings → Developer → Edit Config:
 ```json
 {
   "mcpServers": {
@@ -51,13 +65,13 @@ That's it — no manual file copying needed.
 claude mcp add godot -- npx -y godot-mcp-server
 ```
 
-Works with any MCP-compatible client (Cline, Windsurf, etc.)
+Works with any MCP-compatible client (Cline, Windsurf, Cursor, etc.)
 
-### 3. Restart your AI client
+### 4. Restart your AI client
 
 Close and reopen Claude Desktop / Cursor / your client so it picks up the new config.
 
-### 4. Restart your Godot project
+### 5. Restart your Godot project
 
 Hit **Restart Project** in the Godot editor. Check the **top-right corner** — you should see **MCP Connected** in green. You're ready to go.
 
@@ -97,8 +111,8 @@ AI cannot create 100% of a game by itself — it struggles with complex UI layou
 ```
 ┌─────────────┐    MCP (stdio)    ┌─────────────┐   WebSocket    ┌──────────────┐
 │  AI Client   │◄────────────────►│  MCP Server  │◄─────────────►│ Godot Editor │
-│  (Claude,    │                  │  (Node.js)   │   port 6505   │  (Plugin)    │
-│   Cursor)    │                  │              │               │              │
+│  (Claude,    │                  │  (Go binary  │   port 6505   │  (Plugin)    │
+│   Cursor)    │                  │   or Node)   │               │              │
 └─────────────┘                  │  Visualizer  │               │  32 tool     │
                                  │  HTTP :6510  │               │  handlers    │
                                  └──────┬───────┘               └──────────────┘
@@ -123,14 +137,19 @@ AI cannot create 100% of a game by itself — it struggles with complex UI layou
 
 ## Development
 
-To build from source instead of using npm:
+**Go server (recommended):**
+```bash
+cd mcp-server-go
+make build
+```
+Binary is at `mcp-server-go/bin/godot-mcp-server`. Cross-compile for all platforms with `make build-all`.
 
+**Node.js server:**
 ```bash
 cd mcp-server
 npm install
 npm run build
 ```
-
 Then point your AI client at `mcp-server/dist/index.js` instead of using `npx`.
 
 ---

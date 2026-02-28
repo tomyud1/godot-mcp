@@ -3,6 +3,7 @@ node_modules/
 
 # Build output
 dist/
+mcp-server-go/bin/
 
 # OS files
 .DS_Store
