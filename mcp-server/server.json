@@ -7,12 +7,12 @@
     "source": "github",
     "subfolder": "mcp-server"
   },
-  "version": "0.2.5",
+  "version": "0.2.6",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "godot-mcp-server",
-      "version": "0.2.5",
+      "version": "0.2.6",
       "transport": {
         "type": "stdio"
       }

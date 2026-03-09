@@ -29,7 +29,7 @@ import { serveVisualization, stopVisualizationServer, setGodotBridge } from './v
 
 // Server metadata
 const SERVER_NAME = 'godot-mcp-server';
-const SERVER_VERSION = '0.2.5';
+const SERVER_VERSION = '0.2.6';
 const WEBSOCKET_PORT = 6505;
 
 // Create MCP server

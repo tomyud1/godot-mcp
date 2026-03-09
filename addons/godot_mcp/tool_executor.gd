@@ -77,8 +77,12 @@ func _init_tools() -> void:
 		&"rename_file": [_script_tools, &"rename_file"],
 
 		&"get_project_settings": [_project_tools, &"get_project_settings"],
+		&"list_settings": [_project_tools, &"list_settings"],
+		&"update_project_settings": [_project_tools, &"update_project_settings"],
 		&"get_input_map": [_project_tools, &"get_input_map"],
+		&"configure_input_map": [_project_tools, &"configure_input_map"],
 		&"get_collision_layers": [_project_tools, &"get_collision_layers"],
+		&"setup_autoload": [_project_tools, &"setup_autoload"],
 		&"get_node_properties": [_project_tools, &"get_node_properties"],
 		&"get_console_log": [_project_tools, &"get_console_log"],
 		&"get_errors": [_project_tools, &"get_errors"],

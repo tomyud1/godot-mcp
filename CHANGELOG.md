@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.2.6] - 2026-03-08
+
+### Added
+- **`list_settings` tool** — browse project settings by category; returns current values, types, and valid options (enums, ranges)
+- **`update_project_settings` tool** — write project settings by path; tool description guides the AI to use `list_settings` first
+- **`configure_input_map` tool** — add, remove, or replace input actions and key/button bindings with live editor UI refresh
+- **`setup_autoload` tool** — register, unregister, or list autoload singletons
+
+### Fixed
+- **Input Map editor refreshes live** — calls the editor's internal `_update_action_map_editor()` after changes so the Project Settings UI stays in sync
+
 ## [0.2.5] - 2026-03-06
 
 ### Changed

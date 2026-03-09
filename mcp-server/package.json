@@ -1,6 +1,6 @@
 {
   "name": "godot-mcp-server",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "mcpName": "io.github.tomyud1/godot-mcp",
   "description": "MCP server for Godot game engine integration",
   "repository": {

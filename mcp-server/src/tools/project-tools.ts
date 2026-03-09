@@ -121,6 +121,82 @@ export const projectTools: ToolDefinition[] = [
       type: 'object',
       properties: {}
     }
+  },
+  {
+    name: 'list_settings',
+    description: 'Browse Godot project settings by category. Call without a category to see all available categories. Call with a category to see all settings in that category with their current values, types, and valid options.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        category: {
+          type: 'string',
+          description: 'Settings category prefix (e.g., "display", "physics", "rendering", "application", "audio"). Omit to list all available categories.'
+        }
+      }
+    }
+  },
+  {
+    name: 'update_project_settings',
+    description: 'Update one or more Godot project settings. Pass a dictionary of setting paths to their new values. Use list_settings first to discover available setting paths, current values, and valid options for a category.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        settings: {
+          type: 'object',
+          description: 'Dictionary of setting paths to new values (e.g., {"display/window/size/viewport_width": 1920, "display/window/size/viewport_height": 1080})'
+        }
+      },
+      required: ['settings']
+    }
+  },
+  {
+    name: 'configure_input_map',
+    description: 'Add, remove, or replace input actions and their key/button bindings. Use get_input_map to see current actions before modifying.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: {
+          type: 'string',
+          description: 'Input action name (e.g., "move_left", "jump", "attack")'
+        },
+        operation: {
+          type: 'string',
+          description: '"add" to create action and/or append events, "remove" to delete the action entirely, "set" to replace all events on an action (creates it if needed)'
+        },
+        deadzone: {
+          type: 'number',
+          description: 'Action deadzone (default: 0.5)'
+        },
+        events: {
+          type: 'array',
+          description: 'Input events to bind. Each object needs a "type" field: {"type":"key","key":"Space"} for keyboard, {"type":"mouse_button","button_index":1} for mouse (1=left,2=right,3=middle), {"type":"joypad_button","button_index":0} for gamepad, {"type":"joypad_motion","axis":0,"axis_value":1.0} for gamepad axis.',
+          items: { type: 'object', description: 'An input event descriptor with a "type" field and type-specific properties' }
+        }
+      },
+      required: ['action', 'operation']
+    }
+  },
+  {
+    name: 'setup_autoload',
+    description: 'Register, unregister, or list autoload singletons. Autoloads are scripts/scenes loaded automatically at project start.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: {
+          type: 'string',
+          description: 'Autoload name (e.g., "GameManager", "AudioManager")'
+        },
+        operation: {
+          type: 'string',
+          description: '"add" to register, "remove" to unregister, "list" to show all autoloads'
+        },
+        path: {
+          type: 'string',
+          description: 'res:// path to the script or scene file (required for "add")'
+        }
+      },
+      required: ['operation']
+    }
   }
 ];
 
@@ -146,6 +222,22 @@ export function getMockProjectToolResponse(toolName: string, args: Record<string
       return { ok: true, message: `Mock: Would open ${args.path} at line ${args.line || 1}`, ...mockNote };
     case 'scene_tree_dump':
       return { ok: true, tree: 'Root (Node2D)\n  Player (CharacterBody2D)\n    Sprite2D\n    CollisionShape2D', ...mockNote };
+    case 'list_settings':
+      if (args.category) {
+        return { ok: true, category: args.category, settings: [
+          { path: `${args.category}/example/setting`, type: 'int', value: 0 }
+        ], count: 1, ...mockNote };
+      }
+      return { ok: true, categories: { application: 5, display: 12, physics: 8, rendering: 15, audio: 4, input: 3 }, hint: 'Pass a category name to see its settings.', ...mockNote };
+    case 'update_project_settings':
+      return { ok: true, updated: Object.keys(args.settings || {}), count: Object.keys(args.settings || {}).length, ...mockNote };
+    case 'configure_input_map':
+      return { ok: true, message: `Mock: Would ${args.operation} action "${args.action}"`, ...mockNote };
+    case 'setup_autoload':
+      if (args.operation === 'list') {
+        return { ok: true, autoloads: [{ name: 'GameManager', path: 'res://scripts/game_manager.gd', enabled: true }], count: 1, ...mockNote };
+      }
+      return { ok: true, message: `Mock: Would ${args.operation} autoload "${args.name}"`, ...mockNote };
     default:
       return { error: `Unknown project tool: ${toolName}`, ...mockNote };
   }

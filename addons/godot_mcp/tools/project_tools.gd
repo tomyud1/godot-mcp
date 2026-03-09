@@ -2,8 +2,10 @@
 extends Node
 class_name ProjectTools
 ## Project configuration and debug tools for MCP.
-## Handles: get_project_settings, get_input_map, get_collision_layers,
-##          get_node_properties, get_console_log, get_errors, clear_console_log,
+## Handles: get_project_settings, list_settings, update_project_settings,
+##          get_input_map, configure_input_map, get_collision_layers,
+##          get_node_properties, setup_autoload,
+##          get_console_log, get_errors, clear_console_log,
 ##          open_in_godot, scene_tree_dump
 
 var _editor_plugin: EditorPlugin = null
@@ -52,6 +54,69 @@ func get_project_settings(args: Dictionary) -> Dictionary:
 	return {&"ok": true, &"settings": out}
 
 # =============================================================================
+# list_settings
+# =============================================================================
+func list_settings(args: Dictionary) -> Dictionary:
+	var category: String = str(args.get(&"category", ""))
+
+	var properties: Array = ProjectSettings.get_property_list()
+
+	if category.strip_edges().is_empty():
+		var categories: Dictionary = {}
+		for prop: Dictionary in properties:
+			var prop_name: String = prop[&"name"]
+			if prop_name.is_empty() or prop_name.begins_with("_"):
+				continue
+			var slash_idx := prop_name.find("/")
+			if slash_idx == -1:
+				continue
+			var cat: String = prop_name.substr(0, slash_idx)
+			categories[cat] = categories.get(cat, 0) + 1
+		return {&"ok": true, &"categories": categories,
+			&"hint": "Pass a category name to list its settings with current values and valid options."}
+
+	var settings: Array = []
+	for prop: Dictionary in properties:
+		var prop_name: String = prop[&"name"]
+		if not prop_name.begins_with(category + "/"):
+			continue
+		if prop_name.begins_with("_"):
+			continue
+
+		var info: Dictionary = {
+			&"path": prop_name,
+			&"type": _type_to_string(prop[&"type"]),
+			&"value": _serialize_value(ProjectSettings.get_setting(prop_name))
+		}
+
+		var hint: int = prop.get(&"hint", 0)
+		var hint_string: String = str(prop.get(&"hint_string", ""))
+		if hint == PROPERTY_HINT_ENUM and not hint_string.is_empty():
+			info[&"enum_values"] = hint_string
+		elif hint == PROPERTY_HINT_RANGE and not hint_string.is_empty():
+			info[&"range"] = hint_string
+
+		settings.append(info)
+
+	return {&"ok": true, &"category": category, &"settings": settings, &"count": settings.size()}
+
+# =============================================================================
+# update_project_settings
+# =============================================================================
+func update_project_settings(args: Dictionary) -> Dictionary:
+	var settings = args.get(&"settings", {})
+	if not settings is Dictionary or settings.is_empty():
+		return {&"ok": false, &"error": "Missing or empty 'settings' dictionary. Use list_settings to discover available setting paths."}
+
+	var updated: Array = []
+	for key: String in settings:
+		ProjectSettings.set_setting(key, settings[key])
+		updated.append(key)
+
+	_save_and_refresh_settings()
+	return {&"ok": true, &"updated": updated, &"count": updated.size()}
+
+# =============================================================================
 # get_input_map
 # =============================================================================
 func get_input_map(args: Dictionary) -> Dictionary:
@@ -82,6 +147,187 @@ func get_input_map(args: Dictionary) -> Dictionary:
 		result[action] = events
 
 	return {&"ok": true, &"actions": result, &"count": result.size()}
+
+# =============================================================================
+# configure_input_map
+# =============================================================================
+func configure_input_map(args: Dictionary) -> Dictionary:
+	var action: String = str(args.get(&"action", ""))
+	var operation: String = str(args.get(&"operation", ""))
+
+	if action.strip_edges().is_empty():
+		return {&"ok": false, &"error": "Missing 'action' name"}
+	if operation.strip_edges().is_empty():
+		return {&"ok": false, &"error": "Missing 'operation'. Use: add, remove, set"}
+
+	match operation:
+		"add":
+			return _input_map_add(action, args)
+		"remove":
+			return _input_map_remove(action)
+		"set":
+			return _input_map_set(action, args)
+		_:
+			return {&"ok": false, &"error": "Unknown operation: %s. Use: add, remove, set" % operation}
+
+func _input_map_add(action: String, args: Dictionary) -> Dictionary:
+	var deadzone: float = float(args.get(&"deadzone", 0.5))
+	var events_data: Array = args.get(&"events", [])
+
+	var created := false
+	if not InputMap.has_action(action):
+		InputMap.add_action(action, deadzone)
+		created = true
+
+	var added_events: Array = []
+	var event_errors: Array = []
+	for event_desc in events_data:
+		if not event_desc is Dictionary:
+			continue
+		var result: Dictionary = _create_input_event(event_desc)
+		if result.has(&"error"):
+			event_errors.append(result[&"error"])
+			continue
+		InputMap.action_add_event(action, result[&"event"])
+		added_events.append(_describe_event(result[&"event"]))
+
+	_persist_action(action)
+	_save_and_refresh_settings()
+	_try_refresh_input_map_ui()
+
+	var msg := "Action '%s' %s" % [action, "created" if created else "updated"]
+	if added_events.size() > 0:
+		msg += " with %d event(s)" % added_events.size()
+
+	var out: Dictionary = {&"ok": true, &"message": msg, &"events_added": added_events}
+	if event_errors.size() > 0:
+		out[&"event_errors"] = event_errors
+	return out
+
+func _input_map_remove(action: String) -> Dictionary:
+	if not InputMap.has_action(action):
+		return {&"ok": false, &"error": "Action not found: " + action}
+
+	InputMap.erase_action(action)
+	if ProjectSettings.has_setting("input/" + action):
+		ProjectSettings.clear("input/" + action)
+	_save_and_refresh_settings()
+	_try_refresh_input_map_ui()
+
+	return {&"ok": true, &"message": "Removed action: " + action}
+
+func _input_map_set(action: String, args: Dictionary) -> Dictionary:
+	var deadzone: float = float(args.get(&"deadzone", 0.5))
+	var events_data: Array = args.get(&"events", [])
+
+	if InputMap.has_action(action):
+		InputMap.erase_action(action)
+
+	InputMap.add_action(action, deadzone)
+
+	var added_events: Array = []
+	var event_errors: Array = []
+	for event_desc in events_data:
+		if not event_desc is Dictionary:
+			continue
+		var result: Dictionary = _create_input_event(event_desc)
+		if result.has(&"error"):
+			event_errors.append(result[&"error"])
+			continue
+		InputMap.action_add_event(action, result[&"event"])
+		added_events.append(_describe_event(result[&"event"]))
+
+	_persist_action(action)
+	_save_and_refresh_settings()
+	_try_refresh_input_map_ui()
+
+	var out: Dictionary = {&"ok": true, &"message": "Set action '%s' with %d event(s)" % [action, added_events.size()], &"events": added_events}
+	if event_errors.size() > 0:
+		out[&"event_errors"] = event_errors
+	return out
+
+func _create_input_event(desc: Dictionary) -> Dictionary:
+	var type: String = str(desc.get(&"type", ""))
+
+	match type:
+		"key":
+			var key_string: String = str(desc.get(&"key", ""))
+			if key_string.is_empty():
+				return {&"error": "Missing 'key' for key event"}
+			var event := InputEventKey.new()
+			var keycode := OS.find_keycode_from_string(key_string)
+			if keycode == 0:
+				return {&"error": "Unknown key: " + key_string}
+			event.physical_keycode = keycode
+			return {&"event": event}
+
+		"mouse_button":
+			var button_index: int = int(desc.get(&"button_index", 0))
+			if button_index <= 0:
+				return {&"error": "Invalid 'button_index' for mouse_button (must be >= 1: 1=left, 2=right, 3=middle)"}
+			var event := InputEventMouseButton.new()
+			event.button_index = button_index
+			return {&"event": event}
+
+		"joypad_button":
+			var button_index: int = int(desc.get(&"button_index", -1))
+			if button_index < 0:
+				return {&"error": "Missing or invalid 'button_index' for joypad_button"}
+			var event := InputEventJoypadButton.new()
+			event.button_index = button_index
+			return {&"event": event}
+
+		"joypad_motion":
+			var axis: int = int(desc.get(&"axis", -1))
+			if axis < 0:
+				return {&"error": "Missing or invalid 'axis' for joypad_motion"}
+			var axis_value: float = float(desc.get(&"axis_value", 0.0))
+			var event := InputEventJoypadMotion.new()
+			event.axis = axis
+			event.axis_value = axis_value
+			return {&"event": event}
+
+		_:
+			return {&"error": "Unknown event type: '%s'. Use: key, mouse_button, joypad_button, joypad_motion" % type}
+
+func _save_and_refresh_settings() -> void:
+	ProjectSettings.save()
+	ProjectSettings.notify_property_list_changed()
+
+func _try_refresh_input_map_ui() -> void:
+	if not _editor_plugin:
+		return
+	var base := _editor_plugin.get_editor_interface().get_base_control()
+	var pse := _find_node_by_class(base, "ProjectSettingsEditor")
+	if not pse:
+		return
+	if pse.has_method("_update_action_map_editor"):
+		pse.call("_update_action_map_editor")
+	else:
+		push_warning("[Godot MCP] Input map changed and saved, but the editor UI could not refresh. Reopen Project Settings to see changes.")
+
+func _persist_action(action: String) -> void:
+	if not InputMap.has_action(action):
+		return
+	var deadzone: float = InputMap.action_get_deadzone(action)
+	var events: Array = InputMap.action_get_events(action)
+	ProjectSettings.set_setting("input/" + action, {
+		"deadzone": deadzone,
+		"events": events
+	})
+
+func _describe_event(event: InputEvent) -> String:
+	if event is InputEventKey:
+		var keycode: int = event.physical_keycode if event.physical_keycode != 0 else event.keycode
+		var label: String = OS.get_keycode_string(keycode) if keycode != 0 else "Unknown"
+		return "Key: " + label
+	elif event is InputEventMouseButton:
+		return "Mouse Button: " + str(event.button_index)
+	elif event is InputEventJoypadButton:
+		return "Joypad Button: " + str(event.button_index)
+	elif event is InputEventJoypadMotion:
+		return "Joypad Axis: %d (%.1f)" % [event.axis, event.axis_value]
+	return event.get_class()
 
 # =============================================================================
 # get_collision_layers
@@ -191,6 +437,74 @@ func _serialize_value(value: Variant) -> Variant:
 				return {&"type": &"Resource", &"path": value.resource_path}
 			return null
 		_: return value
+
+# =============================================================================
+# setup_autoload
+# =============================================================================
+func setup_autoload(args: Dictionary) -> Dictionary:
+	var operation: String = str(args.get(&"operation", ""))
+
+	if operation.strip_edges().is_empty():
+		return {&"ok": false, &"error": "Missing 'operation'. Use: add, remove, list"}
+
+	match operation:
+		"list":
+			return _autoload_list()
+		"add":
+			return _autoload_add(args)
+		"remove":
+			return _autoload_remove(args)
+		_:
+			return {&"ok": false, &"error": "Unknown operation: %s. Use: add, remove, list" % operation}
+
+func _autoload_list() -> Dictionary:
+	var autoloads: Array = []
+	for prop: Dictionary in ProjectSettings.get_property_list():
+		var prop_name: String = prop[&"name"]
+		if not prop_name.begins_with("autoload/"):
+			continue
+		var al_name: String = prop_name.substr(9)
+		var al_path: String = str(ProjectSettings.get_setting(prop_name, ""))
+		var enabled: bool = al_path.begins_with("*")
+		if enabled:
+			al_path = al_path.substr(1)
+		autoloads.append({&"name": al_name, &"path": al_path, &"enabled": enabled})
+	return {&"ok": true, &"autoloads": autoloads, &"count": autoloads.size()}
+
+func _autoload_add(args: Dictionary) -> Dictionary:
+	var autoload_name: String = str(args.get(&"name", ""))
+	var path: String = str(args.get(&"path", ""))
+
+	if autoload_name.strip_edges().is_empty():
+		return {&"ok": false, &"error": "Missing 'name'"}
+	if path.strip_edges().is_empty():
+		return {&"ok": false, &"error": "Missing 'path' for add operation"}
+
+	if not path.begins_with("res://"):
+		path = "res://" + path
+	if not FileAccess.file_exists(path):
+		return {&"ok": false, &"error": "File not found: " + path}
+
+	var setting_key := "autoload/" + autoload_name
+	ProjectSettings.set_setting(setting_key, "*" + path)
+	_save_and_refresh_settings()
+
+	return {&"ok": true, &"message": "Registered autoload: %s -> %s" % [autoload_name, path]}
+
+func _autoload_remove(args: Dictionary) -> Dictionary:
+	var autoload_name: String = str(args.get(&"name", ""))
+
+	if autoload_name.strip_edges().is_empty():
+		return {&"ok": false, &"error": "Missing 'name'"}
+
+	var setting_key := "autoload/" + autoload_name
+	if not ProjectSettings.has_setting(setting_key):
+		return {&"ok": false, &"error": "Autoload not found: " + autoload_name}
+
+	ProjectSettings.clear(setting_key)
+	_save_and_refresh_settings()
+
+	return {&"ok": true, &"message": "Unregistered autoload: " + autoload_name}
 
 # =============================================================================
 # Editor Output Panel access
