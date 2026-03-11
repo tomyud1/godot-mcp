@@ -23,14 +23,19 @@ import {
   McpError
 } from '@modelcontextprotocol/sdk/types.js';
 
-import { allTools, getMockToolResponse, toolExists } from './tools/index.js';
+import { execSync } from 'child_process';
+import { allTools, toolExists } from './tools/index.js';
 import { GodotBridge } from './godot-bridge.js';
 import { serveVisualization, stopVisualizationServer, setGodotBridge } from './visualizer-server.js';
 
 // Server metadata
 const SERVER_NAME = 'godot-mcp-server';
-const SERVER_VERSION = '0.2.6';
+const SERVER_VERSION = '0.2.7';
 const WEBSOCKET_PORT = 6505;
+
+// CLI args
+const args = process.argv.slice(2);
+const noForce = args.includes('--no-force');
 
 // Create MCP server
 const server = new Server(
@@ -60,7 +65,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
   // Add connection status tool dynamically
   const connectionStatusTool = {
     name: 'get_godot_status',
-    description: 'Check if Godot editor is connected to the MCP server. Use this before attempting Godot operations to see if you\'ll get real or mock data.',
+    description: 'Check if Godot editor is connected to the MCP server.',
     inputSchema: {
       type: 'object' as const,
       properties: {},
@@ -97,13 +102,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           connected: status.connected,
           server_version: SERVER_VERSION,
           websocket_port: status.port,
-          mode: status.connected ? 'live' : 'mock',
+          mode: status.connected ? 'live' : 'waiting',
           project_path: status.projectPath || null,
           connected_at: status.connectedAt?.toISOString() || null,
           pending_requests: status.pendingRequests,
           message: status.connected
             ? `Godot is connected${status.projectPath ? ` (${status.projectPath})` : ''}. Tools will execute in the Godot editor.`
-            : 'Godot is not connected. Tools will return mock data. Open a Godot project with the MCP plugin enabled to connect.'
+            : 'Godot is not connected. Open a Godot project with the MCP plugin enabled to connect.'
         }, null, 2)
       }]
     };
@@ -142,8 +147,17 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
       }
     } else {
-      // Mock mode: Return fake data
-      result = getMockToolResponse(name, toolArgs);
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            error: 'Godot editor is not connected',
+            tool: name,
+            hint: 'Open a Godot project with the MCP plugin enabled. The plugin will auto-connect to this server on port ' + WEBSOCKET_PORT + '.'
+          }, null, 2)
+        }],
+        isError: true
+      };
     }
 
     // Post-processing for visualization tools
@@ -190,23 +204,73 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 });
 
 /**
+ * Kill any process currently listening on the given port.
+ * Returns true if a process was killed, false otherwise.
+ */
+function killProcessOnPort(port: number): boolean {
+  try {
+    const platform = process.platform;
+    let pid: string | undefined;
+
+    if (platform === 'win32') {
+      const output = execSync(`netstat -ano | findstr :${port} | findstr LISTENING`, { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] });
+      const match = output.trim().split('\n')[0]?.match(/\s+(\d+)\s*$/);
+      pid = match?.[1];
+    } else {
+      const output = execSync(`lsof -ti :${port}`, { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] });
+      pid = output.trim().split('\n')[0];
+    }
+
+    if (pid) {
+      const pidNum = parseInt(pid, 10);
+      if (pidNum === process.pid) return false;
+      console.error(`[${SERVER_NAME}] Killing existing process on port ${port} (PID ${pid})...`);
+      process.kill(pidNum, 'SIGTERM');
+      // Brief wait for the port to be released
+      execSync('sleep 1');
+      return true;
+    }
+  } catch {
+    // No process on port, or kill failed — either way, proceed
+  }
+  return false;
+}
+
+/**
  * Start the MCP server and WebSocket bridge
  */
 async function main() {
-  // Log to stderr (stdout is reserved for MCP protocol)
   console.error(`[${SERVER_NAME}] Starting MCP server v${SERVER_VERSION}...`);
+
+  // Always clear the port unless --no-force is passed.
+  // MCP clients (Claude Desktop, Cursor) often leave zombie server processes
+  // when restarting, which block the new instance from binding.
+  if (!noForce) {
+    killProcessOnPort(WEBSOCKET_PORT);
+  }
 
   // Start WebSocket server for Godot communication
   try {
     await godotBridge.start();
     console.error(`[${SERVER_NAME}] WebSocket server listening on port ${WEBSOCKET_PORT}`);
-  } catch (error) {
-    console.error(`[${SERVER_NAME}] Failed to start WebSocket server:`, error);
-    console.error(`[${SERVER_NAME}] Continuing in mock-only mode`);
+  } catch (error: unknown) {
+    const err = error as NodeJS.ErrnoException;
+    if (err.code === 'EADDRINUSE') {
+      console.error(`\n[${SERVER_NAME}] ❌ ERROR: Port ${WEBSOCKET_PORT} is already in use!`);
+      console.error(`[${SERVER_NAME}] Another process is running on this port and could not be killed.`);
+      console.error(`[${SERVER_NAME}] Godot will connect to the OTHER process, not this one.`);
+      console.error(`[${SERVER_NAME}]`);
+      console.error(`[${SERVER_NAME}] To fix manually:  lsof -ti :${WEBSOCKET_PORT} | xargs kill`);
+      console.error(`[${SERVER_NAME}]`);
+      console.error(`[${SERVER_NAME}] Godot CANNOT connect to this instance.\n`);
+    } else {
+      console.error(`[${SERVER_NAME}] Failed to start WebSocket server:`, error);
+      console.error(`[${SERVER_NAME}] WebSocket disabled — tools will return errors until Godot connects.`);
+    }
   }
 
   console.error(`[${SERVER_NAME}] Available tools: ${allTools.length + 1}`);
-  console.error(`[${SERVER_NAME}] Mode: mock (waiting for Godot connection)`);
+  console.error(`[${SERVER_NAME}] Waiting for Godot editor connection...`);
 
   // Start MCP server (stdio transport)
   const transport = new StdioServerTransport();

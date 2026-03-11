@@ -9,8 +9,8 @@ signal disconnected
 signal tool_requested(request_id: String, tool_name: String, args: Dictionary)
 
 const DEFAULT_URL := "ws://127.0.0.1:6505"
-const RECONNECT_DELAY := 3.0
-const MAX_RECONNECT_DELAY := 30.0
+const RECONNECT_DELAY := 2.0
+const MAX_RECONNECT_DELAY := 10.0
 const MAX_PACKETS_PER_FRAME := 32
 
 var socket: WebSocketPeer = WebSocketPeer.new()

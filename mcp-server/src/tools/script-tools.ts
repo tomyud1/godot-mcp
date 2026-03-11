@@ -101,24 +101,3 @@ export const scriptTools: ToolDefinition[] = [
     }
   }
 ];
-
-export function getMockScriptToolResponse(toolName: string, args: Record<string, unknown>): unknown {
-  const mockNote = { _mock: true, _note: 'Connect Godot for real results.' };
-
-  switch (toolName) {
-    case 'edit_script':
-      return { ok: true, message: 'Mock: Diff would be applied', ...mockNote };
-    case 'validate_script':
-      return { ok: true, path: args.path, valid: true, errors: [], ...mockNote };
-    case 'create_folder':
-      return { ok: true, path: args.path, message: 'Mock: Folder would be created', ...mockNote };
-    case 'delete_file':
-      return { ok: true, path: args.path, message: 'Mock: File would be deleted', ...mockNote };
-    case 'rename_file':
-      return { ok: true, old_path: args.old_path, new_path: args.new_path, message: 'Mock: File would be renamed', ...mockNote };
-    case 'list_scripts':
-      return { ok: true, scripts: ['res://scripts/player.gd', 'res://scripts/enemy.gd'], count: 2, ...mockNote };
-    default:
-      return { error: `Unknown script tool: ${toolName}`, ...mockNote };
-  }
-}

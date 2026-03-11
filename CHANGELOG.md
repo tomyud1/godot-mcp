@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.2.7] - 2026-03-11
+
+### Fixed
+- **Zombie server port conflicts** — the server now auto-kills any existing process on port 6505 before starting; MCP clients (Claude Desktop, Cursor) often leave old server processes alive when restarting, which silently blocked the new instance from binding
+- **EADDRINUSE error now loud and clear** — instead of silently falling back, the server logs an actionable error message explaining exactly what happened and how to fix it
+
+### Removed
+- **Mock mode** — tools no longer return fake data when Godot isn't connected; they return a clear error with instructions to connect
+
+### Changed
+- **Pinned `@modelcontextprotocol/sdk` to `~1.25.2`** — version 1.27.x introduced stdio transport instability for npx users
+- **Faster Godot plugin reconnect** — backoff reduced from 3–30s to 2–10s
+
 ## [0.2.6] - 2026-03-08
 
 ### Added

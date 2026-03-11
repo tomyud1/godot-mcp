@@ -270,34 +270,3 @@ export const sceneTools: ToolDefinition[] = [
     }
   }
 ];
-
-export function getMockSceneToolResponse(toolName: string, args: Record<string, unknown>): unknown {
-  const mockNote = { _mock: true, _note: 'Connect Godot for real results.' };
-
-  switch (toolName) {
-    case 'create_scene':
-      return { ok: true, scene_path: args.scene_path, message: 'Mock: Scene would be created', ...mockNote };
-    case 'read_scene':
-      return { ok: true, scene_path: args.scene_path, root: { name: 'Root', type: 'Node2D', children: [{ name: 'Sprite2D', type: 'Sprite2D' }] }, ...mockNote };
-    case 'add_node':
-      return { ok: true, message: `Mock: Would add ${args.node_type} named ${args.node_name}`, ...mockNote };
-    case 'remove_node':
-      return { ok: true, message: `Mock: Would remove node at ${args.node_path}`, ...mockNote };
-    case 'modify_node_property':
-      return { ok: true, message: `Mock: Would set ${args.property_name} on ${args.node_path}`, ...mockNote };
-    case 'rename_node':
-      return { ok: true, message: `Mock: Would rename ${args.node_path} to ${args.new_name}`, ...mockNote };
-    case 'move_node':
-      return { ok: true, message: `Mock: Would move ${args.node_path} to ${args.new_parent_path}`, ...mockNote };
-    case 'attach_script':
-      return { ok: true, message: `Mock: Would attach ${args.script_path}`, ...mockNote };
-    case 'detach_script':
-      return { ok: true, message: `Mock: Would detach script from ${args.node_path}`, ...mockNote };
-    case 'set_collision_shape':
-      return { ok: true, message: `Mock: Would set ${args.shape_type} shape`, ...mockNote };
-    case 'set_sprite_texture':
-      return { ok: true, message: `Mock: Would set ${args.texture_type} texture`, ...mockNote };
-    default:
-      return { error: `Unknown scene tool: ${toolName}`, ...mockNote };
-  }
-}

@@ -35,14 +35,3 @@ export const assetTools: ToolDefinition[] = [
     }
   }
 ];
-
-export function getMockAssetToolResponse(toolName: string, args: Record<string, unknown>): unknown {
-  const mockNote = { _mock: true, _note: 'Connect Godot for real results.' };
-
-  switch (toolName) {
-    case 'generate_2d_asset':
-      return { ok: true, resource_path: `res://assets/generated/${args.filename}`, dimensions: { width: 64, height: 64 }, ...mockNote };
-    default:
-      return { error: `Unknown asset tool: ${toolName}`, ...mockNote };
-  }
-}
