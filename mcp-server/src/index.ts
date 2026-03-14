@@ -30,7 +30,7 @@ import { serveVisualization, stopVisualizationServer, setGodotBridge } from './v
 
 // Server metadata
 const SERVER_NAME = 'godot-mcp-server';
-const SERVER_VERSION = '0.2.7';
+const SERVER_VERSION = '0.2.8';
 const WEBSOCKET_PORT = 6505;
 
 // CLI args
@@ -280,7 +280,10 @@ async function main() {
 }
 
 // Handle graceful shutdown
+let isShuttingDown = false;
 function shutdown() {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
   console.error(`[${SERVER_NAME}] Shutting down...`);
   stopVisualizationServer();
   godotBridge.stop();
@@ -289,6 +292,11 @@ function shutdown() {
 
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
+
+// When the MCP client (Claude, Cursor, etc.) exits, it closes our stdin.
+// Without this handler the Node process stays alive (held by the WebSocket
+// server) and the Godot plugin never sees a disconnect.
+process.stdin.on('close', shutdown);
 
 // Run
 main().catch((error) => {

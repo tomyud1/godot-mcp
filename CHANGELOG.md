@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.2.8] - 2026-03-14
+
+### Fixed
+- **Server survives MCP client exit** — the server now shuts down when stdin closes, so closing Claude/Cursor properly terminates the process, releases port 6505, and lets the Godot plugin detect the disconnect (status turns red). Previously the server stayed alive as a zombie, blocking reconnection on next launch ([#10](https://github.com/tomyud1/godot-mcp/issues/10))
+
 ## [0.2.7] - 2026-03-11
 
 ### Fixed
