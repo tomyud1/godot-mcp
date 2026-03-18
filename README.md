@@ -18,7 +18,7 @@ Download and run the installer from **[nodejs.org](https://nodejs.org/en/downloa
 
 Inside the Godot editor, click the **AssetLib** tab at the top → search **"mcp"** → find **"Godot AI Assistant tools MCP"** → Install.
 
-That's it — no manual file copying needed.
+Then go to **Project → Project Settings → Plugins** and enable the **Godot MCP** plugin.
 
 ### 2. Add the server config to your AI client
 
