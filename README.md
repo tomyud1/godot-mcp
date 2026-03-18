@@ -23,6 +23,8 @@ Then go to **Project → Project Settings → Plugins** and enable the **Godot M
 ### 2. Add the server config to your AI client
 
 **Claude Desktop** — Settings → Developer → Edit Config → open the config file and paste:
+
+Mac / Linux:
 ```json
 {
   "mcpServers": {
@@ -34,13 +36,39 @@ Then go to **Project → Project Settings → Plugins** and enable the **Godot M
 }
 ```
 
+Windows:
+```json
+{
+  "mcpServers": {
+    "godot": {
+      "command": "cmd",
+      "args": ["/c", "npx", "-y", "godot-mcp-server"]
+    }
+  }
+}
+```
+
 **Cursor** — Settings → MCP → Add Server:
+
+Mac / Linux:
 ```json
 {
   "mcpServers": {
     "godot": {
       "command": "npx",
       "args": ["-y", "godot-mcp-server"]
+    }
+  }
+}
+```
+
+Windows:
+```json
+{
+  "mcpServers": {
+    "godot": {
+      "command": "cmd",
+      "args": ["/c", "npx", "-y", "godot-mcp-server"]
     }
   }
 }
