@@ -89,6 +89,19 @@ export const projectTools: ToolDefinition[] = [
     }
   },
   {
+    name: 'get_debugger_errors',
+    description: 'Get runtime errors and warnings from the Godot Debugger > Errors tab. Unlike get_errors (which reads the Output panel), this reads the actual debugger error list that appears during gameplay, including script errors, null references, and engine warnings.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        max_errors: {
+          type: 'number',
+          description: 'Maximum number of errors to return (default: 50)'
+        }
+      }
+    }
+  },
+  {
     name: 'clear_console_log',
     description: 'Mark the current position in the Godot editor log. Subsequent get_console_log and get_errors calls will only return output after this point.',
     inputSchema: {

@@ -86,6 +86,7 @@ func _init_tools() -> void:
 		&"get_node_properties": [_project_tools, &"get_node_properties"],
 		&"get_console_log": [_project_tools, &"get_console_log"],
 		&"get_errors": [_project_tools, &"get_errors"],
+		&"get_debugger_errors": [_project_tools, &"get_debugger_errors"],
 		&"clear_console_log": [_project_tools, &"clear_console_log"],
 		&"open_in_godot": [_project_tools, &"open_in_godot"],
 		&"scene_tree_dump": [_project_tools, &"scene_tree_dump"],
