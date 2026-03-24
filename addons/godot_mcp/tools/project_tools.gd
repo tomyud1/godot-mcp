@@ -13,6 +13,9 @@ var _editor_plugin: EditorPlugin = null
 # Cached reference to the editor Output panel's RichTextLabel.
 var _editor_log_rtl: RichTextLabel = null
 
+# Cached reference to the Debugger > Errors tab's Tree widget.
+var _debugger_error_tree: Tree = null
+
 # Character offset for clear_console_log.
 var _clear_char_offset: int = 0
 
@@ -638,6 +641,115 @@ func get_errors(args: Dictionary) -> Dictionary:
 	var errors := all_errors.slice(start)
 	return {&"ok": true, &"errors": errors, &"error_count": errors.size(),
 		&"summary": "%d error(s) found" % errors.size()}
+
+# =============================================================================
+# get_debugger_errors
+# =============================================================================
+func get_debugger_errors(args: Dictionary) -> Dictionary:
+	var max_errors: int = int(args.get(&"max_errors", 50))
+
+	var tree := _get_debugger_error_tree()
+	if not tree:
+		var base := _editor_plugin.get_editor_interface().get_base_control() if _editor_plugin else null
+		var debugger := _find_node_by_class(base, "ScriptEditorDebugger") if base else null
+		var debug_info := ""
+		if not debugger:
+			debug_info = "ScriptEditorDebugger node not found in editor tree."
+		else:
+			debug_info = "ScriptEditorDebugger found but no Tree widget located. Children: "
+			var child_info: Array = []
+			for child: Node in debugger.get_children():
+				child_info.append("%s (%s)" % [child.name, child.get_class()])
+			debug_info += ", ".join(child_info)
+		return {&"ok": false,
+			&"error": "Could not access the Debugger Errors panel. " + debug_info}
+
+	var root := tree.get_root()
+	if not root:
+		return {&"ok": true, &"errors": [], &"error_count": 0,
+			&"summary": "0 debugger error(s) found"}
+
+	var errors: Array = []
+	var item := root.get_first_child()
+	while item:
+		var col_count := tree.columns
+		var parts: Array = []
+		for col: int in range(col_count):
+			var text: String = item.get_text(col)
+			if not text.strip_edges().is_empty():
+				parts.append(text)
+		var message: String = " | ".join(parts) if not parts.is_empty() else ""
+
+		if message.strip_edges().is_empty():
+			item = item.get_next()
+			continue
+
+		var severity := "error"
+		var msg_lower := message.to_lower()
+		if "warning" in msg_lower:
+			severity = "warning"
+
+		var error_info := {&"message": message, &"severity": severity}
+
+		var loc := _extract_file_line(message)
+		if not loc.is_empty():
+			error_info[&"file"] = loc.get(&"file", "")
+			error_info[&"line"] = loc.get(&"line", 0)
+
+		var stack_trace: Array = []
+		var child_item := item.get_first_child()
+		while child_item:
+			var trace_parts: Array = []
+			for col: int in range(col_count):
+				var t: String = child_item.get_text(col)
+				if not t.strip_edges().is_empty():
+					trace_parts.append(t)
+			if not trace_parts.is_empty():
+				stack_trace.append(" | ".join(trace_parts))
+			child_item = child_item.get_next()
+		if not stack_trace.is_empty():
+			error_info[&"stack_trace"] = stack_trace
+
+		errors.append(error_info)
+		item = item.get_next()
+
+	var start := maxi(0, errors.size() - max_errors)
+	var result := errors.slice(start)
+	return {&"ok": true, &"errors": result, &"error_count": result.size(),
+		&"summary": "%d debugger error(s) found" % result.size()}
+
+func _get_debugger_error_tree() -> Tree:
+	if is_instance_valid(_debugger_error_tree):
+		return _debugger_error_tree
+	if not _editor_plugin:
+		return null
+	var base := _editor_plugin.get_editor_interface().get_base_control()
+	var debugger := _find_node_by_class(base, "ScriptEditorDebugger")
+	if not debugger:
+		return null
+	var tree := _find_error_tree(debugger)
+	if tree:
+		_debugger_error_tree = tree
+	return _debugger_error_tree
+
+func _find_error_tree(node: Node) -> Tree:
+	var candidates: Array[Tree] = []
+	_collect_trees(node, candidates)
+	for tree: Tree in candidates:
+		var p := tree.get_parent()
+		while p and p != node:
+			if "Error" in p.name or "error" in p.name:
+				return tree
+			p = p.get_parent()
+	if not candidates.is_empty():
+		return candidates[0]
+	return null
+
+func _collect_trees(node: Node, out: Array[Tree]) -> void:
+	if node is Tree:
+		out.append(node as Tree)
+	for child: Node in node.get_children():
+		_collect_trees(child, out)
 
 func _extract_file_line(text: String) -> Dictionary:
 	var idx := text.find("res://")
