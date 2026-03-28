@@ -59,7 +59,7 @@ export class GodotBridge {
   start(): Promise<void> {
     return new Promise((resolve, reject) => {
       try {
-        this.wss = new WebSocketServer({ port: this.port });
+        this.wss = new WebSocketServer({ host: '127.0.0.1', port: this.port });
 
         this.wss.on('connection', (ws, req) => {
           this.handleConnection(ws, req);
