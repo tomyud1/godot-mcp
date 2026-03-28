@@ -185,6 +185,53 @@ export const projectTools: ToolDefinition[] = [
     }
   },
   {
+    name: 'run_scene',
+    description: 'Run a scene in the Godot editor. Defaults to the main scene. Use "current" to run the currently open scene, or pass a res:// path. Returns an error if a scene is already running — call stop_scene first.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        scene: {
+          type: 'string',
+          description: 'Scene to run: omit for main scene, "current" for the open scene, or a res:// path for a specific scene'
+        }
+      }
+    }
+  },
+  {
+    name: 'stop_scene',
+    description: 'Stop the currently running scene in the Godot editor.',
+    inputSchema: {
+      type: 'object',
+      properties: {}
+    }
+  },
+  {
+    name: 'is_playing',
+    description: 'Check if a scene is currently running in the Godot editor. Returns playing status and the scene path.',
+    inputSchema: {
+      type: 'object',
+      properties: {}
+    }
+  },
+  {
+    name: 'classdb_query',
+    description: 'Query Godot\'s ClassDB for class information: properties, methods, signals, and inheritance. Use this to verify that a class, method, or property exists before writing code that uses it. This prevents hallucinating non-existent Godot API methods.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        class_name: {
+          type: 'string',
+          description: 'Godot class name to query (e.g., "CharacterBody2D", "Sprite2D", "Control")'
+        },
+        query: {
+          type: 'string',
+          description: 'What to return: "all" (default), "properties", "methods", or "signals"'
+        }
+      },
+      required: ['class_name']
+    }
+  },
+  {
     name: 'setup_autoload',
     description: 'Register, unregister, or list autoload singletons. Autoloads are scripts/scenes loaded automatically at project start.',
     inputSchema: {

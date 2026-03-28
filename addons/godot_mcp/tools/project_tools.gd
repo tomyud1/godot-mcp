@@ -770,3 +770,92 @@ func rescan_filesystem(args: Dictionary) -> Dictionary:
 func _on_filesystem_scanned() -> void:
 	if _editor_plugin:
 		_editor_plugin.get_editor_interface().get_resource_filesystem().update_script_classes()
+
+# =============================================================================
+# run_scene / stop_scene / is_playing
+# =============================================================================
+func run_scene(args: Dictionary) -> Dictionary:
+	"""Run a scene in the Godot editor. Defaults to main scene."""
+	if not _editor_plugin:
+		return {&"ok": false, &"error": "Editor plugin not available"}
+	var ei := _editor_plugin.get_editor_interface()
+	var scene: String = str(args.get(&"scene", ""))
+	if ei.is_playing_scene():
+		return {&"ok": false, &"error": "A scene is already running. Call stop_scene first."}
+	if scene == "current":
+		ei.play_current_scene()
+	elif not scene.is_empty():
+		if not scene.begins_with("res://"):
+			scene = "res://" + scene
+		ei.play_custom_scene(scene)
+	else:
+		ei.play_main_scene()
+	return {&"ok": true, &"message": "Scene launched" + (" (%s)" % scene if not scene.is_empty() else " (main scene)")}
+
+func stop_scene(_args: Dictionary) -> Dictionary:
+	"""Stop the currently running scene."""
+	if not _editor_plugin:
+		return {&"ok": false, &"error": "Editor plugin not available"}
+	var ei := _editor_plugin.get_editor_interface()
+	if not ei.is_playing_scene():
+		return {&"ok": true, &"message": "No scene is currently running"}
+	ei.stop_playing_scene()
+	return {&"ok": true, &"message": "Scene stopped"}
+
+func is_playing(_args: Dictionary) -> Dictionary:
+	"""Check if a scene is currently running."""
+	if not _editor_plugin:
+		return {&"ok": false, &"error": "Editor plugin not available"}
+	var ei := _editor_plugin.get_editor_interface()
+	var playing := ei.is_playing_scene()
+	var scene_path := ei.get_playing_scene() if playing else ""
+	return {&"ok": true, &"playing": playing, &"scene": scene_path}
+
+# =============================================================================
+# classdb_query
+# =============================================================================
+func classdb_query(args: Dictionary) -> Dictionary:
+	"""Query Godot's ClassDB for class info: properties, methods, signals, inheritance."""
+	var class_name_str: String = str(args.get(&"class_name", ""))
+	if class_name_str.strip_edges().is_empty():
+		return {&"ok": false, &"error": "Missing 'class_name'"}
+	if not ClassDB.class_exists(class_name_str):
+		return {&"ok": false, &"error": "Class '%s' does not exist in ClassDB" % class_name_str}
+
+	var query: String = str(args.get(&"query", "all"))
+	var result: Dictionary = {&"ok": true, &"class": class_name_str}
+
+	# Always include parent class
+	result[&"parent_class"] = ClassDB.get_parent_class(class_name_str)
+
+	if query == "all" or query == "properties":
+		var props: Array = []
+		for prop: Dictionary in ClassDB.class_get_property_list(class_name_str, true):
+			# Skip internal properties (usage flag < PROPERTY_USAGE_EDITOR)
+			if int(prop.get(&"usage", 0)) & PROPERTY_USAGE_EDITOR:
+				props.append({&"name": prop[&"name"], &"type": type_string(int(prop[&"type"]))})
+		result[&"properties"] = props
+
+	if query == "all" or query == "methods":
+		var methods: Array = []
+		for method: Dictionary in ClassDB.class_get_method_list(class_name_str, true):
+			var name: String = method.get(&"name", "")
+			if name.begins_with("_"):
+				continue  # Skip private/virtual methods for brevity
+			var method_args: Array = []
+			for arg: Dictionary in method.get(&"args", []):
+				method_args.append({&"name": arg[&"name"], &"type": type_string(int(arg[&"type"]))})
+			methods.append({&"name": name, &"args": method_args,
+				&"return_type": type_string(int(method.get(&"return", {}).get(&"type", 0)))})
+		result[&"methods"] = methods
+
+	if query == "all" or query == "signals":
+		var signals_list: Array = []
+		for sig: Dictionary in ClassDB.class_get_signal_list(class_name_str, true):
+			var sig_args: Array = []
+			for arg: Dictionary in sig.get(&"args", []):
+				sig_args.append({&"name": arg[&"name"], &"type": type_string(int(arg[&"type"]))})
+			signals_list.append({&"name": sig[&"name"], &"args": sig_args})
+		result[&"signals"] = signals_list
+
+	return result

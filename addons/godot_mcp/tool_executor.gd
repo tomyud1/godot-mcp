@@ -90,6 +90,10 @@ func _init_tools() -> void:
 		&"open_in_godot": [_project_tools, &"open_in_godot"],
 		&"scene_tree_dump": [_project_tools, &"scene_tree_dump"],
 		&"rescan_filesystem": [_project_tools, &"rescan_filesystem"],
+		&"run_scene": [_project_tools, &"run_scene"],
+		&"stop_scene": [_project_tools, &"stop_scene"],
+		&"is_playing": [_project_tools, &"is_playing"],
+		&"classdb_query": [_project_tools, &"classdb_query"],
 
 		&"generate_2d_asset": [_asset_tools, &"generate_2d_asset"],
 

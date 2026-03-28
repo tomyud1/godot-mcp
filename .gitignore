@@ -9,6 +9,9 @@ dist/
 .DS_Store?
 ._*
 
+# Godot UID files (project-local, regenerated on open)
+*.uid
+
 # IDE
 .vscode/
 .idea/
