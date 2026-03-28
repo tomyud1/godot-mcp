@@ -14,6 +14,17 @@ func _refresh_filesystem() -> void:
 	if _editor_plugin:
 		_editor_plugin.get_editor_interface().get_resource_filesystem().scan()
 
+func _refresh_file(path: String) -> void:
+	"""Targeted single-file refresh: update the editor's metadata for one file
+	and refresh the global class registry so other scripts see class_name changes."""
+	if not _editor_plugin:
+		return
+	var efs := _editor_plugin.get_editor_interface().get_resource_filesystem()
+	# Synchronous single-file metadata update (much cheaper than full scan())
+	efs.update_file(path)
+	# Refresh class_name registry so cross-script references resolve correctly
+	efs.update_script_classes()
+
 func _ensure_res_path(path: String) -> String:
 	if not path.begins_with("res://"):
 		return "res://" + path
@@ -94,7 +105,7 @@ func edit_script(args: Dictionary) -> Dictionary:
 	var added := maxi(0, new_lines.size() - old_lines.size())
 	var removed := maxi(0, old_lines.size() - new_lines.size())
 
-	_refresh_filesystem()
+	_refresh_file(path)
 
 	return {
 		&"ok": true,

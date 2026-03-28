@@ -177,6 +177,14 @@ export const projectTools: ToolDefinition[] = [
     }
   },
   {
+    name: 'rescan_filesystem',
+    description: 'Trigger a full filesystem rescan in the Godot editor. Use after creating, deleting, or modifying files externally (e.g. from Claude Code). The scan runs asynchronously and returns immediately. Returns an error if a scan is already in progress.',
+    inputSchema: {
+      type: 'object',
+      properties: {}
+    }
+  },
+  {
     name: 'setup_autoload',
     description: 'Register, unregister, or list autoload singletons. Autoloads are scripts/scenes loaded automatically at project start.',
     inputSchema: {

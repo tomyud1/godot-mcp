@@ -89,6 +89,7 @@ func _init_tools() -> void:
 		&"clear_console_log": [_project_tools, &"clear_console_log"],
 		&"open_in_godot": [_project_tools, &"open_in_godot"],
 		&"scene_tree_dump": [_project_tools, &"scene_tree_dump"],
+		&"rescan_filesystem": [_project_tools, &"rescan_filesystem"],
 
 		&"generate_2d_asset": [_asset_tools, &"generate_2d_asset"],
 
@@ -137,7 +138,18 @@ func execute_tool(tool_name: String, args: Dictionary) -> Dictionary:
 	if not node.has_method(method):
 		return {&"ok": false, &"error": "Tool handler not found: %s.%s" % [node.name, method]}
 
-	return node.call(method, args)
+	var result = node.call(method, args)
+
+	# Guard against tools that crash (return null) or return unexpected types.
+	# GDScript has no try/catch — a runtime error in a tool method prints to
+	# console but returns null to us, which would propagate as a silent success.
+	if result == null or not (result is Dictionary):
+		push_error("[MCP] Tool '%s' returned invalid result: %s" % [tool_name, str(result)])
+		return {&"ok": false, &"error": "Tool '%s' returned null or non-Dictionary (missing return statement or crash — check Godot console)" % tool_name}
+	if not result.has(&"ok"):
+		result[&"ok"] = false
+		result[&"error"] = result.get(&"error", "Tool returned no status")
+	return result
 
 func get_available_tools() -> Array:
 	"""Return list of available tool names."""

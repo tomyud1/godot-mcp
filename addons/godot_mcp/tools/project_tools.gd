@@ -742,3 +742,31 @@ func _dump_node(node: Node, depth: int) -> String:
 	for child: Node in children:
 		parts.append(_dump_node(child, depth + 1))
 	return "\n".join(parts)
+
+# =============================================================================
+# rescan_filesystem
+# =============================================================================
+func rescan_filesystem(args: Dictionary) -> Dictionary:
+	"""Trigger a full filesystem rescan in the Godot editor. Use after external
+	file changes (e.g. files created/modified outside Godot by Claude Code).
+	The scan runs asynchronously — it returns immediately."""
+	if not _editor_plugin:
+		return {&"ok": false, &"error": "No editor plugin available"}
+	var efs := _editor_plugin.get_editor_interface().get_resource_filesystem()
+	if efs.is_scanning():
+		return {
+			&"ok": false,
+			&"error": "A filesystem scan is already in progress. Wait and retry."
+		}
+	# Refresh class_name registry after scan completes (scan is async)
+	if not efs.filesystem_changed.is_connected(_on_filesystem_scanned):
+		efs.filesystem_changed.connect(_on_filesystem_scanned, CONNECT_ONE_SHOT)
+	efs.scan()
+	return {
+		&"ok": true,
+		&"message": "Filesystem rescan triggered (async). Class registry will update on completion."
+	}
+
+func _on_filesystem_scanned() -> void:
+	if _editor_plugin:
+		_editor_plugin.get_editor_interface().get_resource_filesystem().update_script_classes()
