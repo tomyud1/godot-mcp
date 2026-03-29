@@ -3,26 +3,52 @@
  * Godot MCP Server
  *
  * An MCP server that provides Godot game engine tools to AI assistants.
- * Works with Claude Desktop, RAGy, or any MCP-compatible client.
+ * Works with Claude Desktop, Claude Code, Cursor, or any MCP-compatible client.
  *
- * Architecture:
- * - MCP protocol via stdio (for AI client communication)
- * - WebSocket server on port 6505 (for Godot plugin communication)
+ * ## Architecture
  *
- * Modes:
- * - Mock mode: Returns fake data when Godot is not connected
- * - Live mode: Routes tool calls to Godot plugin via WebSocket
+ *   AI clients ──(MCP protocol)──▶ this server ──(WebSocket)──▶ Godot plugin
+ *
+ * The server bridges two protocols:
+ * - **MCP side**: Receives tool calls from AI clients via stdio or HTTP
+ * - **Godot side**: Routes tool calls to the Godot editor plugin via WebSocket on port 6505
+ *
+ * ## Transport modes
+ *
+ * **stdio (default)** — One server process per AI client session. The AI client
+ * spawns this process and communicates via stdin/stdout. When the client exits,
+ * stdin closes and the server shuts down. Simple but limited to a single session.
+ *
+ * **--http (daemon mode)** — A persistent process that serves multiple AI client
+ * sessions simultaneously over HTTP (Streamable HTTP transport, MCP spec). Each
+ * session gets its own MCP Server instance but they all share the same Godot
+ * WebSocket bridge. The daemon auto-exits when Godot disconnects and no clients
+ * reconnect within the idle timeout (default 30s).
+ *
+ * ## CLI flags
+ *
+ * - `--http`      Enable HTTP daemon mode (default: stdio)
+ * - `--no-force`  Don't kill existing processes on the WebSocket/HTTP ports
+ *
+ * ## Environment variables
+ *
+ * - `GODOT_MCP_HTTP_PORT`      HTTP port for MCP clients in daemon mode (default: 6506)
+ * - `GODOT_MCP_IDLE_TIMEOUT_MS` Idle shutdown grace period in ms (default: 30000)
  */
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { createMcpExpressApp } from '@modelcontextprotocol/sdk/server/express.js';
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
   ErrorCode,
-  McpError
+  McpError,
+  isInitializeRequest
 } from '@modelcontextprotocol/sdk/types.js';
 
+import { randomUUID } from 'node:crypto';
 import { execSync } from 'child_process';
 import { allTools, toolExists } from './tools/index.js';
 import { GodotBridge } from './godot-bridge.js';
@@ -32,36 +58,79 @@ import { serveVisualization, stopVisualizationServer, setGodotBridge } from './v
 const SERVER_NAME = 'godot-mcp-server';
 const SERVER_VERSION = '0.2.8';
 const WEBSOCKET_PORT = 6505;
+const MCP_HTTP_PORT = parseInt(process.env.GODOT_MCP_HTTP_PORT || '6506', 10);
 
 // CLI args
-const args = process.argv.slice(2);
-const noForce = args.includes('--no-force');
+const cliArgs = process.argv.slice(2);
+const noForce = cliArgs.includes('--no-force');
+const httpMode = cliArgs.includes('--http');
 
-// Create MCP server
-const server = new Server(
-  { name: SERVER_NAME, version: SERVER_VERSION },
-  { capabilities: { tools: {} } }
-);
-
-// Create Godot bridge (WebSocket server)
+// Create Godot bridge (WebSocket server) — shared across all sessions
 const godotBridge = new GodotBridge(WEBSOCKET_PORT);
 
 // Set the bridge reference for the visualizer server
 setGodotBridge(godotBridge);
 
-// Log connection changes
+/**
+ * Idle auto-shutdown for HTTP daemon mode.
+ *
+ * When running as a daemon (--http), the server should not persist indefinitely
+ * after all clients disconnect. The shutdown is keyed on Godot presence because
+ * without Godot, tool calls return errors — there's nothing to bridge.
+ *
+ * A grace period (default 30s) allows Godot to reconnect during plugin reloads,
+ * project switches, or editor restarts without requiring a new daemon spawn.
+ */
+const IDLE_SHUTDOWN_MS = parseInt(process.env.GODOT_MCP_IDLE_TIMEOUT_MS || '30000', 10);
+let idleShutdownTimer: ReturnType<typeof setTimeout> | null = null;
+
+function checkIdleShutdown(): void {
+  if (!httpMode) return;
+
+  const hasGodot = godotBridge.isConnected();
+
+  if (!hasGodot) {
+    if (!idleShutdownTimer) {
+      console.error(`[${SERVER_NAME}] No Godot connection — shutting down in ${IDLE_SHUTDOWN_MS / 1000}s`);
+      idleShutdownTimer = setTimeout(() => {
+        if (!godotBridge.isConnected()) {
+          console.error(`[${SERVER_NAME}] Idle timeout reached — exiting`);
+          shutdown();
+        }
+      }, IDLE_SHUTDOWN_MS);
+    }
+  } else if (idleShutdownTimer) {
+    console.error(`[${SERVER_NAME}] Godot reconnected — idle shutdown cancelled`);
+    clearTimeout(idleShutdownTimer);
+    idleShutdownTimer = null;
+  }
+}
+
+// Log connection changes and check idle state
 godotBridge.onConnectionChange((connected, info) => {
   if (connected) {
     console.error(`[${SERVER_NAME}] Godot connected`);
   } else {
     console.error(`[${SERVER_NAME}] Godot disconnected`);
   }
+  checkIdleShutdown();
 });
 
 /**
- * Handle ListTools request - returns all available tools
+ * Create and configure a new MCP Server instance with all tool handlers.
+ *
+ * In HTTP daemon mode, each client session gets its own Server instance (as
+ * required by the MCP SDK's transport model), but they all share the single
+ * godotBridge for routing tool calls to Godot. In stdio mode, only one Server
+ * is created for the lifetime of the process.
  */
-server.setRequestHandler(ListToolsRequestSchema, async () => {
+function createMcpServer(): Server {
+  const server = new Server(
+    { name: SERVER_NAME, version: SERVER_VERSION },
+    { capabilities: { tools: {} } }
+  );
+
+  server.setRequestHandler(ListToolsRequestSchema, async () => {
   // Add connection status tool dynamically
   const connectionStatusTool = {
     name: 'get_godot_status',
@@ -83,12 +152,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       }))
     ]
   };
-});
+  });
 
-/**
- * Handle CallTool request - executes a tool
- */
-server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
   const toolArgs = (args || {}) as Record<string, unknown>;
 
@@ -201,7 +267,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       isError: true
     };
   }
-});
+  });
+
+  return server;
+}
 
 /**
  * Kill any process currently listening on the given port.
@@ -237,16 +306,31 @@ function killProcessOnPort(port: number): boolean {
 }
 
 /**
+ * Active HTTP sessions, keyed by MCP session ID.
+ *
+ * Each session holds a StreamableHTTPServerTransport (handles HTTP ↔ MCP
+ * protocol) and a Server (handles tool routing). When a client sends a DELETE
+ * or the transport closes, the session is removed and its Server is closed.
+ */
+interface HttpSession {
+  transport: StreamableHTTPServerTransport;
+  server: Server;
+}
+const httpSessions: Record<string, HttpSession> = {};
+
+/**
  * Start the MCP server and WebSocket bridge
  */
 async function main() {
-  console.error(`[${SERVER_NAME}] Starting MCP server v${SERVER_VERSION}...`);
+  const modeLabel = httpMode ? 'HTTP daemon' : 'stdio';
+  console.error(`[${SERVER_NAME}] Starting MCP server v${SERVER_VERSION} (${modeLabel} mode)...`);
 
-  // Always clear the port unless --no-force is passed.
-  // MCP clients (Claude Desktop, Cursor) often leave zombie server processes
-  // when restarting, which block the new instance from binding.
+  // Always clear the WebSocket port unless --no-force is passed.
   if (!noForce) {
     killProcessOnPort(WEBSOCKET_PORT);
+    if (httpMode) {
+      killProcessOnPort(MCP_HTTP_PORT);
+    }
   }
 
   // Start WebSocket server for Godot communication
@@ -272,19 +356,121 @@ async function main() {
   console.error(`[${SERVER_NAME}] Available tools: ${allTools.length + 1}`);
   console.error(`[${SERVER_NAME}] Waiting for Godot editor connection...`);
 
-  // Start MCP server (stdio transport)
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
+  if (httpMode) {
+    // ── HTTP daemon mode ──────────────────────────────────────────────
+    // Serves multiple AI clients simultaneously via Streamable HTTP transport.
+    // Each POST /mcp with no session ID + an initialize request creates a new
+    // session. Subsequent requests include the mcp-session-id header to reuse
+    // the existing session. GET /mcp opens an SSE stream for server-initiated
+    // messages. DELETE /mcp terminates a session.
+    const MCP_HOST = '127.0.0.1';
+    const app = createMcpExpressApp({ host: MCP_HOST });
 
-  console.error(`[${SERVER_NAME}] MCP server connected and ready`);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    app.post('/mcp', async (req: any, res: any) => {
+      const sessionId = req.headers['mcp-session-id'] as string | undefined;
+
+      try {
+        if (sessionId && httpSessions[sessionId]) {
+          await httpSessions[sessionId].transport.handleRequest(req, res, req.body);
+          return;
+        }
+
+        if (!sessionId && isInitializeRequest(req.body)) {
+          const mcpServer = createMcpServer();
+          const transport = new StreamableHTTPServerTransport({
+            sessionIdGenerator: () => randomUUID(),
+            onsessioninitialized: (sid) => {
+              console.error(`[${SERVER_NAME}] HTTP session initialized: ${sid}`);
+              httpSessions[sid] = { transport, server: mcpServer };
+              checkIdleShutdown();
+            }
+          });
+
+          transport.onclose = () => {
+            const sid = transport.sessionId;
+            if (sid && httpSessions[sid]) {
+              console.error(`[${SERVER_NAME}] HTTP session closed: ${sid}`);
+              const session = httpSessions[sid];
+              delete httpSessions[sid];
+              session.server.close();
+            }
+            checkIdleShutdown();
+          };
+
+          await mcpServer.connect(transport);
+          await transport.handleRequest(req, res, req.body);
+          return;
+        }
+
+        res.status(400).json({
+          jsonrpc: '2.0',
+          error: { code: -32000, message: 'Bad Request: No valid session ID provided' },
+          id: null
+        });
+      } catch (error) {
+        console.error(`[${SERVER_NAME}] Error handling MCP request:`, error);
+        if (!res.headersSent) {
+          res.status(500).json({
+            jsonrpc: '2.0',
+            error: { code: -32603, message: 'Internal server error' },
+            id: null
+          });
+        }
+      }
+    });
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    app.get('/mcp', async (req: any, res: any) => {
+      const sessionId = req.headers['mcp-session-id'] as string | undefined;
+      if (!sessionId || !httpSessions[sessionId]) {
+        res.status(400).send('Invalid or missing session ID');
+        return;
+      }
+      await httpSessions[sessionId].transport.handleRequest(req, res);
+    });
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    app.delete('/mcp', async (req: any, res: any) => {
+      const sessionId = req.headers['mcp-session-id'] as string | undefined;
+      if (!sessionId || !httpSessions[sessionId]) {
+        res.status(400).send('Invalid or missing session ID');
+        return;
+      }
+      await httpSessions[sessionId].transport.handleRequest(req, res);
+    });
+
+    app.listen(MCP_HTTP_PORT, MCP_HOST, () => {
+      console.error(`[${SERVER_NAME}] HTTP MCP server listening on http://${MCP_HOST}:${MCP_HTTP_PORT}/mcp`);
+      console.error(`[${SERVER_NAME}] Multiple AI clients can connect simultaneously`);
+      checkIdleShutdown();
+    });
+  } else {
+    // stdio mode — single-session (original behavior)
+    const server = createMcpServer();
+    const transport = new StdioServerTransport();
+    await server.connect(transport);
+    console.error(`[${SERVER_NAME}] MCP server connected and ready (stdio)`);
+  }
 }
 
 // Handle graceful shutdown
 let isShuttingDown = false;
-function shutdown() {
+async function shutdown() {
   if (isShuttingDown) return;
   isShuttingDown = true;
   console.error(`[${SERVER_NAME}] Shutting down...`);
+
+  for (const sessionId of Object.keys(httpSessions)) {
+    try {
+      await httpSessions[sessionId].transport.close();
+      await httpSessions[sessionId].server.close();
+      delete httpSessions[sessionId];
+    } catch (error) {
+      console.error(`[${SERVER_NAME}] Error closing session ${sessionId}:`, error);
+    }
+  }
+
   stopVisualizationServer();
   godotBridge.stop();
   process.exit(0);
@@ -293,10 +479,11 @@ function shutdown() {
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
 
-// When the MCP client (Claude, Cursor, etc.) exits, it closes our stdin.
-// Without this handler the Node process stays alive (held by the WebSocket
-// server) and the Godot plugin never sees a disconnect.
-process.stdin.on('close', shutdown);
+// In stdio mode, shutdown when the AI client closes stdin.
+// In HTTP mode, stdin isn't used — the daemon stays alive until SIGINT/SIGTERM.
+if (!httpMode) {
+  process.stdin.on('close', shutdown);
+}
 
 // Run
 main().catch((error) => {
