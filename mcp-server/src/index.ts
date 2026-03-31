@@ -30,8 +30,9 @@ import { serveVisualization, stopVisualizationServer, setGodotBridge } from './v
 
 // Server metadata
 const SERVER_NAME = 'godot-mcp-server';
-const SERVER_VERSION = '0.2.8';
-const WEBSOCKET_PORT = 6505;
+const SERVER_VERSION = '0.3.0';
+const WEBSOCKET_PORT = parseInt(process.env.GODOT_MCP_PORT || '6505', 10);
+const TOOL_TIMEOUT = parseInt(process.env.GODOT_MCP_TIMEOUT_MS || '30000', 10);
 
 // CLI args
 const args = process.argv.slice(2);
@@ -44,7 +45,7 @@ const server = new Server(
 );
 
 // Create Godot bridge (WebSocket server)
-const godotBridge = new GodotBridge(WEBSOCKET_PORT);
+const godotBridge = new GodotBridge(WEBSOCKET_PORT, TOOL_TIMEOUT);
 
 // Set the bridge reference for the visualizer server
 setGodotBridge(godotBridge);

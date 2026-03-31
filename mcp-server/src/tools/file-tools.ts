@@ -62,7 +62,7 @@ export const fileTools: ToolDefinition[] = [
   },
   {
     name: 'create_script',
-    description: 'Create a NEW GDScript file (.gd) that does not exist yet. Use this for creating new scripts, NOT for editing existing files (use edit_script for edits).',
+    description: 'Create a NEW GDScript file (.gd) that does not exist yet. Use this for creating new scripts, NOT for editing existing files (use edit_script for edits). Use classdb_query to verify unfamiliar Godot class methods. After creating a script, consider using run_scene to test and get_errors to check for issues.',
     inputSchema: {
       type: 'object',
       properties: {

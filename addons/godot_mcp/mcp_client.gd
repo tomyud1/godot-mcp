@@ -38,6 +38,8 @@ func _process(_delta: float) -> void:
 	if socket.get_ready_state() == WebSocketPeer.STATE_CLOSED:
 		if _is_connected:
 			_handle_disconnect()
+		elif _should_reconnect and not _reconnect_timer.time_left > 0:
+			_schedule_reconnect()
 		return
 
 	socket.poll()
@@ -73,8 +75,13 @@ func disconnect_from_server() -> void:
 	_is_connected = false
 
 func _attempt_connection() -> void:
-	if socket.get_ready_state() != WebSocketPeer.STATE_CLOSED:
+	if socket and socket.get_ready_state() != WebSocketPeer.STATE_CLOSED:
 		socket.close()
+
+	socket = WebSocketPeer.new()
+	socket.outbound_buffer_size = 4 * 1024 * 1024  # 4 MB
+	socket.inbound_buffer_size  = 1 * 1024 * 1024   # 1 MB
+	_is_connected = false
 
 	print("[MCP] Connecting to ", server_url, "...")
 	var err := socket.connect_to_url(server_url)

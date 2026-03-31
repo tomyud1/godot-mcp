@@ -13,6 +13,9 @@ var _editor_plugin: EditorPlugin = null
 # Cached reference to the editor Output panel's RichTextLabel.
 var _editor_log_rtl: RichTextLabel = null
 
+# Cached reference to the Debugger > Errors tab's Tree widget.
+var _debugger_error_tree: Tree = null
+
 # Character offset for clear_console_log.
 var _clear_char_offset: int = 0
 
@@ -589,51 +592,51 @@ func get_errors(args: Dictionary) -> Dictionary:
 	var max_errors: int = int(args.get(&"max_errors", 50))
 	var include_warnings: bool = bool(args.get(&"include_warnings", true))
 
-	var rtl := _get_editor_log_rtl()
-	if not rtl:
-		return {&"ok": false,
-			&"error": "Could not access the Godot editor Output panel. Make sure the MCP plugin is enabled and running inside the Godot editor."}
-
-	var all_lines := _read_output_panel_lines()
-
 	var all_errors: Array = []
-	for i: int in range(all_lines.size()):
-		var line: String = all_lines[i].strip_edges()
-		if line.is_empty():
-			continue
 
-		var is_error := false
-		var severity := "error"
-		for prefix: String in _ERROR_PREFIXES:
-			if line.begins_with(prefix):
-				is_error = true
-				if "WARNING" in prefix:
-					severity = "warning"
-				break
+	# Source 1: Output panel
+	var rtl := _get_editor_log_rtl()
+	if rtl:
+		var all_lines := _read_output_panel_lines()
+		for i: int in range(all_lines.size()):
+			var line: String = all_lines[i].strip_edges()
+			if line.is_empty():
+				continue
 
-		# Godot continuation lines:  "at: res://path/file.gd:123"
-		if not is_error and line.begins_with("at: ") and "res://" in line:
-			if all_errors.size() > 0:
-				var prev: Dictionary = all_errors[all_errors.size() - 1]
-				var loc := _extract_file_line(line)
-				if not loc.is_empty():
-					prev[&"file"] = loc.get(&"file", "")
-					prev[&"line"] = loc.get(&"line", 0)
-			continue
+			var is_error := false
+			var severity := "error"
+			for prefix: String in _ERROR_PREFIXES:
+				if line.begins_with(prefix):
+					is_error = true
+					if "WARNING" in prefix:
+						severity = "warning"
+					break
 
-		if not is_error:
-			continue
-		if severity == "warning" and not include_warnings:
-			continue
+			if not is_error and line.begins_with("at: ") and "res://" in line:
+				if all_errors.size() > 0:
+					var prev: Dictionary = all_errors[all_errors.size() - 1]
+					var loc := _extract_file_line(line)
+					if not loc.is_empty():
+						prev[&"file"] = loc.get(&"file", "")
+						prev[&"line"] = loc.get(&"line", 0)
+				continue
 
-		var error_info := {&"message": line, &"severity": severity}
-		var loc := _extract_file_line(line)
-		if not loc.is_empty():
-			error_info[&"file"] = loc.get(&"file", "")
-			error_info[&"line"] = loc.get(&"line", 0)
-		all_errors.append(error_info)
+			if not is_error:
+				continue
+			if severity == "warning" and not include_warnings:
+				continue
 
-	# Return the most recent errors
+			var error_info := {&"message": line, &"severity": severity, &"source": &"output"}
+			var loc := _extract_file_line(line)
+			if not loc.is_empty():
+				error_info[&"file"] = loc.get(&"file", "")
+				error_info[&"line"] = loc.get(&"line", 0)
+			all_errors.append(error_info)
+
+	# Source 2: Debugger > Errors tab
+	var dbg_errors := _read_debugger_errors(include_warnings)
+	all_errors.append_array(dbg_errors)
+
 	var start := maxi(0, all_errors.size() - max_errors)
 	var errors := all_errors.slice(start)
 	return {&"ok": true, &"errors": errors, &"error_count": errors.size(),
@@ -658,6 +661,96 @@ func _extract_file_line(text: String) -> Dictionary:
 	if not line_str.is_empty():
 		return {&"file": file_path, &"line": int(line_str)}
 	return {&"file": file_path}
+
+func _read_debugger_errors(include_warnings: bool) -> Array:
+	var tree := _get_debugger_error_tree()
+	if not tree:
+		return []
+	var root := tree.get_root()
+	if not root:
+		return []
+
+	var errors: Array = []
+	var item := root.get_first_child()
+	while item:
+		var col_count := tree.columns
+		var parts: Array = []
+		for col: int in range(col_count):
+			var text: String = item.get_text(col)
+			if not text.strip_edges().is_empty():
+				parts.append(text)
+		var message: String = " | ".join(parts) if not parts.is_empty() else ""
+
+		if message.strip_edges().is_empty():
+			item = item.get_next()
+			continue
+
+		var severity := "error"
+		if "warning" in message.to_lower():
+			severity = "warning"
+
+		if severity == "warning" and not include_warnings:
+			item = item.get_next()
+			continue
+
+		var error_info := {&"message": message, &"severity": severity, &"source": &"debugger"}
+
+		var loc := _extract_file_line(message)
+		if not loc.is_empty():
+			error_info[&"file"] = loc.get(&"file", "")
+			error_info[&"line"] = loc.get(&"line", 0)
+
+		var stack_trace: Array = []
+		var child_item := item.get_first_child()
+		while child_item:
+			var trace_parts: Array = []
+			for col: int in range(col_count):
+				var t: String = child_item.get_text(col)
+				if not t.strip_edges().is_empty():
+					trace_parts.append(t)
+			if not trace_parts.is_empty():
+				stack_trace.append(" | ".join(trace_parts))
+			child_item = child_item.get_next()
+		if not stack_trace.is_empty():
+			error_info[&"stack_trace"] = stack_trace
+
+		errors.append(error_info)
+		item = item.get_next()
+
+	return errors
+
+func _get_debugger_error_tree() -> Tree:
+	if is_instance_valid(_debugger_error_tree):
+		return _debugger_error_tree
+	if not _editor_plugin:
+		return null
+	var base := _editor_plugin.get_editor_interface().get_base_control()
+	var debugger := _find_node_by_class(base, "ScriptEditorDebugger")
+	if not debugger:
+		return null
+	var tree := _find_error_tree(debugger)
+	if tree:
+		_debugger_error_tree = tree
+	return _debugger_error_tree
+
+func _find_error_tree(node: Node) -> Tree:
+	var candidates: Array[Tree] = []
+	_collect_trees(node, candidates)
+	for tree: Tree in candidates:
+		var p := tree.get_parent()
+		while p and p != node:
+			if "Error" in p.name or "error" in p.name:
+				return tree
+			p = p.get_parent()
+	if not candidates.is_empty():
+		return candidates[0]
+	return null
+
+func _collect_trees(node: Node, out: Array[Tree]) -> void:
+	if node is Tree:
+		out.append(node as Tree)
+	for child: Node in node.get_children():
+		_collect_trees(child, out)
 
 # =============================================================================
 # clear_console_log
@@ -742,3 +835,116 @@ func _dump_node(node: Node, depth: int) -> String:
 	for child: Node in children:
 		parts.append(_dump_node(child, depth + 1))
 	return "\n".join(parts)
+
+# =============================================================================
+# run_scene / stop_scene / is_playing
+# =============================================================================
+
+func run_scene(args: Dictionary) -> Dictionary:
+	if not _editor_plugin:
+		return {&"ok": false, &"error": "Editor plugin not available"}
+	var ei := _editor_plugin.get_editor_interface()
+	var scene: String = str(args.get(&"scene", ""))
+
+	if ei.is_playing_scene():
+		return {&"ok": false, &"error": "A scene is already running. Call stop_scene first."}
+
+	if scene == "current":
+		ei.play_current_scene()
+	elif not scene.is_empty():
+		if not scene.begins_with("res://"):
+			scene = "res://" + scene
+		if not FileAccess.file_exists(scene):
+			return {&"ok": false, &"error": "Scene file not found: %s" % scene}
+		ei.play_custom_scene(scene)
+	else:
+		ei.play_main_scene()
+
+	return {&"ok": true, &"message": "Scene launched" + (" (%s)" % scene if not scene.is_empty() else " (main scene)")}
+
+func stop_scene(_args: Dictionary) -> Dictionary:
+	if not _editor_plugin:
+		return {&"ok": false, &"error": "Editor plugin not available"}
+	var ei := _editor_plugin.get_editor_interface()
+	if not ei.is_playing_scene():
+		return {&"ok": true, &"message": "No scene is currently running"}
+	ei.stop_playing_scene()
+	return {&"ok": true, &"message": "Scene stopped"}
+
+func is_playing(_args: Dictionary) -> Dictionary:
+	if not _editor_plugin:
+		return {&"ok": false, &"error": "Editor plugin not available"}
+	var ei := _editor_plugin.get_editor_interface()
+	var playing := ei.is_playing_scene()
+	var scene_path := ei.get_playing_scene() if playing else ""
+	return {&"ok": true, &"playing": playing, &"scene": scene_path}
+
+# =============================================================================
+# rescan_filesystem
+# =============================================================================
+
+func rescan_filesystem(_args: Dictionary) -> Dictionary:
+	if not _editor_plugin:
+		return {&"ok": false, &"error": "No editor plugin available"}
+	var efs := _editor_plugin.get_editor_interface().get_resource_filesystem()
+	if efs.is_scanning():
+		return {&"ok": false, &"error": "A filesystem scan is already in progress. Wait and retry."}
+	efs.scan()
+	return {&"ok": true, &"message": "Filesystem rescan triggered."}
+
+# =============================================================================
+# classdb_query
+# =============================================================================
+
+const _WELL_KNOWN_VIRTUALS: Array[String] = [
+	"_ready", "_process", "_physics_process", "_input", "_unhandled_input",
+	"_unhandled_key_input", "_enter_tree", "_exit_tree", "_draw",
+	"_gui_input", "_init", "_notification",
+]
+
+func classdb_query(args: Dictionary) -> Dictionary:
+	var class_name_str: String = str(args.get(&"class_name", ""))
+	if class_name_str.strip_edges().is_empty():
+		return {&"ok": false, &"error": "Missing 'class_name'"}
+	if not ClassDB.class_exists(class_name_str):
+		return {&"ok": false, &"error": "Class '%s' does not exist in ClassDB" % class_name_str}
+
+	var query: String = str(args.get(&"query", "all"))
+	var include_virtual: bool = args.get(&"include_virtual", true)
+	var result: Dictionary = {&"ok": true, &"class": class_name_str}
+
+	result[&"parent_class"] = ClassDB.get_parent_class(class_name_str)
+
+	if query == "all" or query == "properties":
+		var props: Array = []
+		for prop: Dictionary in ClassDB.class_get_property_list(class_name_str, true):
+			if int(prop.get(&"usage", 0)) & PROPERTY_USAGE_EDITOR:
+				props.append({&"name": prop[&"name"], &"type": type_string(int(prop[&"type"]))})
+		result[&"properties"] = props
+
+	if query == "all" or query == "methods":
+		var methods: Array = []
+		for method: Dictionary in ClassDB.class_get_method_list(class_name_str, true):
+			var mname: String = method.get(&"name", "")
+			if mname.begins_with("_"):
+				if not include_virtual:
+					continue
+				if mname not in _WELL_KNOWN_VIRTUALS:
+					continue
+			var method_args: Array = []
+			for arg: Dictionary in method.get(&"args", []):
+				method_args.append({&"name": arg[&"name"], &"type": type_string(int(arg[&"type"]))})
+			methods.append({&"name": mname, &"args": method_args,
+				&"return_type": type_string(int(method.get(&"return", {}).get(&"type", 0)))})
+		result[&"methods"] = methods
+
+	if query == "all" or query == "signals":
+		var signals_list: Array = []
+		for sig: Dictionary in ClassDB.class_get_signal_list(class_name_str, true):
+			var sig_args: Array = []
+			for arg: Dictionary in sig.get(&"args", []):
+				sig_args.append({&"name": arg[&"name"], &"type": type_string(int(arg[&"type"]))})
+			signals_list.append({&"name": sig[&"name"], &"args": sig_args})
+		result[&"signals"] = signals_list
+
+	return result

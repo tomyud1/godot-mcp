@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.3.0] - 2026-03-31
+
+### Added
+- **`classdb_query` tool** — query Godot's ClassDB for class properties, methods, signals, and inheritance; lets the AI verify real API signatures before writing code instead of guessing from training data (suggested by [@elfensky](https://github.com/elfensky), [#19](https://github.com/tomyud1/godot-mcp/issues/19))
+- **`run_scene` / `stop_scene` / `is_playing` tools** — run, stop, and check scene status from the AI, enabling autonomous edit→run→debug loops without user intervention (suggested by [@elfensky](https://github.com/elfensky), [#18](https://github.com/tomyud1/godot-mcp/issues/18))
+- **Configurable timeout and port** — `GODOT_MCP_TIMEOUT_MS` and `GODOT_MCP_PORT` environment variables to override the 30s tool timeout and 6505 WebSocket port (suggested by [@elfensky](https://github.com/elfensky), [#20](https://github.com/tomyud1/godot-mcp/issues/20))
+- **`rescan_filesystem` tool** — trigger a full filesystem rescan from the AI after creating or modifying files externally
+- **Tool description cross-references** — `get_errors`, `edit_script`, and `create_script` descriptions now guide the AI to use `classdb_query` for API verification and `run_scene` for testing after changes
+
+### Improved
+- **`get_errors` now reads both sources** — reads the Output panel *and* the Debugger > Errors tab in a single call, returning runtime errors with stack traces that were previously invisible; each error includes a `source` field (`"output"` or `"debugger"`) (debugger scraping based on [@byronhulcher](https://github.com/byronhulcher)'s approach, [PR #15](https://github.com/tomyud1/godot-mcp/pull/15))
+- **Tool executor null guard** — tools that crash at runtime now return a clear error instead of silently timing out (based on [@elfensky](https://github.com/elfensky)'s approach, [PR #22](https://github.com/tomyud1/godot-mcp/pull/22))
+
+### Fixed
+- **WebSocket buffer sizes increased** — outbound buffer raised to 4 MB, inbound to 1 MB; fixes `map_project` and other large responses being silently dropped on non-trivial projects (reported by [@rconlan](https://github.com/rconlan), [#14](https://github.com/tomyud1/godot-mcp/issues/14))
+- **WebSocket server binds to IPv4** — explicitly binds to `127.0.0.1` instead of letting the `ws` library default to `::` (IPv6); fixes silent connection failures on systems without IPv6 dual-stack (reported by [@elfensky](https://github.com/elfensky), [#17](https://github.com/tomyud1/godot-mcp/issues/17))
+- **WebSocket reconnection fix** — creates a fresh `WebSocketPeer` on every reconnect attempt instead of reusing a closed peer that can get stuck in `STATE_CONNECTING` forever (Godot issue #81839) (based on [@elfensky](https://github.com/elfensky)'s fix, [PR #22](https://github.com/tomyud1/godot-mcp/pull/22))
+- **Reconnection after failed retries** — the plugin now retries indefinitely with exponential backoff when the server is unreachable, instead of silently giving up after the first failed attempt
+- **JSON string args auto-parsed** — tool arguments that arrive as JSON strings (e.g. `"{\"key\": \"value\"}"` instead of a Dictionary) are now automatically parsed at the executor level, fixing `update_project_settings` and protecting all tools from MCP clients that serialize nested objects as strings (reported by [@elfensky](https://github.com/elfensky), [#26](https://github.com/tomyud1/godot-mcp/issues/26))
+
 ## [0.2.8] - 2026-03-14
 
 ### Fixed

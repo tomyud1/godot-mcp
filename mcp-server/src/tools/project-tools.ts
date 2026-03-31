@@ -73,7 +73,7 @@ export const projectTools: ToolDefinition[] = [
   },
   {
     name: 'get_errors',
-    description: 'Get errors and warnings from the Godot editor log with file paths, line numbers, and severity. Returns the most recent errors first.',
+    description: 'Get errors and warnings from both the Godot Output panel and the Debugger > Errors tab. Returns file paths, line numbers, severity, stack traces, and which source each error came from. If errors mention a missing method or property, use classdb_query to verify the correct API before fixing.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -174,6 +174,65 @@ export const projectTools: ToolDefinition[] = [
         }
       },
       required: ['action', 'operation']
+    }
+  },
+  {
+    name: 'run_scene',
+    description: 'Run a scene in the Godot editor. Returns immediately — the scene launches asynchronously. Recommended workflow after editing code: 1) run_scene, 2) wait a few seconds (longer for large projects), 3) is_playing to confirm the scene started (if false, it crashed — check get_errors), 4) get_errors to check for runtime errors, 5) stop_scene before making fixes.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        scene: {
+          type: 'string',
+          description: 'Scene to run: omit for main scene, "current" for the open scene, or a res:// path for a specific scene'
+        }
+      }
+    }
+  },
+  {
+    name: 'stop_scene',
+    description: 'Stop the currently running scene in the Godot editor. Always stop the scene before editing code to avoid errors repeating every frame.',
+    inputSchema: {
+      type: 'object',
+      properties: {}
+    }
+  },
+  {
+    name: 'is_playing',
+    description: 'Check if a scene is currently running in the Godot editor. Returns playing status and the scene path. Use after run_scene to confirm the scene started successfully — if playing is false shortly after run_scene, the scene likely crashed on startup.',
+    inputSchema: {
+      type: 'object',
+      properties: {}
+    }
+  },
+  {
+    name: 'classdb_query',
+    description: 'Query Godot\'s ClassDB for class information: properties, methods, signals, and inheritance. Use this to verify that a class, method, or property actually exists in the running Godot engine before writing code. Prevents using wrong method names, outdated Godot 3 API, or incorrect signatures.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        class_name: {
+          type: 'string',
+          description: 'Godot class name to query (e.g., "CharacterBody2D", "Sprite2D", "Control")'
+        },
+        query: {
+          type: 'string',
+          description: 'What to return: "all" (default), "properties", "methods", or "signals"'
+        },
+        include_virtual: {
+          type: 'boolean',
+          description: 'Include well-known virtual methods like _ready, _process, _input (default: true). Set to false to see only public non-virtual methods.'
+        }
+      },
+      required: ['class_name']
+    }
+  },
+  {
+    name: 'rescan_filesystem',
+    description: 'Trigger a full filesystem rescan in the Godot editor. Use after creating, deleting, or modifying files externally (e.g. from the terminal or another tool). The scan is asynchronous and returns immediately.',
+    inputSchema: {
+      type: 'object',
+      properties: {}
     }
   },
   {

@@ -8,7 +8,7 @@ import type { ToolDefinition } from '../types.js';
 export const scriptTools: ToolDefinition[] = [
   {
     name: 'edit_script',
-    description: 'Apply a SMALL, SURGICAL code edit (1-10 lines) to GDScript files. Auto-applies changes. For large changes, call multiple times. ONLY for .gd files - NEVER for .tscn scene files.',
+    description: 'Apply a SMALL, SURGICAL code edit (1-10 lines) to GDScript files. Auto-applies changes. For large changes, call multiple times. ONLY for .gd files - NEVER for .tscn scene files. Use classdb_query to verify unfamiliar Godot class methods. After making changes, consider using run_scene to test and get_errors to check for issues.',
     inputSchema: {
       type: 'object',
       properties: {
