@@ -322,6 +322,28 @@ async function startPrimary(): Promise<void> {
     }
   }
 
+  // --- Verify at least one server is listening ---
+  const webSocketListening = godotBridge.getStatus().port > 0;
+  const httpListening = httpServer.isListening();
+
+  if (!webSocketListening && !httpListening) {
+    console.error(`[${SERVER_NAME}] ❌ Fatal: Neither WebSocket nor HTTP server started.`);
+    console.error(`[${SERVER_NAME}] WebSocket server (port ${WEBSOCKET_PORT}): ${webSocketListening ? 'OK' : 'FAILED'}`);
+    console.error(`[${SERVER_NAME}] HTTP server (port ${HTTP_PORT}): ${httpListening ? 'OK' : 'FAILED'}`);
+    console.error(`[${SERVER_NAME}] Check for port conflicts, permissions, or network issues.`);
+    console.error(`[${SERVER_NAME}] Cannot continue without at least one listening server.`);
+    godotBridge?.stop();
+    httpServer.stop();
+    process.exit(1);
+  }
+
+  if (!webSocketListening) {
+    console.error(`[${SERVER_NAME}] ⚠️  WebSocket server failed to start. Godot connection will not work.`);
+  }
+  if (!httpListening) {
+    console.error(`[${SERVER_NAME}] ⚠️  HTTP server failed to start. Proxy clients will not be able to connect.`);
+  }
+
   console.error(`[${SERVER_NAME}] Available tools: ${allTools.length + 1}`);
   console.error(`[${SERVER_NAME}] Waiting for Godot editor connection...`);
 

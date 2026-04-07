@@ -71,6 +71,10 @@ export class PrimaryHttpServer {
     }
   }
 
+  isListening(): boolean {
+    return this.server?.listening || false;
+  }
+
   private async handleRequest(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
     res.setHeader('Content-Type', 'application/json');
 
