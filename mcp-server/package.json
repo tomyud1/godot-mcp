@@ -22,7 +22,12 @@
     "prepare": "npm run build",
     "start": "node dist/index.js",
     "dev": "tsc && node scripts/build-visualizer.js && node dist/index.js",
-    "watch": "tsc --watch"
+    "watch": "tsc --watch",
+    "test": "vitest",
+    "test:ci": "vitest run --coverage",
+    "lint": "eslint src/**/*.ts",
+    "lint:fix": "eslint src/**/*.ts --fix",
+    "type-check": "tsc --noEmit"
   },
   "keywords": [
     "mcp",
@@ -38,7 +43,12 @@
   "devDependencies": {
     "@types/node": "^20.11.0",
     "@types/ws": "^8.5.10",
+    "@typescript-eslint/eslint-plugin": "^8.0.0",
+    "@typescript-eslint/parser": "^8.0.0",
+    "@vitest/coverage-v8": "^1.0.0",
     "esbuild": "^0.20.0",
-    "typescript": "^5.3.0"
+    "eslint": "^8.57.0",
+    "typescript": "^5.3.0",
+    "vitest": "^1.0.0"
   }
 }

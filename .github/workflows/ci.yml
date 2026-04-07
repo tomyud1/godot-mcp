@@ -1,0 +1,89 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  type-check:
+    name: Type Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: 'mcp-server/package-lock.json'
+      - name: Install dependencies
+        working-directory: ./mcp-server
+        run: npm ci
+      - name: Run type check
+        working-directory: ./mcp-server
+        run: npx tsc --noEmit
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: 'mcp-server/package-lock.json'
+      - name: Install dependencies
+        working-directory: ./mcp-server
+        run: npm ci
+      - name: Run linter
+        working-directory: ./mcp-server
+        run: npm run lint
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: 'mcp-server/package-lock.json'
+      - name: Install dependencies
+        working-directory: ./mcp-server
+        run: npm ci
+      - name: Run tests
+        working-directory: ./mcp-server
+        run: npm run test:ci
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./mcp-server/coverage/lcov.info
+          fail_ci_if_error: false
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: 'mcp-server/package-lock.json'
+      - name: Install dependencies
+        working-directory: ./mcp-server
+        run: npm ci
+      - name: Build project
+        working-directory: ./mcp-server
+        run: npm run build
+      - name: Verify dist output
+        working-directory: ./mcp-server
+        run: |
+          if [ ! -f "dist/index.js" ]; then
+            echo "Error: dist/index.js not found"
+            exit 1
+          fi
+          echo "Build successful: dist/index.js exists"

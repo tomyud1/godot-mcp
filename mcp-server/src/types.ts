@@ -50,12 +50,18 @@ export interface GodotReadyMessage {
   project_path: string;
 }
 
+export interface ClientStatusMessage {
+  type: 'client_status';
+  count: number;
+}
+
 export type WebSocketMessage =
   | ToolInvokeMessage
   | ToolResultMessage
   | PingMessage
   | PongMessage
-  | GodotReadyMessage;
+  | GodotReadyMessage
+  | ClientStatusMessage;
 
 // Tool result types
 export interface ListDirResult {
