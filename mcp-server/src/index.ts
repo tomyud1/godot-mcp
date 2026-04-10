@@ -23,7 +23,9 @@ import {
   McpError
 } from '@modelcontextprotocol/sdk/types.js';
 
-import { execSync } from 'child_process';
+import { execSync, spawn } from 'child_process';
+import { existsSync } from 'fs';
+import { join } from 'path';
 import { allTools, toolExists } from './tools/index.js';
 import { GodotBridge } from './godot-bridge.js';
 import { serveVisualization, stopVisualizationServer, setGodotBridge } from './visualizer-server.js';
@@ -112,6 +114,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }, null, 2)
       }]
     };
+  }
+
+  // Handle run_scene — spawns a headless subprocess, bypasses the bridge
+  if (name === 'run_scene') {
+    return handleRunScene(toolArgs, godotBridge);
   }
 
   // Validate tool exists
@@ -234,6 +241,183 @@ function killProcessOnPort(port: number): boolean {
     // No process on port, or kill failed — either way, proceed
   }
   return false;
+}
+
+/**
+ * Locate the Godot executable.
+ * Search order:
+ *   1. GODOT_PATH env var (explicit override, best for CI)
+ *   2. GODOT4_PATH env var (common alias)
+ *   3. `godot4` / `godot` on PATH
+ *   4. Platform-specific default install locations
+ */
+function findGodotExecutable(): string | null {
+  // Env overrides
+  const envPath = process.env.GODOT_PATH || process.env.GODOT4_PATH;
+  if (envPath && existsSync(envPath)) return envPath;
+
+  // PATH candidates
+  const pathCandidates = ['godot4', 'godot'];
+  for (const bin of pathCandidates) {
+    try {
+      const found = execSync(
+        process.platform === 'win32' ? `where ${bin}` : `which ${bin}`,
+        { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] }
+      ).trim().split('\n')[0];
+      if (found && existsSync(found)) return found;
+    } catch {
+      // not on PATH — continue
+    }
+  }
+
+  // Platform-specific defaults
+  if (process.platform === 'darwin') {
+    const macPaths = [
+      '/Applications/Godot.app/Contents/MacOS/Godot',
+      '/Applications/Godot_v4.app/Contents/MacOS/Godot',
+    ];
+    for (const p of macPaths) {
+      if (existsSync(p)) return p;
+    }
+  } else if (process.platform === 'linux') {
+    const linuxPaths = ['/usr/bin/godot4', '/usr/bin/godot', '/usr/local/bin/godot4', '/usr/local/bin/godot'];
+    for (const p of linuxPaths) {
+      if (existsSync(p)) return p;
+    }
+  } else if (process.platform === 'win32') {
+    const winPaths = [
+      'C:\\Program Files\\Godot\\Godot.exe',
+      'C:\\Program Files (x86)\\Godot\\Godot.exe',
+    ];
+    for (const p of winPaths) {
+      if (existsSync(p)) return p;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Execute run_scene: spawn a headless Godot subprocess and capture output.
+ */
+async function handleRunScene(
+  toolArgs: Record<string, unknown>,
+  bridge: GodotBridge
+): Promise<{ content: Array<{ type: string; text: string }>; isError?: boolean }> {
+  const scenePath = toolArgs.scene_path as string;
+  const extraArgs = (toolArgs.args as string[] | undefined) ?? [];
+  const timeoutMs = (toolArgs.timeout_ms as number | undefined) ?? 60000;
+  const headless = (toolArgs.headless as boolean | undefined) ?? true;
+  const explicitProjectPath = toolArgs.project_path as string | undefined;
+
+  // Resolve project root: explicit param → bridge → error
+  const projectPath = explicitProjectPath || bridge.getStatus().projectPath;
+  if (!projectPath) {
+    return {
+      content: [{
+        type: 'text',
+        text: JSON.stringify({
+          error: 'Project path unknown. Either open the Godot editor with the MCP plugin connected, or pass project_path explicitly.',
+          hint: 'project_path should be the absolute filesystem path to the directory containing project.godot'
+        }, null, 2)
+      }],
+      isError: true
+    };
+  }
+
+  const godotBin = findGodotExecutable();
+  if (!godotBin) {
+    return {
+      content: [{
+        type: 'text',
+        text: JSON.stringify({
+          error: 'Godot executable not found.',
+          hint: 'Set the GODOT_PATH environment variable to the absolute path of your Godot binary, or ensure `godot4` / `godot` is on your PATH.'
+        }, null, 2)
+      }],
+      isError: true
+    };
+  }
+
+  // Build argument list:
+  //   godot [--headless] --path <project_root> [-s] <scene_path> [extra_args...]
+  // .gd scripts use -s (script mode); .tscn scenes are positional arguments.
+  const isScript = scenePath.endsWith('.gd');
+  const godotArgs: string[] = [];
+  if (headless) godotArgs.push('--headless');
+  godotArgs.push('--path', projectPath);
+  if (isScript) godotArgs.push('-s');
+  godotArgs.push(scenePath);
+  godotArgs.push(...extraArgs);
+
+  const startTime = Date.now();
+
+  return new Promise((resolve) => {
+    let stdout = '';
+    let timedOut = false;
+
+    const child = spawn(godotBin, godotArgs, {
+      // Merge stderr into stdout so print() and push_error() both appear
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    child.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString(); });
+    child.stderr.on('data', (chunk: Buffer) => { stdout += chunk.toString(); });
+
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill('SIGTERM');
+    }, timeoutMs);
+
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      const duration_ms = Date.now() - startTime;
+
+      if (timedOut) {
+        resolve({
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              error: `Process timed out after ${timeoutMs}ms`,
+              stdout,
+              exit_code: null,
+              duration_ms
+            }, null, 2)
+          }],
+          isError: true
+        });
+        return;
+      }
+
+      resolve({
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            stdout,
+            exit_code: code,
+            duration_ms,
+            godot_bin: godotBin,
+            command: [godotBin, ...godotArgs].join(' ')
+          }, null, 2)
+        }]
+      });
+    });
+
+    child.on('error', (err) => {
+      clearTimeout(timer);
+      resolve({
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            error: `Failed to spawn Godot: ${err.message}`,
+            godot_bin: godotBin,
+            command: [godotBin, ...godotArgs].join(' ')
+          }, null, 2)
+        }],
+        isError: true
+      });
+    });
+  });
 }
 
 /**
