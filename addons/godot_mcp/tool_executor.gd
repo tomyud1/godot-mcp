@@ -65,6 +65,8 @@ func _init_tools() -> void:
 		&"detach_script": [_scene_tools, &"detach_script"],
 		&"set_collision_shape": [_scene_tools, &"set_collision_shape"],
 		&"set_sprite_texture": [_scene_tools, &"set_sprite_texture"],
+		&"set_mesh": [_scene_tools, &"set_mesh"],
+		&"set_material": [_scene_tools, &"set_material"],
 		&"get_scene_hierarchy": [_scene_tools, &"get_scene_hierarchy"],
 		&"get_scene_node_properties": [_scene_tools, &"get_scene_node_properties"],
 		&"set_scene_node_property": [_scene_tools, &"set_scene_node_property"],

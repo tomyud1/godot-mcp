@@ -268,5 +268,61 @@ export const sceneTools: ToolDefinition[] = [
       },
       required: ['scene_path', 'texture_type']
     }
+  },
+  {
+    name: 'set_mesh',
+    description: 'Create and assign a mesh resource to a MeshInstance3D node. REQUIRED to make 3D geometry visible. Primitive types: BoxMesh, SphereMesh, CylinderMesh, CapsuleMesh, PlaneMesh, PrismMesh, TorusMesh, QuadMesh, TextMesh. Or load from file.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        scene_path: {
+          type: 'string',
+          description: 'Path to the .tscn scene file'
+        },
+        node_path: {
+          type: 'string',
+          description: 'Path to the MeshInstance3D node within the scene'
+        },
+        mesh_type: {
+          type: 'string',
+          description: 'Mesh class: "BoxMesh", "SphereMesh", "CylinderMesh", "CapsuleMesh", "PlaneMesh", "PrismMesh", "TorusMesh", "QuadMesh", "TextMesh", or "file" to load from a resource path'
+        },
+        mesh_params: {
+          type: 'object',
+          description: 'BoxMesh: {size:{x,y,z}}. SphereMesh: {radius,height,radial_segments,rings}. CylinderMesh: {top_radius,bottom_radius,height}. CapsuleMesh: {radius,height}. PlaneMesh: {size:{x,y}}. PrismMesh: {left_to_right,size:{x,y,z}}. TorusMesh: {inner_radius,outer_radius,rings}. QuadMesh: {size:{x,y}}. TextMesh: {text,font_size,depth}. file: {path:"res://mesh.tres"}'
+        }
+      },
+      required: ['scene_path', 'mesh_type']
+    }
+  },
+  {
+    name: 'set_material',
+    description: 'Create and assign a material to a MeshInstance3D, CSG, or GeometryInstance3D node. Supports StandardMaterial3D or loading from file.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        scene_path: {
+          type: 'string',
+          description: 'Path to the .tscn scene file'
+        },
+        node_path: {
+          type: 'string',
+          description: 'Path to the target node'
+        },
+        material_type: {
+          type: 'string',
+          description: '"StandardMaterial3D" or "file" to load from a resource path'
+        },
+        material_params: {
+          type: 'object',
+          description: 'StandardMaterial3D: {albedo_color:{r,g,b,a}, metallic:0-1, roughness:0-1, emission:{r,g,b}, emission_energy:float, transparency:0=disabled/1=alpha/2=scissor/3=hash/4=depth_pre_pass}. file: {path:"res://material.tres"}'
+        },
+        surface_index: {
+          type: 'number',
+          description: 'For MeshInstance3D only: surface index for per-surface override. Omit for material_override on all surfaces.'
+        }
+      },
+      required: ['scene_path', 'material_type']
+    }
   }
 ];

@@ -4,7 +4,7 @@ class_name SceneTools
 ## Scene operation tools for MCP.
 ## Handles: create_scene, read_scene, add_node, remove_node, modify_node_property,
 ##          rename_node, move_node, attach_script, detach_script, set_collision_shape,
-##          set_sprite_texture
+##          set_sprite_texture, set_mesh, set_material
 
 const _SKIP_PROPS: Dictionary[String, bool] = {
 	"script": true, "owner": true, "scene_file_path": true,
@@ -357,7 +357,7 @@ func modify_node_property(args: Dictionary) -> Dictionary:
 	# Validate resource type compatibility
 	if old_value is Resource and not (parsed is Resource):
 		root.queue_free()
-		return {&"ok": false, &"error": "Property '%s' expects a Resource. Use specialized tools (set_collision_shape, set_sprite_texture) instead." % property_name}
+		return {&"ok": false, &"error": "Property '%s' expects a Resource. Use specialized tools (set_collision_shape, set_sprite_texture, set_mesh, set_material) instead." % property_name}
 
 	target.set(property_name, parsed)
 
@@ -731,6 +731,197 @@ func set_sprite_texture(args: Dictionary) -> Dictionary:
 		return err
 
 	return {&"ok": true, &"message": "Set %s texture on node '%s'" % [texture_type, node_path]}
+
+# =============================================================================
+# set_mesh
+# =============================================================================
+func set_mesh(args: Dictionary) -> Dictionary:
+	var scene_path: String = _ensure_res_path(str(args.get(&"scene_path", "")))
+	var node_path: String = str(args.get(&"node_path", "."))
+	var mesh_type: String = str(args.get(&"mesh_type", ""))
+	var mesh_params: Dictionary = args.get(&"mesh_params", {})
+
+	if scene_path.strip_edges() == "res://":
+		return {&"ok": false, &"error": "Missing 'scene_path'"}
+	if mesh_type.strip_edges().is_empty():
+		return {&"ok": false, &"error": "Missing 'mesh_type'"}
+
+	var result := _load_scene(scene_path)
+	if not result[1].is_empty():
+		return result[1]
+
+	var root: Node = result[0]
+	var target = _find_node(root, node_path)
+	if not target:
+		root.queue_free()
+		return {&"ok": false, &"error": "Node not found: " + node_path}
+
+	if not (target is MeshInstance3D):
+		root.queue_free()
+		return {&"ok": false, &"error": "Node '%s' is %s, expected MeshInstance3D" % [node_path, target.get_class()]}
+
+	var mesh: Mesh = null
+
+	if mesh_type == "file":
+		var file_path: String = str(mesh_params.get(&"path", ""))
+		if file_path.is_empty():
+			root.queue_free()
+			return {&"ok": false, &"error": "Missing 'path' in mesh_params for file type"}
+		var loaded = load(file_path)
+		if not loaded or not (loaded is Mesh):
+			root.queue_free()
+			return {&"ok": false, &"error": "Failed to load mesh resource (or not a Mesh): " + file_path}
+		mesh = loaded
+	else:
+		if not ClassDB.class_exists(mesh_type):
+			root.queue_free()
+			return {&"ok": false, &"error": "Unknown mesh type: " + mesh_type}
+		if not ClassDB.can_instantiate(mesh_type):
+			root.queue_free()
+			return {&"ok": false, &"error": "Cannot instantiate mesh type: " + mesh_type}
+
+		var instance = ClassDB.instantiate(mesh_type)
+		if not (instance is PrimitiveMesh):
+			if instance is Node:
+				instance.queue_free()
+			root.queue_free()
+			return {&"ok": false, &"error": "'%s' is not a PrimitiveMesh type" % mesh_type}
+		mesh = instance
+
+		if mesh_params.has(&"radius"):
+			mesh.set("radius", float(mesh_params[&"radius"]))
+		if mesh_params.has(&"height"):
+			mesh.set("height", float(mesh_params[&"height"]))
+		if mesh_params.has(&"top_radius"):
+			mesh.set("top_radius", float(mesh_params[&"top_radius"]))
+		if mesh_params.has(&"bottom_radius"):
+			mesh.set("bottom_radius", float(mesh_params[&"bottom_radius"]))
+		if mesh_params.has(&"inner_radius"):
+			mesh.set("inner_radius", float(mesh_params[&"inner_radius"]))
+		if mesh_params.has(&"outer_radius"):
+			mesh.set("outer_radius", float(mesh_params[&"outer_radius"]))
+		if mesh_params.has(&"radial_segments"):
+			mesh.set("radial_segments", int(mesh_params[&"radial_segments"]))
+		if mesh_params.has(&"rings"):
+			mesh.set("rings", int(mesh_params[&"rings"]))
+		if mesh_params.has(&"left_to_right"):
+			mesh.set("left_to_right", float(mesh_params[&"left_to_right"]))
+		if mesh_params.has(&"subdivide_width"):
+			mesh.set("subdivide_width", int(mesh_params[&"subdivide_width"]))
+		if mesh_params.has(&"subdivide_height"):
+			mesh.set("subdivide_height", int(mesh_params[&"subdivide_height"]))
+		if mesh_params.has(&"subdivide_depth"):
+			mesh.set("subdivide_depth", int(mesh_params[&"subdivide_depth"]))
+		if mesh_params.has(&"text"):
+			mesh.set("text", str(mesh_params[&"text"]))
+		if mesh_params.has(&"font_size"):
+			mesh.set("font_size", int(mesh_params[&"font_size"]))
+		if mesh_params.has(&"depth"):
+			mesh.set("depth", float(mesh_params[&"depth"]))
+		if mesh_params.has(&"size"):
+			var size_data = mesh_params[&"size"]
+			if typeof(size_data) == TYPE_DICTIONARY:
+				if size_data.has(&"z"):
+					mesh.set("size", Vector3(size_data.get(&"x", 1), size_data.get(&"y", 1), size_data.get(&"z", 1)))
+				else:
+					mesh.set("size", Vector2(size_data.get(&"x", 1), size_data.get(&"y", 1)))
+
+	target.set("mesh", mesh)
+
+	var err := _save_scene(root, scene_path)
+	if not err.is_empty():
+		return err
+
+	return {&"ok": true, &"message": "Set %s on node '%s'" % [mesh_type, node_path]}
+
+# =============================================================================
+# set_material
+# =============================================================================
+func set_material(args: Dictionary) -> Dictionary:
+	var scene_path: String = _ensure_res_path(str(args.get(&"scene_path", "")))
+	var node_path: String = str(args.get(&"node_path", "."))
+	var material_type: String = str(args.get(&"material_type", ""))
+	var material_params: Dictionary = args.get(&"material_params", {})
+	var surface_index: int = int(args.get(&"surface_index", -1))
+
+	if scene_path.strip_edges() == "res://":
+		return {&"ok": false, &"error": "Missing 'scene_path'"}
+	if material_type.strip_edges().is_empty():
+		return {&"ok": false, &"error": "Missing 'material_type'"}
+
+	var result := _load_scene(scene_path)
+	if not result[1].is_empty():
+		return result[1]
+
+	var root: Node = result[0]
+	var target = _find_node(root, node_path)
+	if not target:
+		root.queue_free()
+		return {&"ok": false, &"error": "Node not found: " + node_path}
+
+	var material: Material = null
+
+	if material_type == "file":
+		var file_path: String = str(material_params.get(&"path", ""))
+		if file_path.is_empty():
+			root.queue_free()
+			return {&"ok": false, &"error": "Missing 'path' in material_params for file type"}
+		var loaded = load(file_path)
+		if not loaded or not (loaded is Material):
+			root.queue_free()
+			return {&"ok": false, &"error": "Failed to load material (or not a Material): " + file_path}
+		material = loaded
+
+	elif material_type == "StandardMaterial3D":
+		material = StandardMaterial3D.new()
+
+		if material_params.has(&"albedo_color"):
+			var c = material_params[&"albedo_color"]
+			if typeof(c) == TYPE_DICTIONARY:
+				material.albedo_color = Color(c.get(&"r", 1), c.get(&"g", 1), c.get(&"b", 1), c.get(&"a", 1))
+		if material_params.has(&"metallic"):
+			material.metallic = float(material_params[&"metallic"])
+		if material_params.has(&"roughness"):
+			material.roughness = float(material_params[&"roughness"])
+		if material_params.has(&"emission"):
+			var e = material_params[&"emission"]
+			if typeof(e) == TYPE_DICTIONARY:
+				material.emission = Color(e.get(&"r", 0), e.get(&"g", 0), e.get(&"b", 0), e.get(&"a", 1))
+			material.emission_enabled = true
+		if material_params.has(&"emission_energy"):
+			material.emission_energy_multiplier = float(material_params[&"emission_energy"])
+		if material_params.has(&"transparency"):
+			material.transparency = int(material_params[&"transparency"])
+
+	else:
+		root.queue_free()
+		return {&"ok": false, &"error": "Unknown material type: '%s'. Use 'StandardMaterial3D' or 'file'." % material_type}
+
+	# Apply material based on node type
+	# Order matters: CSGPrimitive3D inherits GeometryInstance3D, so check it first
+	var apply_mode: String
+	if target is MeshInstance3D:
+		if surface_index >= 0:
+			target.set_surface_override_material(surface_index, material)
+			apply_mode = "surface_override_material[%d]" % surface_index
+		else:
+			target.material_override = material
+			apply_mode = "material_override"
+	elif target is CSGPrimitive3D:
+		target.set("material", material)
+		apply_mode = "material"
+	elif target is GeometryInstance3D:
+		target.material_override = material
+		apply_mode = "material_override"
+	else:
+		root.queue_free()
+		return {&"ok": false, &"error": "Node '%s' (%s) does not support material assignment" % [node_path, target.get_class()]}
+
+	var err := _save_scene(root, scene_path)
+	if not err.is_empty():
+		return err
+
+	return {&"ok": true, &"message": "Set %s on node '%s' via %s" % [material_type, node_path, apply_mode]}
 
 # =============================================================================
 # get_scene_hierarchy (for visualizer)
