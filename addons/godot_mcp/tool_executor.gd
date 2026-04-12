@@ -7,6 +7,10 @@ var _editor_plugin: EditorPlugin = null
 
 var _file_tools: Node
 var _scene_tools: Node
+var _editor_view_tools: Node
+var _layout_tools: Node
+var _lighting_tools: Node
+var _navigation_tools: Node
 var _script_tools: Node
 var _project_tools: Node
 var _asset_tools: Node
@@ -30,6 +34,22 @@ func _init_tools() -> void:
 	_scene_tools = preload("res://addons/godot_mcp/tools/scene_tools.gd").new()
 	_scene_tools.name = "SceneTools"
 	add_child(_scene_tools)
+
+	_editor_view_tools = preload("res://addons/godot_mcp/tools/editor_view_tools.gd").new()
+	_editor_view_tools.name = "EditorViewTools"
+	add_child(_editor_view_tools)
+
+	_layout_tools = preload("res://addons/godot_mcp/tools/layout_tools.gd").new()
+	_layout_tools.name = "LayoutTools"
+	add_child(_layout_tools)
+
+	_lighting_tools = preload("res://addons/godot_mcp/tools/lighting_tools.gd").new()
+	_lighting_tools.name = "LightingTools"
+	add_child(_lighting_tools)
+
+	_navigation_tools = preload("res://addons/godot_mcp/tools/navigation_tools.gd").new()
+	_navigation_tools.name = "NavigationTools"
+	add_child(_navigation_tools)
 
 	_script_tools = preload("res://addons/godot_mcp/tools/script_tools.gd").new()
 	_script_tools.name = "ScriptTools"
@@ -75,6 +95,18 @@ func _init_tools() -> void:
 		&"get_scene_hierarchy": [_scene_tools, &"get_scene_hierarchy"],
 		&"get_scene_node_properties": [_scene_tools, &"get_scene_node_properties"],
 		&"set_scene_node_property": [_scene_tools, &"set_scene_node_property"],
+		&"snap_node_to_ground": [_scene_tools, &"snap_node_to_ground"],
+
+		&"take_editor_viewport_screenshot": [_editor_view_tools, &"take_editor_viewport_screenshot"],
+		&"summarize_scene_layout": [_layout_tools, &"summarize_scene_layout"],
+
+		&"get_light_info": [_lighting_tools, &"get_light_info"],
+		&"set_sun_light": [_lighting_tools, &"set_sun_light"],
+		&"validate_scene_lighting": [_lighting_tools, &"validate_scene_lighting"],
+
+		&"set_navigation_mesh": [_navigation_tools, &"set_navigation_mesh"],
+		&"get_navigation_mesh_info": [_navigation_tools, &"get_navigation_mesh_info"],
+		&"bake_navigation_mesh": [_navigation_tools, &"bake_navigation_mesh"],
 
 		&"edit_script": [_script_tools, &"edit_script"],
 		&"validate_script": [_script_tools, &"validate_script"],
@@ -117,6 +149,16 @@ func set_editor_plugin(plugin: EditorPlugin) -> void:
 	# Pass editor plugin reference to all tool handlers
 	if _file_tools: _file_tools.set_editor_plugin(plugin)
 	if _scene_tools: _scene_tools.set_editor_plugin(plugin)
+	if _editor_view_tools: _editor_view_tools.set_editor_plugin(plugin)
+	if _layout_tools:
+		_layout_tools.set_editor_plugin(plugin)
+		_layout_tools.set_scene_tools_ref(_scene_tools)
+	if _lighting_tools:
+		_lighting_tools.set_editor_plugin(plugin)
+		_lighting_tools.set_scene_tools_ref(_scene_tools)
+	if _navigation_tools:
+		_navigation_tools.set_editor_plugin(plugin)
+		_navigation_tools.set_scene_tools_ref(_scene_tools)
 	if _script_tools: _script_tools.set_editor_plugin(plugin)
 	if _project_tools: _project_tools.set_editor_plugin(plugin)
 	if _asset_tools: _asset_tools.set_editor_plugin(plugin)

@@ -6,6 +6,7 @@ class_name SceneTools
 ##          rename_node, move_node, attach_script, detach_script, set_collision_shape,
 ##          set_sprite_texture, set_mesh, set_material, instance_scene,
 ##          get_node_spatial_info, measure_node_distance, snap_node_to_grid,
+##          snap_node_to_ground,
 ##          place_node_relative
 
 const VariantCodec = preload("res://addons/godot_mcp/utils/variant_codec.gd")
@@ -210,6 +211,41 @@ func _offset_origin_to_aabb_max(origin: Vector3, aabb: AABB) -> Vector3:
 
 func _offset_origin_to_aabb_center(origin: Vector3, aabb: AABB) -> Vector3:
 	return _get_aabb_center(aabb) - origin
+
+func _compute_node_grounding_info(node: Node3D, ground_height: float, use_bounds: bool) -> Dictionary:
+	var global_transform: Transform3D = _get_node3d_global_transform(node)
+	var global_aabb = _get_node_global_aabb(node) if use_bounds else null
+	var bottom_y := global_transform.origin.y
+
+	if global_aabb is AABB:
+		bottom_y = global_aabb.position.y
+
+	return {
+		&"global_transform": global_transform,
+		&"global_aabb": global_aabb,
+		&"bottom_y": bottom_y,
+		&"offset_to_ground": ground_height - bottom_y,
+	}
+
+func _snap_node3d_to_ground_height(node: Node3D, ground_height: float, use_bounds: bool) -> Dictionary:
+	var before := _compute_node_grounding_info(node, ground_height, use_bounds)
+	var before_transform: Transform3D = before[&"global_transform"]
+	var adjusted_transform := before_transform
+	adjusted_transform.origin.y += before[&"offset_to_ground"]
+	_set_node3d_global_transform(node, adjusted_transform)
+
+	var after := _compute_node_grounding_info(node, ground_height, use_bounds)
+	return {
+		&"old_global_position": _serialize_value(before_transform.origin),
+		&"new_global_position": _serialize_value(after[&"global_transform"].origin),
+		&"old_bottom_y": before[&"bottom_y"],
+		&"new_bottom_y": after[&"bottom_y"],
+		&"ground_height": ground_height,
+		&"used_bounds": use_bounds and before[&"global_aabb"] is AABB,
+		&"vertical_offset_applied": before[&"offset_to_ground"],
+		&"old_global_aabb": _serialize_value(before[&"global_aabb"]) if before[&"global_aabb"] is AABB else null,
+		&"new_global_aabb": _serialize_value(after[&"global_aabb"]) if after[&"global_aabb"] is AABB else null,
+	}
 
 func _grid_size_to_vector3(grid_size: Variant) -> Variant:
 	var parsed = _parse_value(grid_size)
@@ -1298,6 +1334,44 @@ func snap_node_to_grid(args: Dictionary) -> Dictionary:
 	}
 
 # =============================================================================
+# snap_node_to_ground
+# =============================================================================
+func snap_node_to_ground(args: Dictionary) -> Dictionary:
+	var scene_path: String = _ensure_res_path(str(args.get(&"scene_path", "")))
+	var node_path: String = str(args.get(&"node_path", "."))
+	var ground_height: float = float(args.get(&"ground_height", 0.0))
+	var use_bounds: bool = bool(args.get(&"use_bounds", true))
+
+	if scene_path.strip_edges() == "res://":
+		return {&"ok": false, &"error": "Missing 'scene_path'"}
+
+	var result := _load_scene(scene_path)
+	if not result[1].is_empty():
+		return result[1]
+
+	var root: Node = result[0]
+	var target = _find_node(root, node_path)
+	if not target:
+		root.queue_free()
+		return {&"ok": false, &"error": "Node not found: " + node_path}
+	if not (target is Node3D):
+		root.queue_free()
+		return {&"ok": false, &"error": "Node '%s' (%s) is not a Node3D" % [node_path, target.get_class()]}
+
+	var target_3d: Node3D = target
+	var snap_info := _snap_node3d_to_ground_height(target_3d, ground_height, use_bounds)
+
+	var err := _save_scene(root, scene_path)
+	if not err.is_empty():
+		return err
+
+	snap_info[&"ok"] = true
+	snap_info[&"scene_path"] = scene_path
+	snap_info[&"node_path"] = node_path
+	snap_info[&"message"] = "Snapped '%s' to ground height %.3f" % [node_path, ground_height]
+	return snap_info
+
+# =============================================================================
 # place_node_relative
 # =============================================================================
 func place_node_relative(args: Dictionary) -> Dictionary:
@@ -1307,6 +1381,9 @@ func place_node_relative(args: Dictionary) -> Dictionary:
 	var relation: String = str(args.get(&"relation", "on_top_of")).to_lower()
 	var gap: float = float(args.get(&"gap", 0.0))
 	var use_bounds: bool = bool(args.get(&"use_bounds", true))
+	var align_y_to_target: bool = bool(args.get(&"align_y_to_target", false))
+	var snap_to_ground: bool = bool(args.get(&"snap_to_ground", false))
+	var ground_height: float = float(args.get(&"ground_height", 0.0))
 
 	if scene_path.strip_edges() == "res://":
 		return {&"ok": false, &"error": "Missing 'scene_path'"}
@@ -1370,20 +1447,24 @@ func place_node_relative(args: Dictionary) -> Dictionary:
 				new_origin.z = anchor_center.z - moving_center_offset.z
 				new_origin.y = anchor_box.position.y - gap - moving_max_offset.y
 			"left_of":
-				new_origin.y = anchor_center.y - moving_center_offset.y
+				if align_y_to_target:
+					new_origin.y = anchor_center.y - moving_center_offset.y
 				new_origin.z = anchor_center.z - moving_center_offset.z
 				new_origin.x = anchor_box.position.x - gap - moving_max_offset.x
 			"right_of":
-				new_origin.y = anchor_center.y - moving_center_offset.y
+				if align_y_to_target:
+					new_origin.y = anchor_center.y - moving_center_offset.y
 				new_origin.z = anchor_center.z - moving_center_offset.z
 				new_origin.x = anchor_box.position.x + anchor_box.size.x + gap + moving_min_offset.x
 			"in_front_of":
 				new_origin.x = anchor_center.x - moving_center_offset.x
-				new_origin.y = anchor_center.y - moving_center_offset.y
+				if align_y_to_target:
+					new_origin.y = anchor_center.y - moving_center_offset.y
 				new_origin.z = anchor_box.position.z - gap - moving_max_offset.z
 			"behind":
 				new_origin.x = anchor_center.x - moving_center_offset.x
-				new_origin.y = anchor_center.y - moving_center_offset.y
+				if align_y_to_target:
+					new_origin.y = anchor_center.y - moving_center_offset.y
 				new_origin.z = anchor_box.position.z + anchor_box.size.z + gap + moving_min_offset.z
 	else:
 		match relation:
@@ -1406,6 +1487,10 @@ func place_node_relative(args: Dictionary) -> Dictionary:
 	placed_global_transform.origin = new_origin
 	_set_node3d_global_transform(moving_3d, placed_global_transform)
 
+	var grounding_info := {}
+	if snap_to_ground:
+		grounding_info = _snap_node3d_to_ground_height(moving_3d, ground_height, use_bounds)
+
 	var placed_global_position: Vector3 = _get_node3d_global_transform(moving_3d).origin
 	var placed_bounds = _get_node_global_aabb(moving_3d) if use_bounds else null
 
@@ -1421,6 +1506,9 @@ func place_node_relative(args: Dictionary) -> Dictionary:
 		&"relation": relation,
 		&"gap": gap,
 		&"bounds_used": bounds_used,
+		&"align_y_to_target": align_y_to_target,
+		&"snap_to_ground": snap_to_ground,
+		&"ground_height": ground_height,
 		&"old_global_position": _serialize_value(moving_global_transform.origin),
 		&"new_global_position": _serialize_value(placed_global_position),
 		&"target_global_position": _serialize_value(anchor_global_transform.origin),
@@ -1430,6 +1518,8 @@ func place_node_relative(args: Dictionary) -> Dictionary:
 	if placed_bounds is AABB:
 		response[&"new_global_aabb"] = _serialize_value(placed_bounds)
 		response[&"new_global_aabb_center"] = _serialize_value(_get_aabb_center(placed_bounds))
+	if snap_to_ground:
+		response[&"grounding"] = grounding_info
 
 	return response
 

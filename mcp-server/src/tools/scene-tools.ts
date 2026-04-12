@@ -448,8 +448,34 @@ export const sceneTools: ToolDefinition[] = [
     }
   },
   {
+    name: 'snap_node_to_ground',
+    description: 'Move a Node3D vertically so its world-space AABB bottom sits on a ground plane height. Use this after placement to eliminate floating props and actors.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        scene_path: {
+          type: 'string',
+          description: 'Path to the .tscn scene file'
+        },
+        node_path: {
+          type: 'string',
+          description: 'Path to the Node3D that should be grounded'
+        },
+        ground_height: {
+          type: 'number',
+          description: 'Ground plane height in world Y coordinates (default: 0)'
+        },
+        use_bounds: {
+          type: 'boolean',
+          description: 'Use the node subtree AABB bottom when available. If false, snap the node origin to ground_height instead (default: true)'
+        }
+      },
+      required: ['scene_path', 'node_path']
+    }
+  },
+  {
     name: 'place_node_relative',
-    description: 'Place one Node3D relative to another using bounds-aware world-axis relationships. Supports on_top_of, below, left_of, right_of, in_front_of, behind, and centered.',
+    description: 'Place one Node3D relative to another using bounds-aware world-axis relationships. Supports on_top_of, below, left_of, right_of, in_front_of, behind, and centered. Horizontal placement preserves the moved node\'s existing elevation by default, and can optionally snap to a ground plane afterward.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -476,6 +502,18 @@ export const sceneTools: ToolDefinition[] = [
         use_bounds: {
           type: 'boolean',
           description: 'Use subtree bounds when available; otherwise fall back to node origins (default: true)'
+        },
+        align_y_to_target: {
+          type: 'boolean',
+          description: 'For left_of, right_of, in_front_of, and behind, vertically align to the target bounds center. Defaults to false so props keep their existing elevation.'
+        },
+        snap_to_ground: {
+          type: 'boolean',
+          description: 'After placing the node, move it vertically so its AABB bottom sits on ground_height (default: false)'
+        },
+        ground_height: {
+          type: 'number',
+          description: 'Ground plane height used when snap_to_ground is true (default: 0)'
         }
       },
       required: ['scene_path', 'node_path', 'target_node_path']

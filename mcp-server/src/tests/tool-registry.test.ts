@@ -54,7 +54,28 @@ describe('Tool registry', () => {
     expect(toolExists('get_node_spatial_info')).toBe(true);
     expect(toolExists('measure_node_distance')).toBe(true);
     expect(toolExists('snap_node_to_grid')).toBe(true);
+    expect(toolExists('snap_node_to_ground')).toBe(true);
     expect(toolExists('place_node_relative')).toBe(true);
+  });
+
+  it('includes editor viewport tooling in the advertised MCP registry', () => {
+    expect(toolExists('take_editor_viewport_screenshot')).toBe(true);
+  });
+
+  it('includes scene layout analysis tooling in the advertised MCP registry', () => {
+    expect(toolExists('summarize_scene_layout')).toBe(true);
+  });
+
+  it('includes dedicated lighting workflow tools in the advertised MCP registry', () => {
+    expect(toolExists('get_light_info')).toBe(true);
+    expect(toolExists('set_sun_light')).toBe(true);
+    expect(toolExists('validate_scene_lighting')).toBe(true);
+  });
+
+  it('includes navigation mesh workflow tools in the advertised MCP registry', () => {
+    expect(toolExists('set_navigation_mesh')).toBe(true);
+    expect(toolExists('get_navigation_mesh_info')).toBe(true);
+    expect(toolExists('bake_navigation_mesh')).toBe(true);
   });
 
   it('every advertised MCP tool is registered in the Godot executor map', () => {

@@ -58,16 +58,18 @@ Restart your Godot project. Check the **top-right corner** of the editor — you
 
 ## What Can It Do?
 
-### 32 Tools Across 6 Categories
+### Tool Registry
 
 | Category | Tools | Examples |
 |---|---|---|
-| **File Operations** | 4 | Browse directories, read files, search project, create scripts |
-| **Scene Operations** | 11 | Create scenes, add/remove/move nodes, set properties, attach scripts, assign collision shapes and textures |
-| **Script Operations** | 6 | Apply code edits, validate syntax, rename/move files with reference updates |
-| **Project Tools** | 9 | Read project settings, input map, collision layers, console errors, scene tree dumps |
-| **Asset Generation** | 1 | Generate 2D sprites from SVG |
-| **Visualization** | 1 | Interactive browser-based project map |
+| **File Operations** | Registry-defined | Browse directories, read files, search project, create scripts |
+| **Scene Operations** | Registry-defined | Create scenes, add/remove/move nodes, set properties, assign meshes/materials, spatial placement, grounding |
+| **Editor View + Layout** | Registry-defined | Capture editor viewport screenshots, summarize collision-based room layouts, detect openings |
+| **Lighting + Navigation** | Registry-defined | Configure sunlight, inspect light diagnostics, bake navmeshes |
+| **Script + Project** | Registry-defined | Edit scripts, validate syntax, run scenes, inspect errors, manage settings/input |
+| **Visualization + Assets** | Registry-defined | Project graph visualizer, scene graph explorer, generate 2D sprites |
+
+For the exact current tool list and input schemas in the repo, see `docs/tool-catalog.md` at the project root.
 
 ### Interactive Visualizer
 

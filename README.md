@@ -93,16 +93,18 @@ Hit **Restart Project** in the Godot editor. Check the **top-right corner** — 
 
 ## What Can It Do?
 
-### 42 Tools Across 6 Categories
+### Tool Registry
 
 | Category | Tools | Examples |
 |----------|-------|---------|
-| **File Operations** | 4 | Browse directories, read files, search project, create scripts |
-| **Scene Operations** | 11 | Create scenes, add/remove/move nodes, set properties, attach scripts, assign collision shapes and textures |
-| **Script Operations** | 6 | Apply code edits, validate syntax, rename/move files with reference updates |
-| **Project Tools** | 14 | Run/stop scenes, query ClassDB, read errors from Output + Debugger, project settings, input map, collision layers, scene tree dumps, rescan filesystem |
-| **Asset Generation** | 1 | Generate 2D sprites from SVG |
-| **Visualization** | 6 | Interactive browser-based project map, scene graph explorer |
+| **File Operations** | Registry-defined | Browse directories, read files, search project, create scripts |
+| **Scene Operations** | Registry-defined | Create scenes, add/remove/move nodes, set properties, assign meshes/materials, spatial placement, grounding |
+| **Editor View + Layout** | Registry-defined | Capture editor viewport screenshots, summarize collision-based room layouts, detect openings |
+| **Lighting + Navigation** | Registry-defined | Configure sunlight, inspect light diagnostics, bake navmeshes |
+| **Script + Project** | Registry-defined | Edit scripts, validate syntax, run scenes, inspect errors, manage settings/input |
+| **Visualization + Assets** | Registry-defined | Project graph visualizer, scene graph explorer, generate 2D sprites |
+
+For the exact current tool list and input schemas, see [docs/tool-catalog.md](/Users/andrew/Code/mcp/godot-mcp/docs/tool-catalog.md).
 
 ### Interactive Visualizer
 
