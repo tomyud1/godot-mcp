@@ -4,7 +4,7 @@
 
 Build games faster with Claude, Cursor, or any MCP-compatible AI — no copy-pasting, no context switching. The AI reads, writes, and manipulates your scenes, scripts, nodes, and project settings directly inside the running Godot editor.
 
-> Godot 4.x · 32 tools · Interactive project visualizer · MIT license
+> Godot 4.x · Scene, script, and project tools · Interactive project visualizer · MIT license
 
 ---
 
@@ -90,7 +90,7 @@ Run `map_project` and get a browser-based project explorer at `localhost:6510`:
 │  AI Client   │◄────────────────►│  MCP Server  │◄─────────────►│ Godot Editor │
 │  (Claude,    │                  │  (Node.js)   │   port 6505   │  (Plugin)    │
 │   Cursor)    │                  │              │               │              │
-└─────────────┘                  │  Visualizer  │               │  32 tool     │
+└─────────────┘                  │  Visualizer  │               │  MCP tools   │
                                  │  HTTP :6510  │               │  handlers    │
                                  └──────┬───────┘               └──────────────┘
                                         │
@@ -123,6 +123,7 @@ npm run build
 ```
 
 Then point your AI client at `mcp-server/dist/index.js` instead of using `npx`.
+If you add or rename tools, update both the TypeScript registry and the Godot plugin executor wiring, then rerun `npm run build` and restart the MCP client so the new tool list is exposed.
 
 ---
 

@@ -135,7 +135,7 @@ export const sceneTools: ToolDefinition[] = [
   },
   {
     name: 'modify_node_property',
-    description: 'Modify a property on a node in a .tscn scene file. ALWAYS use this tool to modify properties in scene files - NEVER edit .tscn files directly. Use this to change positions, colors, sizes, visibility, etc.',
+    description: 'Modify a property on a node in a .tscn scene file. ALWAYS use this tool to modify properties in scene files - NEVER edit .tscn files directly. Supports 3D typed values such as Quaternion, Basis, Transform3D, and AABB in addition to vectors, colors, and primitives.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -152,8 +152,14 @@ export const sceneTools: ToolDefinition[] = [
           description: 'Name of the property to modify (position, scale, rotation, modulate, visible, etc.)'
         },
         value: {
-          type: 'object',
-          description: 'New value. For Vector2/Vector3/Color, use {type: "Vector2", x: 100, y: 200}. For primitives, use directly.'
+          oneOf: [
+            { type: 'object' },
+            { type: 'array' },
+            { type: 'string' },
+            { type: 'number' },
+            { type: 'boolean' }
+          ],
+          description: 'New value. Examples: {type:"Vector3",x:1,y:2,z:3}, {type:"Quaternion",x:0,y:0,z:0,w:1}, {type:"Basis",euler:{x:0,y:1.57,z:0}}, {type:"Transform3D",basis:{type:"Basis",euler:{x:0,y:0,z:0}},origin:{x:0,y:2,z:0}}, {type:"AABB",position:{x:-1,y:0,z:-1},size:{x:2,y:1,z:2}}. For primitives, use directly.'
         }
       },
       required: ['scene_path', 'property_name', 'value']
@@ -353,6 +359,126 @@ export const sceneTools: ToolDefinition[] = [
         }
       },
       required: ['scene_path', 'material_type']
+    }
+  },
+  {
+    name: 'get_node_spatial_info',
+    description: 'Query computed 3D spatial data for a Node3D in a scene file. Returns local/global transforms, positions, scales, quaternions, and subtree bounds when available. Use this before making precise placement decisions.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        scene_path: {
+          type: 'string',
+          description: 'Path to the .tscn scene file'
+        },
+        node_path: {
+          type: 'string',
+          description: 'Path to the Node3D (. for root, or relative path like Level/Props/Crate)'
+        },
+        include_bounds: {
+          type: 'boolean',
+          description: 'Include computed subtree AABBs when visual descendants exist (default: true)'
+        }
+      },
+      required: ['scene_path']
+    }
+  },
+  {
+    name: 'measure_node_distance',
+    description: 'Measure the world-space distance between two Node3D nodes in a scene file. Returns both the full 3D delta and the horizontal XZ distance.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        scene_path: {
+          type: 'string',
+          description: 'Path to the .tscn scene file'
+        },
+        from_node_path: {
+          type: 'string',
+          description: 'Path to the first Node3D'
+        },
+        to_node_path: {
+          type: 'string',
+          description: 'Path to the second Node3D'
+        }
+      },
+      required: ['scene_path', 'from_node_path', 'to_node_path']
+    }
+  },
+  {
+    name: 'snap_node_to_grid',
+    description: 'Snap a Node3D position to a grid in local or global space. Useful for modular level building and keeping 3D scenes aligned.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        scene_path: {
+          type: 'string',
+          description: 'Path to the .tscn scene file'
+        },
+        node_path: {
+          type: 'string',
+          description: 'Path to the Node3D to snap'
+        },
+        grid_size: {
+          description: 'Positive grid size. Use a number for uniform snapping or {x,y,z} for per-axis snapping.',
+          oneOf: [
+            { type: 'number' },
+            {
+              type: 'object',
+              properties: {
+                x: { type: 'number' },
+                y: { type: 'number' },
+                z: { type: 'number' }
+              },
+              required: ['x', 'y', 'z']
+            }
+          ]
+        },
+        axes: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Axes to snap. Any of: ["x"], ["x","z"], ["x","y","z"] (default: all axes)'
+        },
+        space: {
+          type: 'string',
+          description: 'Coordinate space: "local" or "global" (default: "global")'
+        }
+      },
+      required: ['scene_path', 'grid_size']
+    }
+  },
+  {
+    name: 'place_node_relative',
+    description: 'Place one Node3D relative to another using bounds-aware world-axis relationships. Supports on_top_of, below, left_of, right_of, in_front_of, behind, and centered.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        scene_path: {
+          type: 'string',
+          description: 'Path to the .tscn scene file'
+        },
+        node_path: {
+          type: 'string',
+          description: 'Path to the Node3D that should be moved'
+        },
+        target_node_path: {
+          type: 'string',
+          description: 'Path to the anchor Node3D'
+        },
+        relation: {
+          type: 'string',
+          description: 'Placement relation: "on_top_of", "below", "left_of", "right_of", "in_front_of", "behind", or "centered"'
+        },
+        gap: {
+          type: 'number',
+          description: 'Optional spacing to leave between the moved node and the target (default: 0)'
+        },
+        use_bounds: {
+          type: 'boolean',
+          description: 'Use subtree bounds when available; otherwise fall back to node origins (default: true)'
+        }
+      },
+      required: ['scene_path', 'node_path', 'target_node_path']
     }
   }
 ];

@@ -4,7 +4,11 @@ class_name SceneTools
 ## Scene operation tools for MCP.
 ## Handles: create_scene, read_scene, add_node, remove_node, modify_node_property,
 ##          rename_node, move_node, attach_script, detach_script, set_collision_shape,
-##          set_sprite_texture, set_mesh, set_material, instance_scene
+##          set_sprite_texture, set_mesh, set_material, instance_scene,
+##          get_node_spatial_info, measure_node_distance, snap_node_to_grid,
+##          place_node_relative
+
+const VariantCodec = preload("res://addons/godot_mcp/utils/variant_codec.gd")
 
 const _SKIP_PROPS: Dictionary[String, bool] = {
 	"script": true, "owner": true,
@@ -49,11 +53,27 @@ func _load_scene(scene_path: String) -> Array:
 	if not packed:
 		return [null, {&"ok": false, &"error": "Failed to load scene: " + scene_path}]
 
-	var root = packed.instantiate()
+	var root = _instantiate_packed_scene_for_edit(packed)
 	if not root:
 		return [null, {&"ok": false, &"error": "Failed to instantiate scene"}]
 
 	return [root, {}]
+
+func _instantiate_packed_scene_for_edit(packed: PackedScene, as_instance: bool = false) -> Node:
+	if not packed:
+		return null
+
+	if not Engine.is_editor_hint():
+		return packed.instantiate()
+
+	if as_instance:
+		return packed.instantiate(PackedScene.GEN_EDIT_STATE_INSTANCE)
+
+	var state = packed.get_state()
+	if state and state.get_base_scene_state() != null:
+		return packed.instantiate(PackedScene.GEN_EDIT_STATE_MAIN_INHERITED)
+
+	return packed.instantiate(PackedScene.GEN_EDIT_STATE_MAIN)
 
 func _save_scene(scene_root: Node, scene_path: String) -> Dictionary:
 	"""Pack and save a scene. Returns error dict or empty on success."""
@@ -78,25 +98,7 @@ func _find_node(scene_root: Node, node_path: String) -> Node:
 	return scene_root.get_node_or_null(node_path)
 
 func _parse_value(value: Variant) -> Variant:
-	"""Convert dictionary-encoded types to Godot types."""
-	if value is Dictionary:
-		var t: String = value.get(&"type", "")
-		match t:
-			"Vector2": return Vector2(value.get(&"x", 0), value.get(&"y", 0))
-			"Vector3": return Vector3(value.get(&"x", 0), value.get(&"y", 0), value.get(&"z", 0))
-			"Color": return Color(value.get(&"r", 1), value.get(&"g", 1), value.get(&"b", 1), value.get(&"a", 1))
-			"Vector2i": return Vector2i(value.get(&"x", 0), value.get(&"y", 0))
-			"Vector3i": return Vector3i(value.get(&"x", 0), value.get(&"y", 0), value.get(&"z", 0))
-			"Rect2": return Rect2(value.get(&"x", 0), value.get(&"y", 0), value.get(&"width", 0), value.get(&"height", 0))
-		# Infer type from keys when "type" is absent
-		if t.is_empty():
-			if value.has(&"r") and value.has(&"g") and value.has(&"b"):
-				return Color(value.get(&"r", 1), value.get(&"g", 1), value.get(&"b", 1), value.get(&"a", 1))
-			if value.has(&"x") and value.has(&"y"):
-				if value.has(&"z"):
-					return Vector3(value.get(&"x", 0), value.get(&"y", 0), value.get(&"z", 0))
-				return Vector2(value.get(&"x", 0), value.get(&"y", 0))
-	return value
+	return VariantCodec.parse_value(value)
 
 func _set_node_properties(node: Node, properties: Dictionary) -> void:
 	for prop_name: String in properties:
@@ -104,18 +106,142 @@ func _set_node_properties(node: Node, properties: Dictionary) -> void:
 		node.set(prop_name, prop_value)
 
 func _serialize_value(value: Variant) -> Variant:
-	match typeof(value):
-		TYPE_VECTOR2: return {&"type": &"Vector2", &"x": value.x, &"y": value.y}
-		TYPE_VECTOR3: return {&"type": &"Vector3", &"x": value.x, &"y": value.y, &"z": value.z}
-		TYPE_COLOR: return {&"type": &"Color", &"r": value.r, &"g": value.g, &"b": value.b, &"a": value.a}
-		TYPE_VECTOR2I: return {&"type": &"Vector2i", &"x": value.x, &"y": value.y}
-		TYPE_VECTOR3I: return {&"type": &"Vector3i", &"x": value.x, &"y": value.y, &"z": value.z}
-		TYPE_RECT2: return {&"type": &"Rect2", &"x": value.position.x, &"y": value.position.y, &"width": value.size.x, &"height": value.size.y}
-		TYPE_OBJECT:
-			if value and value is Resource and value.resource_path:
-				return {&"type": &"Resource", &"path": value.resource_path}
+	return VariantCodec.serialize_value(value)
+
+func _parse_typed_value(value, type_hint: int):
+	return VariantCodec.parse_typed_value(value, type_hint)
+
+func _get_node3d_global_transform(node: Node3D) -> Transform3D:
+	var current: Transform3D = node.transform
+	if node.top_level:
+		return current
+	var parent := node.get_parent_node_3d()
+	while parent:
+		current = parent.transform * current
+		parent = parent.get_parent_node_3d()
+	return current
+
+func _set_node3d_global_transform(node: Node3D, global_transform: Transform3D) -> void:
+	if node.top_level:
+		node.transform = global_transform
+		return
+
+	var parent := node.get_parent_node_3d()
+	if parent:
+		node.transform = _get_node3d_global_transform(parent).affine_inverse() * global_transform
+	else:
+		node.transform = global_transform
+
+func _transform_aabb(aabb: AABB, transform: Transform3D) -> AABB:
+	var corners: Array[Vector3] = [
+		aabb.position,
+		aabb.position + Vector3(aabb.size.x, 0, 0),
+		aabb.position + Vector3(0, aabb.size.y, 0),
+		aabb.position + Vector3(0, 0, aabb.size.z),
+		aabb.position + Vector3(aabb.size.x, aabb.size.y, 0),
+		aabb.position + Vector3(aabb.size.x, 0, aabb.size.z),
+		aabb.position + Vector3(0, aabb.size.y, aabb.size.z),
+		aabb.position + aabb.size,
+	]
+
+	var first: Vector3 = transform * corners[0]
+	var min_corner := first
+	var max_corner := first
+
+	for i: int in range(1, corners.size()):
+		var point: Vector3 = transform * corners[i]
+		min_corner = Vector3(
+			minf(min_corner.x, point.x),
+			minf(min_corner.y, point.y),
+			minf(min_corner.z, point.z)
+		)
+		max_corner = Vector3(
+			maxf(max_corner.x, point.x),
+			maxf(max_corner.y, point.y),
+			maxf(max_corner.z, point.z)
+		)
+
+	return AABB(min_corner, max_corner - min_corner)
+
+func _merge_aabb(a: AABB, b: AABB) -> AABB:
+	var min_corner := Vector3(
+		minf(a.position.x, b.position.x),
+		minf(a.position.y, b.position.y),
+		minf(a.position.z, b.position.z)
+	)
+	var a_end: Vector3 = a.position + a.size
+	var b_end: Vector3 = b.position + b.size
+	var max_corner := Vector3(
+		maxf(a_end.x, b_end.x),
+		maxf(a_end.y, b_end.y),
+		maxf(a_end.z, b_end.z)
+	)
+	return AABB(min_corner, max_corner - min_corner)
+
+func _get_node_global_aabb(node: Node) -> Variant:
+	var has_bounds := false
+	var merged_bounds := AABB()
+
+	if node is VisualInstance3D:
+		var visual: VisualInstance3D = node
+		var visual_transform := _get_node3d_global_transform(visual)
+		merged_bounds = _transform_aabb(visual.get_aabb(), visual_transform)
+		has_bounds = true
+
+	for child: Node in node.get_children():
+		var child_bounds = _get_node_global_aabb(child)
+		if child_bounds is AABB:
+			if has_bounds:
+				merged_bounds = _merge_aabb(merged_bounds, child_bounds)
+			else:
+				merged_bounds = child_bounds
+				has_bounds = true
+
+	return merged_bounds if has_bounds else null
+
+func _get_aabb_center(aabb: AABB) -> Vector3:
+	return aabb.position + (aabb.size * 0.5)
+
+func _offset_origin_to_aabb_min(origin: Vector3, aabb: AABB) -> Vector3:
+	return origin - aabb.position
+
+func _offset_origin_to_aabb_max(origin: Vector3, aabb: AABB) -> Vector3:
+	return (aabb.position + aabb.size) - origin
+
+func _offset_origin_to_aabb_center(origin: Vector3, aabb: AABB) -> Vector3:
+	return _get_aabb_center(aabb) - origin
+
+func _grid_size_to_vector3(grid_size: Variant) -> Variant:
+	var parsed = _parse_value(grid_size)
+	if parsed is Vector3:
+		if parsed.x <= 0.0 or parsed.y <= 0.0 or parsed.z <= 0.0:
 			return null
-		_: return value
+		return parsed
+	if typeof(parsed) == TYPE_FLOAT or typeof(parsed) == TYPE_INT:
+		var scalar: float = float(parsed)
+		if scalar <= 0.0:
+			return null
+		return Vector3(scalar, scalar, scalar)
+	return null
+
+func _normalized_axes(axes_value: Variant) -> PackedStringArray:
+	var normalized := PackedStringArray()
+	if axes_value is Array:
+		for axis_value in axes_value:
+			var axis: String = str(axis_value).to_lower()
+			if axis in ["x", "y", "z"] and axis not in normalized:
+				normalized.append(axis)
+	return normalized
+
+func _snap_position_to_grid(position: Vector3, grid: Vector3, axes: PackedStringArray) -> Vector3:
+	var snapped := position
+	if "x" in axes:
+		snapped.x = round(position.x / grid.x) * grid.x
+	if "y" in axes:
+		snapped.y = round(position.y / grid.y) * grid.y
+	if "z" in axes:
+		snapped.z = round(position.z / grid.z) * grid.z
+	return snapped
 
 # =============================================================================
 # create_scene
@@ -323,7 +449,7 @@ func instance_scene(args: Dictionary) -> Dictionary:
 		root.queue_free()
 		return {&"ok": false, &"error": "Parent node not found: " + parent_path}
 
-	var instance = instance_packed.instantiate()
+	var instance = _instantiate_packed_scene_for_edit(instance_packed, true)
 	if not instance:
 		root.queue_free()
 		return {&"ok": false, &"error": "Failed to instantiate scene: " + instance_path}
@@ -983,6 +1109,331 @@ func set_material(args: Dictionary) -> Dictionary:
 	return {&"ok": true, &"message": "Set %s on node '%s' via %s" % [material_type, node_path, apply_mode]}
 
 # =============================================================================
+# get_node_spatial_info
+# =============================================================================
+func get_node_spatial_info(args: Dictionary) -> Dictionary:
+	var scene_path: String = _ensure_res_path(str(args.get(&"scene_path", "")))
+	var node_path: String = str(args.get(&"node_path", "."))
+	var include_bounds: bool = bool(args.get(&"include_bounds", true))
+
+	if scene_path.strip_edges() == "res://":
+		return {&"ok": false, &"error": "Missing 'scene_path'"}
+
+	var result := _load_scene(scene_path)
+	if not result[1].is_empty():
+		return result[1]
+
+	var root: Node = result[0]
+	var target = _find_node(root, node_path)
+	if not target:
+		root.queue_free()
+		return {&"ok": false, &"error": "Node not found: " + node_path}
+	if not (target is Node3D):
+		root.queue_free()
+		return {&"ok": false, &"error": "Node '%s' (%s) is not a Node3D" % [node_path, target.get_class()]}
+
+	var target_3d: Node3D = target
+	var local_transform: Transform3D = target_3d.transform
+	var global_transform: Transform3D = _get_node3d_global_transform(target_3d)
+	var local_basis: Basis = local_transform.basis
+	var global_basis: Basis = global_transform.basis
+
+	var info := {
+		&"ok": true,
+		&"scene_path": scene_path,
+		&"node_path": node_path,
+		&"node_name": target_3d.name,
+		&"node_type": target_3d.get_class(),
+		&"instance_scene_path": target_3d.scene_file_path,
+		&"local_transform": _serialize_value(local_transform),
+		&"global_transform": _serialize_value(global_transform),
+		&"local_position": _serialize_value(local_transform.origin),
+		&"global_position": _serialize_value(global_transform.origin),
+		&"local_scale": _serialize_value(local_basis.get_scale()),
+		&"global_scale": _serialize_value(global_basis.get_scale()),
+		&"local_rotation_quaternion": _serialize_value(local_basis.orthonormalized().get_rotation_quaternion()),
+		&"global_rotation_quaternion": _serialize_value(global_basis.orthonormalized().get_rotation_quaternion()),
+	}
+
+	if include_bounds:
+		var subtree_bounds = _get_node_global_aabb(target_3d)
+		if subtree_bounds is AABB:
+			info[&"global_aabb"] = _serialize_value(subtree_bounds)
+			info[&"global_aabb_center"] = _serialize_value(_get_aabb_center(subtree_bounds))
+			info[&"global_aabb_size"] = _serialize_value(subtree_bounds.size)
+			info[&"has_bounds"] = true
+		else:
+			info[&"has_bounds"] = false
+
+		if target_3d is VisualInstance3D:
+			var visual_target: VisualInstance3D = target_3d
+			var local_aabb: AABB = visual_target.get_aabb()
+			info[&"local_aabb"] = _serialize_value(local_aabb)
+			info[&"local_aabb_center"] = _serialize_value(_get_aabb_center(local_aabb))
+
+	root.queue_free()
+	return info
+
+# =============================================================================
+# measure_node_distance
+# =============================================================================
+func measure_node_distance(args: Dictionary) -> Dictionary:
+	var scene_path: String = _ensure_res_path(str(args.get(&"scene_path", "")))
+	var from_node_path: String = str(args.get(&"from_node_path", ""))
+	var to_node_path: String = str(args.get(&"to_node_path", ""))
+
+	if scene_path.strip_edges() == "res://":
+		return {&"ok": false, &"error": "Missing 'scene_path'"}
+	if from_node_path.strip_edges().is_empty():
+		return {&"ok": false, &"error": "Missing 'from_node_path'"}
+	if to_node_path.strip_edges().is_empty():
+		return {&"ok": false, &"error": "Missing 'to_node_path'"}
+
+	var result := _load_scene(scene_path)
+	if not result[1].is_empty():
+		return result[1]
+
+	var root: Node = result[0]
+	var from_node = _find_node(root, from_node_path)
+	var to_node = _find_node(root, to_node_path)
+
+	if not from_node:
+		root.queue_free()
+		return {&"ok": false, &"error": "Node not found: " + from_node_path}
+	if not to_node:
+		root.queue_free()
+		return {&"ok": false, &"error": "Node not found: " + to_node_path}
+	if not (from_node is Node3D):
+		root.queue_free()
+		return {&"ok": false, &"error": "Node '%s' (%s) is not a Node3D" % [from_node_path, from_node.get_class()]}
+	if not (to_node is Node3D):
+		root.queue_free()
+		return {&"ok": false, &"error": "Node '%s' (%s) is not a Node3D" % [to_node_path, to_node.get_class()]}
+
+	var from_node_3d: Node3D = from_node
+	var to_node_3d: Node3D = to_node
+	var from_position: Vector3 = _get_node3d_global_transform(from_node_3d).origin
+	var to_position: Vector3 = _get_node3d_global_transform(to_node_3d).origin
+	var delta: Vector3 = to_position - from_position
+
+	root.queue_free()
+
+	return {
+		&"ok": true,
+		&"scene_path": scene_path,
+		&"from_node_path": from_node_path,
+		&"to_node_path": to_node_path,
+		&"from_global_position": _serialize_value(from_position),
+		&"to_global_position": _serialize_value(to_position),
+		&"delta": _serialize_value(delta),
+		&"distance": delta.length(),
+		&"horizontal_distance": Vector2(delta.x, delta.z).length(),
+	}
+
+# =============================================================================
+# snap_node_to_grid
+# =============================================================================
+func snap_node_to_grid(args: Dictionary) -> Dictionary:
+	var scene_path: String = _ensure_res_path(str(args.get(&"scene_path", "")))
+	var node_path: String = str(args.get(&"node_path", "."))
+	var space: String = str(args.get(&"space", "global")).to_lower()
+	var axes: PackedStringArray = _normalized_axes(args.get(&"axes", ["x", "y", "z"]))
+	var grid_value = _grid_size_to_vector3(args.get(&"grid_size", 1.0))
+
+	if scene_path.strip_edges() == "res://":
+		return {&"ok": false, &"error": "Missing 'scene_path'"}
+	if grid_value == null:
+		return {&"ok": false, &"error": "Invalid 'grid_size'. Use a positive number or {x,y,z} object."}
+	if axes.is_empty():
+		return {&"ok": false, &"error": "Missing or invalid 'axes'. Use any of: x, y, z."}
+	if space not in ["local", "global"]:
+		return {&"ok": false, &"error": "Invalid 'space'. Use 'local' or 'global'."}
+
+	var result := _load_scene(scene_path)
+	if not result[1].is_empty():
+		return result[1]
+
+	var root: Node = result[0]
+	var target = _find_node(root, node_path)
+	if not target:
+		root.queue_free()
+		return {&"ok": false, &"error": "Node not found: " + node_path}
+	if not (target is Node3D):
+		root.queue_free()
+		return {&"ok": false, &"error": "Node '%s' (%s) is not a Node3D" % [node_path, target.get_class()]}
+
+	var target_3d: Node3D = target
+	var grid: Vector3 = grid_value
+	var old_local_transform: Transform3D = target_3d.transform
+	var old_global_transform: Transform3D = _get_node3d_global_transform(target_3d)
+
+	if space == "local":
+		var new_local_transform := old_local_transform
+		new_local_transform.origin = _snap_position_to_grid(old_local_transform.origin, grid, axes)
+		target_3d.transform = new_local_transform
+	else:
+		var new_global_transform := old_global_transform
+		new_global_transform.origin = _snap_position_to_grid(old_global_transform.origin, grid, axes)
+		_set_node3d_global_transform(target_3d, new_global_transform)
+
+	var new_local_position: Vector3 = target_3d.transform.origin
+	var new_global_position: Vector3 = _get_node3d_global_transform(target_3d).origin
+
+	var err := _save_scene(root, scene_path)
+	if not err.is_empty():
+		return err
+
+	return {
+		&"ok": true,
+		&"scene_path": scene_path,
+		&"node_path": node_path,
+		&"space": space,
+		&"axes": Array(axes),
+		&"grid_size": _serialize_value(grid),
+		&"old_local_position": _serialize_value(old_local_transform.origin),
+		&"new_local_position": _serialize_value(new_local_position),
+		&"old_global_position": _serialize_value(old_global_transform.origin),
+		&"new_global_position": _serialize_value(new_global_position),
+		&"message": "Snapped '%s' to %s grid" % [node_path, space]
+	}
+
+# =============================================================================
+# place_node_relative
+# =============================================================================
+func place_node_relative(args: Dictionary) -> Dictionary:
+	var scene_path: String = _ensure_res_path(str(args.get(&"scene_path", "")))
+	var node_path: String = str(args.get(&"node_path", ""))
+	var target_node_path: String = str(args.get(&"target_node_path", ""))
+	var relation: String = str(args.get(&"relation", "on_top_of")).to_lower()
+	var gap: float = float(args.get(&"gap", 0.0))
+	var use_bounds: bool = bool(args.get(&"use_bounds", true))
+
+	if scene_path.strip_edges() == "res://":
+		return {&"ok": false, &"error": "Missing 'scene_path'"}
+	if node_path.strip_edges().is_empty():
+		return {&"ok": false, &"error": "Missing 'node_path'"}
+	if target_node_path.strip_edges().is_empty():
+		return {&"ok": false, &"error": "Missing 'target_node_path'"}
+	if node_path == target_node_path:
+		return {&"ok": false, &"error": "'node_path' and 'target_node_path' must differ"}
+	if relation not in ["on_top_of", "below", "left_of", "right_of", "in_front_of", "behind", "centered"]:
+		return {&"ok": false, &"error": "Invalid 'relation'. Use: on_top_of, below, left_of, right_of, in_front_of, behind, centered."}
+
+	var result := _load_scene(scene_path)
+	if not result[1].is_empty():
+		return result[1]
+
+	var root: Node = result[0]
+	var moving = _find_node(root, node_path)
+	var anchor = _find_node(root, target_node_path)
+
+	if not moving:
+		root.queue_free()
+		return {&"ok": false, &"error": "Node not found: " + node_path}
+	if not anchor:
+		root.queue_free()
+		return {&"ok": false, &"error": "Node not found: " + target_node_path}
+	if not (moving is Node3D):
+		root.queue_free()
+		return {&"ok": false, &"error": "Node '%s' (%s) is not a Node3D" % [node_path, moving.get_class()]}
+	if not (anchor is Node3D):
+		root.queue_free()
+		return {&"ok": false, &"error": "Node '%s' (%s) is not a Node3D" % [target_node_path, anchor.get_class()]}
+
+	var moving_3d: Node3D = moving
+	var anchor_3d: Node3D = anchor
+	var moving_global_transform: Transform3D = _get_node3d_global_transform(moving_3d)
+	var anchor_global_transform: Transform3D = _get_node3d_global_transform(anchor_3d)
+	var new_origin: Vector3 = moving_global_transform.origin
+
+	var moving_bounds = _get_node_global_aabb(moving_3d) if use_bounds else null
+	var anchor_bounds = _get_node_global_aabb(anchor_3d) if use_bounds else null
+	var bounds_used := moving_bounds is AABB and anchor_bounds is AABB
+
+	if bounds_used:
+		var moving_box: AABB = moving_bounds
+		var anchor_box: AABB = anchor_bounds
+		var anchor_center: Vector3 = _get_aabb_center(anchor_box)
+		var moving_min_offset: Vector3 = _offset_origin_to_aabb_min(moving_global_transform.origin, moving_box)
+		var moving_max_offset: Vector3 = _offset_origin_to_aabb_max(moving_global_transform.origin, moving_box)
+		var moving_center_offset: Vector3 = _offset_origin_to_aabb_center(moving_global_transform.origin, moving_box)
+
+		match relation:
+			"centered":
+				new_origin = anchor_center - moving_center_offset
+			"on_top_of":
+				new_origin.x = anchor_center.x - moving_center_offset.x
+				new_origin.z = anchor_center.z - moving_center_offset.z
+				new_origin.y = anchor_box.position.y + anchor_box.size.y + gap + moving_min_offset.y
+			"below":
+				new_origin.x = anchor_center.x - moving_center_offset.x
+				new_origin.z = anchor_center.z - moving_center_offset.z
+				new_origin.y = anchor_box.position.y - gap - moving_max_offset.y
+			"left_of":
+				new_origin.y = anchor_center.y - moving_center_offset.y
+				new_origin.z = anchor_center.z - moving_center_offset.z
+				new_origin.x = anchor_box.position.x - gap - moving_max_offset.x
+			"right_of":
+				new_origin.y = anchor_center.y - moving_center_offset.y
+				new_origin.z = anchor_center.z - moving_center_offset.z
+				new_origin.x = anchor_box.position.x + anchor_box.size.x + gap + moving_min_offset.x
+			"in_front_of":
+				new_origin.x = anchor_center.x - moving_center_offset.x
+				new_origin.y = anchor_center.y - moving_center_offset.y
+				new_origin.z = anchor_box.position.z - gap - moving_max_offset.z
+			"behind":
+				new_origin.x = anchor_center.x - moving_center_offset.x
+				new_origin.y = anchor_center.y - moving_center_offset.y
+				new_origin.z = anchor_box.position.z + anchor_box.size.z + gap + moving_min_offset.z
+	else:
+		match relation:
+			"centered":
+				new_origin = anchor_global_transform.origin
+			"on_top_of":
+				new_origin = Vector3(anchor_global_transform.origin.x, anchor_global_transform.origin.y + gap, anchor_global_transform.origin.z)
+			"below":
+				new_origin = Vector3(anchor_global_transform.origin.x, anchor_global_transform.origin.y - gap, anchor_global_transform.origin.z)
+			"left_of":
+				new_origin = Vector3(anchor_global_transform.origin.x - gap, anchor_global_transform.origin.y, anchor_global_transform.origin.z)
+			"right_of":
+				new_origin = Vector3(anchor_global_transform.origin.x + gap, anchor_global_transform.origin.y, anchor_global_transform.origin.z)
+			"in_front_of":
+				new_origin = Vector3(anchor_global_transform.origin.x, anchor_global_transform.origin.y, anchor_global_transform.origin.z - gap)
+			"behind":
+				new_origin = Vector3(anchor_global_transform.origin.x, anchor_global_transform.origin.y, anchor_global_transform.origin.z + gap)
+
+	var placed_global_transform := moving_global_transform
+	placed_global_transform.origin = new_origin
+	_set_node3d_global_transform(moving_3d, placed_global_transform)
+
+	var placed_global_position: Vector3 = _get_node3d_global_transform(moving_3d).origin
+	var placed_bounds = _get_node_global_aabb(moving_3d) if use_bounds else null
+
+	var err := _save_scene(root, scene_path)
+	if not err.is_empty():
+		return err
+
+	var response := {
+		&"ok": true,
+		&"scene_path": scene_path,
+		&"node_path": node_path,
+		&"target_node_path": target_node_path,
+		&"relation": relation,
+		&"gap": gap,
+		&"bounds_used": bounds_used,
+		&"old_global_position": _serialize_value(moving_global_transform.origin),
+		&"new_global_position": _serialize_value(placed_global_position),
+		&"target_global_position": _serialize_value(anchor_global_transform.origin),
+		&"message": "Placed '%s' %s '%s'" % [node_path, relation, target_node_path]
+	}
+
+	if placed_bounds is AABB:
+		response[&"new_global_aabb"] = _serialize_value(placed_bounds)
+		response[&"new_global_aabb_center"] = _serialize_value(_get_aabb_center(placed_bounds))
+
+	return response
+
+# =============================================================================
 # get_scene_hierarchy (for visualizer)
 # =============================================================================
 func get_scene_hierarchy(args: Dictionary) -> Dictionary:
@@ -1202,28 +1653,3 @@ func set_scene_node_property(args: Dictionary) -> Dictionary:
 		&"new_value": _serialize_value(parsed_value),
 		&"message": "Set %s.%s" % [node_path, property_name]
 	}
-
-func _parse_typed_value(value, type_hint: int):
-	"""Parse a value based on its type hint."""
-	if type_hint == -1:
-		return _parse_value(value)
-
-	if typeof(value) == TYPE_DICTIONARY:
-		if value.has(&"type"):
-			return _parse_value(value)
-
-		match type_hint:
-			TYPE_VECTOR2:
-				return Vector2(value.get(&"x", 0), value.get(&"y", 0))
-			TYPE_VECTOR2I:
-				return Vector2i(value.get(&"x", 0), value.get(&"y", 0))
-			TYPE_VECTOR3:
-				return Vector3(value.get(&"x", 0), value.get(&"y", 0), value.get(&"z", 0))
-			TYPE_VECTOR3I:
-				return Vector3i(value.get(&"x", 0), value.get(&"y", 0), value.get(&"z", 0))
-			TYPE_COLOR:
-				return Color(value.get(&"r", 1), value.get(&"g", 1), value.get(&"b", 1), value.get(&"a", 1))
-			TYPE_RECT2:
-				return Rect2(value.get(&"x", 0), value.get(&"y", 0), value.get(&"width", 0), value.get(&"height", 0))
-
-	return value

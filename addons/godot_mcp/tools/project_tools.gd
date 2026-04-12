@@ -8,6 +8,8 @@ class_name ProjectTools
 ##          get_console_log, get_errors, clear_console_log,
 ##          open_in_godot, scene_tree_dump
 
+const VariantCodec = preload("res://addons/godot_mcp/utils/variant_codec.gd")
+
 var _editor_plugin: EditorPlugin = null
 
 # Cached reference to the editor Output panel's RichTextLabel.
@@ -468,23 +470,17 @@ func _type_to_string(type_id: int) -> String:
 		TYPE_VECTOR3I: return "Vector3i"
 		TYPE_COLOR: return "Color"
 		TYPE_RECT2: return "Rect2"
+		TYPE_QUATERNION: return "Quaternion"
+		TYPE_AABB: return "AABB"
+		TYPE_BASIS: return "Basis"
+		TYPE_TRANSFORM3D: return "Transform3D"
 		TYPE_OBJECT: return "Resource"
 		TYPE_ARRAY: return "Array"
 		TYPE_DICTIONARY: return "Dictionary"
 		_: return "Variant"
 
 func _serialize_value(value: Variant) -> Variant:
-	match typeof(value):
-		TYPE_VECTOR2: return {&"type": &"Vector2", &"x": value.x, &"y": value.y}
-		TYPE_VECTOR3: return {&"type": &"Vector3", &"x": value.x, &"y": value.y, &"z": value.z}
-		TYPE_COLOR: return {&"type": &"Color", &"r": value.r, &"g": value.g, &"b": value.b, &"a": value.a}
-		TYPE_VECTOR2I: return {&"type": &"Vector2i", &"x": value.x, &"y": value.y}
-		TYPE_VECTOR3I: return {&"type": &"Vector3i", &"x": value.x, &"y": value.y, &"z": value.z}
-		TYPE_OBJECT:
-			if value and value is Resource and value.resource_path:
-				return {&"type": &"Resource", &"path": value.resource_path}
-			return null
-		_: return value
+	return VariantCodec.serialize_value(value)
 
 # =============================================================================
 # setup_autoload

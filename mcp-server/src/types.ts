@@ -14,11 +14,14 @@ export interface ToolDefinition {
 }
 
 export interface PropertySchema {
-  type: 'string' | 'number' | 'boolean' | 'array' | 'object';
-  description: string;
+  type?: 'string' | 'number' | 'boolean' | 'array' | 'object';
+  description?: string;
   default?: unknown;
   enum?: string[];
   items?: PropertySchema;
+  properties?: Record<string, PropertySchema>;
+  required?: string[];
+  oneOf?: PropertySchema[];
 }
 
 // WebSocket message types (for Phase 2)
