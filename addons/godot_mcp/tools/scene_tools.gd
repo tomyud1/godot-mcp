@@ -4,10 +4,10 @@ class_name SceneTools
 ## Scene operation tools for MCP.
 ## Handles: create_scene, read_scene, add_node, remove_node, modify_node_property,
 ##          rename_node, move_node, attach_script, detach_script, set_collision_shape,
-##          set_sprite_texture, set_mesh, set_material
+##          set_sprite_texture, set_mesh, set_material, instance_scene
 
 const _SKIP_PROPS: Dictionary[String, bool] = {
-	"script": true, "owner": true, "scene_file_path": true,
+	"script": true, "owner": true,
 	"unique_name_in_owner": true, "editor_description": true,
 }
 
@@ -88,6 +88,14 @@ func _parse_value(value: Variant) -> Variant:
 			"Vector2i": return Vector2i(value.get(&"x", 0), value.get(&"y", 0))
 			"Vector3i": return Vector3i(value.get(&"x", 0), value.get(&"y", 0), value.get(&"z", 0))
 			"Rect2": return Rect2(value.get(&"x", 0), value.get(&"y", 0), value.get(&"width", 0), value.get(&"height", 0))
+		# Infer type from keys when "type" is absent
+		if t.is_empty():
+			if value.has(&"r") and value.has(&"g") and value.has(&"b"):
+				return Color(value.get(&"r", 1), value.get(&"g", 1), value.get(&"b", 1), value.get(&"a", 1))
+			if value.has(&"x") and value.has(&"y"):
+				if value.has(&"z"):
+					return Vector3(value.get(&"x", 0), value.get(&"y", 0), value.get(&"z", 0))
+				return Vector2(value.get(&"x", 0), value.get(&"y", 0))
 	return value
 
 func _set_node_properties(node: Node, properties: Dictionary) -> void:
@@ -218,6 +226,8 @@ func _build_node_structure(node: Node, include_props: bool, path: String = ".") 
 	const PROPERTIES: PackedStringArray = ["position", "rotation", "scale", "size", "offset", "visible",
 			"modulate", "z_index", "text", "collision_layer", "collision_mask", "mass"]
 	var data := {&"name": str(node.name), &"type": node.get_class(), &"path": path, &"children": []}
+	if not node.scene_file_path.is_empty():
+		data[&"instance"] = node.scene_file_path
 	var script = node.get_script()
 	if script:
 		data[&"script"] = script.resource_path
@@ -270,15 +280,76 @@ func add_node(args: Dictionary) -> Dictionary:
 
 	new_node.name = node_name
 	_set_node_properties(new_node, properties)
-	parent.add_child(new_node)
+	parent.add_child(new_node, true)
 	new_node.owner = root
 
 	var err := _save_scene(root, scene_path)
 	if not err.is_empty():
 		return err
 
-	return {&"ok": true, &"scene_path": scene_path, &"node_name": node_name, &"node_type": node_type,
-		&"message": "Added %s (%s) to scene" % [node_name, node_type]}
+	return {&"ok": true, &"scene_path": scene_path, &"node_name": new_node.name, &"node_type": node_type,
+		&"message": "Added %s (%s) to scene" % [new_node.name, node_type]}
+
+# =============================================================================
+# instance_scene
+# =============================================================================
+func instance_scene(args: Dictionary) -> Dictionary:
+	var scene_path: String = _ensure_res_path(str(args.get(&"scene_path", "")))
+	var instance_path: String = _ensure_res_path(str(args.get(&"instance_path", "")))
+	var node_name: String = str(args.get(&"node_name", ""))
+	var parent_path: String = str(args.get(&"parent_path", "."))
+	var properties: Dictionary = args.get(&"properties", {})
+
+	if scene_path.strip_edges() == "res://":
+		return {&"ok": false, &"error": "Missing 'scene_path'"}
+	if instance_path.strip_edges() == "res://":
+		return {&"ok": false, &"error": "Missing 'instance_path'"}
+
+	# Guard against direct circular instancing (A instancing itself)
+	if scene_path == instance_path:
+		return {&"ok": false, &"error": "Cannot instance a scene inside itself (circular reference): " + instance_path}
+
+	var instance_packed = load(instance_path) as PackedScene
+	if not instance_packed:
+		return {&"ok": false, &"error": "Failed to load scene: " + instance_path}
+
+	var result := _load_scene(scene_path)
+	if not result[1].is_empty():
+		return result[1]
+
+	var root: Node = result[0]
+	var parent = _find_node(root, parent_path)
+	if not parent:
+		root.queue_free()
+		return {&"ok": false, &"error": "Parent node not found: " + parent_path}
+
+	var instance = instance_packed.instantiate()
+	if not instance:
+		root.queue_free()
+		return {&"ok": false, &"error": "Failed to instantiate scene: " + instance_path}
+
+	# Set name if provided, otherwise keep the instanced scene's root name
+	if not node_name.strip_edges().is_empty():
+		instance.name = node_name
+
+	# Apply property overrides (e.g., position, rotation, scale)
+	_set_node_properties(instance, properties)
+
+	# Add to tree with readable names, then set owner to scene root only
+	# Do NOT set owner on instance children — they belong to the instance's internal scene
+	parent.add_child(instance, true)
+	instance.owner = root
+
+	# Capture actual name (may differ from requested if there was a conflict)
+	var actual_name: String = instance.name
+
+	var err := _save_scene(root, scene_path)
+	if not err.is_empty():
+		return err
+
+	return {&"ok": true, &"scene_path": scene_path, &"instance_path": instance_path,
+		&"node_name": actual_name, &"node_type": instance.get_class(),
+		&"message": "Instanced '%s' as '%s' in scene" % [instance_path, actual_name]}
 
 # =============================================================================
 # remove_node
@@ -652,12 +723,7 @@ func set_collision_shape(args: Dictionary) -> Dictionary:
 	if shape_params.has(&"height"):
 		shape.set("height", float(shape_params[&"height"]))
 	if shape_params.has(&"size"):
-		var size_data = shape_params[&"size"]
-		if typeof(size_data) == TYPE_DICTIONARY:
-			if size_data.has(&"z"):
-				shape.set("size", Vector3(size_data.get(&"x", 1), size_data.get(&"y", 1), size_data.get(&"z", 1)))
-			else:
-				shape.set("size", Vector2(size_data.get(&"x", 1), size_data.get(&"y", 1)))
+		shape.set("size", _parse_value(shape_params[&"size"]))
 
 	target.set("shape", shape)
 
@@ -819,12 +885,7 @@ func set_mesh(args: Dictionary) -> Dictionary:
 		if mesh_params.has(&"depth"):
 			mesh.set("depth", float(mesh_params[&"depth"]))
 		if mesh_params.has(&"size"):
-			var size_data = mesh_params[&"size"]
-			if typeof(size_data) == TYPE_DICTIONARY:
-				if size_data.has(&"z"):
-					mesh.set("size", Vector3(size_data.get(&"x", 1), size_data.get(&"y", 1), size_data.get(&"z", 1)))
-				else:
-					mesh.set("size", Vector2(size_data.get(&"x", 1), size_data.get(&"y", 1)))
+			mesh.set("size", _parse_value(mesh_params[&"size"]))
 
 	target.set("mesh", mesh)
 
@@ -876,18 +937,16 @@ func set_material(args: Dictionary) -> Dictionary:
 		material = StandardMaterial3D.new()
 
 		if material_params.has(&"albedo_color"):
-			var c = material_params[&"albedo_color"]
-			if typeof(c) == TYPE_DICTIONARY:
-				material.albedo_color = Color(c.get(&"r", 1), c.get(&"g", 1), c.get(&"b", 1), c.get(&"a", 1))
+			material.albedo_color = _parse_value(material_params[&"albedo_color"])
 		if material_params.has(&"metallic"):
 			material.metallic = float(material_params[&"metallic"])
 		if material_params.has(&"roughness"):
 			material.roughness = float(material_params[&"roughness"])
 		if material_params.has(&"emission"):
-			var e = material_params[&"emission"]
-			if typeof(e) == TYPE_DICTIONARY:
-				material.emission = Color(e.get(&"r", 0), e.get(&"g", 0), e.get(&"b", 0), e.get(&"a", 1))
-			material.emission_enabled = true
+			var parsed_emission = _parse_value(material_params[&"emission"])
+			if parsed_emission is Color:
+				material.emission = parsed_emission
+				material.emission_enabled = true
 		if material_params.has(&"emission_energy"):
 			material.emission_energy_multiplier = float(material_params[&"emission_energy"])
 		if material_params.has(&"transparency"):

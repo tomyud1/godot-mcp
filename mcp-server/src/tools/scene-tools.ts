@@ -86,6 +86,36 @@ export const sceneTools: ToolDefinition[] = [
     }
   },
   {
+    name: 'instance_scene',
+    description: 'Add an instance of another scene (.tscn) as a child node. This is how you compose scenes from reusable parts (like prefabs). The instance maintains a live reference to the source scene. Use this instead of add_node when you want to reuse an existing scene.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        scene_path: {
+          type: 'string',
+          description: 'Path to the scene file being edited (the parent scene)'
+        },
+        instance_path: {
+          type: 'string',
+          description: 'Path to the .tscn scene to instance (the child/prefab scene)'
+        },
+        node_name: {
+          type: 'string',
+          description: 'Optional name for the instance. If omitted, uses the instanced scene\'s root node name.'
+        },
+        parent_path: {
+          type: 'string',
+          description: 'Path to parent node within the scene (. for root, or relative path like Level/Enemies)'
+        },
+        properties: {
+          type: 'object',
+          description: 'Optional property overrides on the instance root (e.g., {position: {type: "Vector3", x: 5, y: 0, z: 10}})'
+        }
+      },
+      required: ['scene_path', 'instance_path']
+    }
+  },
+  {
     name: 'remove_node',
     description: 'Remove a node from an existing scene file.',
     inputSchema: {

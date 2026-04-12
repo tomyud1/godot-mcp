@@ -57,6 +57,7 @@ func _init_tools() -> void:
 		&"create_scene": [_scene_tools, &"create_scene"],
 		&"read_scene": [_scene_tools, &"read_scene"],
 		&"add_node": [_scene_tools, &"add_node"],
+		&"instance_scene": [_scene_tools, &"instance_scene"],
 		&"remove_node": [_scene_tools, &"remove_node"],
 		&"modify_node_property": [_scene_tools, &"modify_node_property"],
 		&"rename_node": [_scene_tools, &"rename_node"],
