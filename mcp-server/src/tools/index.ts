@@ -8,6 +8,7 @@ import { editorViewTools } from './editor-view-tools.js';
 import { layoutTools } from './layout-tools.js';
 import { lightingTools } from './lighting-tools.js';
 import { navigationTools } from './navigation-tools.js';
+import { signalTools } from './signal-tools.js';
 import { scriptTools } from './script-tools.js';
 import { projectTools } from './project-tools.js';
 import { assetTools } from './asset-tools.js';
@@ -21,6 +22,7 @@ export const allTools: ToolDefinition[] = [
   ...layoutTools,
   ...lightingTools,
   ...navigationTools,
+  ...signalTools,
   ...scriptTools,
   ...projectTools,
   ...assetTools,

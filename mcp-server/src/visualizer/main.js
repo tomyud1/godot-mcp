@@ -7,7 +7,7 @@ import {
 } from './state.js';
 import { connectWebSocket } from './websocket.js';
 import { initLayout } from './layout.js';
-import { initCanvas, resize, draw, updateZoomIndicator, fitToView } from './canvas.js';
+import { initCanvas, resize, draw, updateZoomIndicator, fitToView, ensureGraphViewport, savePositions, clearPositions, isLayoutDegenerate } from './canvas.js';
 import { initPanel } from './panel.js';
 import { initModals } from './modals.js';
 import { initEvents, updateStats } from './events.js';
@@ -19,7 +19,7 @@ function init() {
   connectWebSocket();
 
   // Initialize canvas and rendering (also restores saved positions)
-  const { positionsRestored } = initCanvas();
+  const restoreState = initCanvas();
 
   // Initialize panel and modals
   initPanel();
@@ -46,14 +46,23 @@ function init() {
     ctx.fillText('No scripts found in project', W / 2, H / 2);
     zoomIndicator.style.display = 'none';
   } else {
-    if (positionsRestored) {
-      // Positions were restored from localStorage - just update zoom indicator
+    if (restoreState.positionsRestored && isLayoutDegenerate(nodes)) {
+      clearPositions();
+      initLayout();
+      fitToView(nodes);
+      savePositions();
+    } else if (restoreState.positionsRestored) {
+      ensureGraphViewport(nodes, {
+        force: !restoreState.cameraRestored,
+        persist: true
+      });
       updateZoomIndicator();
     } else {
       // No saved positions - run force-directed layout
       initLayout();
       // Fit view to show all nodes
       fitToView(nodes);
+      savePositions();
     }
 
     // Initial draw

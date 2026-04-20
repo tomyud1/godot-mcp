@@ -66,6 +66,12 @@ describe('Tool registry', () => {
     expect(toolExists('summarize_scene_layout')).toBe(true);
   });
 
+  it('includes metadata-driven scene property workflow tools in the advertised MCP registry', () => {
+    expect(toolExists('get_scene_node_properties')).toBe(true);
+    expect(toolExists('set_scene_node_property')).toBe(true);
+    expect(toolExists('set_resource_property')).toBe(true);
+  });
+
   it('includes dedicated lighting workflow tools in the advertised MCP registry', () => {
     expect(toolExists('get_light_info')).toBe(true);
     expect(toolExists('set_sun_light')).toBe(true);
@@ -76,6 +82,11 @@ describe('Tool registry', () => {
     expect(toolExists('set_navigation_mesh')).toBe(true);
     expect(toolExists('get_navigation_mesh_info')).toBe(true);
     expect(toolExists('bake_navigation_mesh')).toBe(true);
+  });
+
+  it('includes persisted scene signal workflow tools in the advertised MCP registry', () => {
+    expect(toolExists('map_scene_signals')).toBe(true);
+    expect(toolExists('update_scene_signal_connections')).toBe(true);
   });
 
   it('every advertised MCP tool is registered in the Godot executor map', () => {

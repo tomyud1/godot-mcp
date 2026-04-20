@@ -8,7 +8,7 @@ import {
   currentView, sceneData, expandedScene, expandedSceneHierarchy,
   selectedSceneNode, hoveredSceneNode, scenePositions,
   setExpandedScene, setSelectedSceneNode, setHoveredSceneNode,
-  setScenePosition, scriptToScenes
+  setScenePosition, scriptToScenes, getNodeDisplayName
 } from './state.js';
 
 let canvas, ctx;
@@ -17,6 +17,101 @@ let dpr = 1; // Device pixel ratio
 
 // Storage key for position persistence
 const STORAGE_KEY = 'godot-visualizer-positions';
+const STORAGE_VERSION = 2;
+const MIN_SAFE_ZOOM = 0.08;
+const MAX_SAFE_ZOOM = 5;
+const MIN_RESTORED_RATIO = 0.35;
+const MIN_VISIBLE_COVERAGE = 0.18;
+
+function isFiniteNumber(value) {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+function isFinitePoint(point) {
+  return point && isFiniteNumber(point.x) && isFiniteNumber(point.y);
+}
+
+function getGraphSignature(nodeList = nodes, edgeList = edges) {
+  let hash = 5381;
+  const parts = [
+    String(nodeList.length),
+    String(edgeList.length),
+    ...nodeList.map(n => n.path || '').sort()
+  ];
+
+  for (const part of parts) {
+    for (let i = 0; i < part.length; i++) {
+      hash = ((hash << 5) + hash) ^ part.charCodeAt(i);
+    }
+  }
+
+  return `g${hash >>> 0}`;
+}
+
+function getGraphBounds(nodeList) {
+  if (!nodeList || nodeList.length === 0) return null;
+
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  let validCount = 0;
+
+  nodeList.forEach(n => {
+    if (!isFiniteNumber(n.x) || !isFiniteNumber(n.y)) return;
+    validCount++;
+    minX = Math.min(minX, n.x);
+    maxX = Math.max(maxX, n.x);
+    minY = Math.min(minY, n.y);
+    maxY = Math.max(maxY, n.y);
+  });
+
+  if (validCount === 0) return null;
+
+  const spanX = (maxX - minX) + NODE_W * 2;
+  const spanY = (maxY - minY) + NODE_H * 2;
+
+  return {
+    minX,
+    maxX,
+    minY,
+    maxY,
+    spanX,
+    spanY,
+    centerX: (minX + maxX) / 2,
+    centerY: (minY + maxY) / 2
+  };
+}
+
+function isCameraStateValid(cameraState = camera) {
+  return isFiniteNumber(cameraState.x) &&
+    isFiniteNumber(cameraState.y) &&
+    isFiniteNumber(cameraState.zoom) &&
+    cameraState.zoom >= MIN_SAFE_ZOOM &&
+    cameraState.zoom <= MAX_SAFE_ZOOM;
+}
+
+function getUniquePositionCount(nodeList) {
+  const seen = new Set();
+  nodeList.forEach(n => {
+    if (!isFiniteNumber(n.x) || !isFiniteNumber(n.y)) return;
+    seen.add(`${Math.round(n.x)}:${Math.round(n.y)}`);
+  });
+  return seen.size;
+}
+
+export function isLayoutDegenerate(nodeList = nodes) {
+  if (!nodeList || nodeList.length <= 1) return false;
+
+  const bounds = getGraphBounds(nodeList);
+  if (!bounds) return true;
+
+  const uniquePositions = getUniquePositionCount(nodeList);
+  const minimumUniquePositions = Math.min(20, Math.max(3, Math.floor(nodeList.length * 0.2)));
+  const collapsedUniquePositions = uniquePositions < minimumUniquePositions;
+  const collapsedBounds =
+    nodeList.length >= 12 &&
+    (bounds.spanX < NODE_W * 4 || bounds.spanY < NODE_H * 6);
+
+  return collapsedUniquePositions || collapsedBounds;
+}
 
 export function initCanvas() {
   canvas = document.getElementById('canvas');
@@ -28,8 +123,8 @@ export function initCanvas() {
   dpr = window.devicePixelRatio || 1;
 
   resize();
-  const positionsRestored = loadPositions(); // Restore saved positions
-  return { canvas, ctx, positionsRestored };
+  const restoreState = loadPositions(); // Restore saved positions
+  return { canvas, ctx, ...restoreState };
 }
 
 export function getDpr() {
@@ -72,6 +167,7 @@ export function screenToWorld(sx, sy) {
 }
 
 export function updateZoomIndicator() {
+  if (!zoomText || !zoomIndicator) return;
   const pct = Math.round(camera.zoom * 100);
   zoomText.value = pct + '%';
   zoomIndicator.classList.toggle('faded', Math.abs(camera.zoom - defaultZoom) < 0.01);
@@ -80,6 +176,7 @@ export function updateZoomIndicator() {
 export function resetZoom() {
   camera.zoom = defaultZoom;
   updateZoomIndicator();
+  savePositions();
   draw();
 }
 
@@ -97,6 +194,7 @@ export function setCustomZoom(value) {
   const newZoom = Math.max(0.1, Math.min(5, parsed / 100));
   camera.zoom = newZoom;
   updateZoomIndicator();
+  savePositions();
   draw();
 }
 
@@ -109,11 +207,15 @@ export function savePositions() {
   try {
     const positions = {};
     nodes.forEach(n => {
-      positions[n.path] = { x: n.x, y: n.y };
+      if (isFiniteNumber(n.x) && isFiniteNumber(n.y)) {
+        positions[n.path] = { x: n.x, y: n.y };
+      }
     });
     localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      version: STORAGE_VERSION,
+      graphSignature: getGraphSignature(nodes, edges),
       positions,
-      camera: { x: camera.x, y: camera.y, zoom: camera.zoom }
+      camera: isCameraStateValid() ? { x: camera.x, y: camera.y, zoom: camera.zoom } : null
     }));
   } catch (e) {
     console.warn('Failed to save positions:', e);
@@ -121,34 +223,59 @@ export function savePositions() {
 }
 
 export function loadPositions() {
+  const state = {
+    positionsRestored: false,
+    cameraRestored: false,
+    restoredCount: 0,
+    reason: ''
+  };
+
   try {
     const saved = localStorage.getItem(STORAGE_KEY);
-    if (!saved) return false;
+    if (!saved) return state;
 
     const data = JSON.parse(saved);
-    let restored = 0;
+    if (data.version !== STORAGE_VERSION) {
+      clearPositions();
+      state.reason = 'version-mismatch';
+      return state;
+    }
+
+    const graphSignature = getGraphSignature(nodes, edges);
+    if (data.graphSignature !== graphSignature) {
+      clearPositions();
+      state.reason = 'graph-mismatch';
+      return state;
+    }
 
     if (data.positions) {
       nodes.forEach(n => {
-        if (data.positions[n.path]) {
-          n.x = data.positions[n.path].x;
-          n.y = data.positions[n.path].y;
-          restored++;
+        const savedPos = data.positions[n.path];
+        if (isFinitePoint(savedPos)) {
+          n.x = savedPos.x;
+          n.y = savedPos.y;
+          state.restoredCount++;
         }
       });
     }
 
-    if (data.camera && restored > 0) {
+    state.positionsRestored = state.restoredCount > 0;
+
+    const enoughPositions =
+      state.restoredCount === nodes.length ||
+      state.restoredCount >= Math.max(10, Math.floor(nodes.length * MIN_RESTORED_RATIO));
+
+    if (data.camera && enoughPositions && isCameraStateValid(data.camera)) {
       camera.x = data.camera.x;
       camera.y = data.camera.y;
       camera.zoom = data.camera.zoom;
-      // Don't change defaultZoom - keep it at 1 (100%) so reset always goes to 100%
+      state.cameraRestored = true;
     }
 
-    return restored > 0;
+    return state;
   } catch (e) {
     console.warn('Failed to load positions:', e);
-    return false;
+    return state;
   }
 }
 
@@ -164,6 +291,41 @@ export function clearPositions() {
 export function onNodeMoved() {
   savePositions();
 }
+
+export function ensureGraphViewport(nodeList, { force = false, persist = false } = {}) {
+  const bounds = getGraphBounds(nodeList);
+  if (!bounds) return false;
+
+  const invalidCamera = !isCameraStateValid();
+  const viewportWidth = W / Math.max(camera.zoom, MIN_SAFE_ZOOM);
+  const viewportHeight = H / Math.max(camera.zoom, MIN_SAFE_ZOOM);
+  const coverageX = (bounds.spanX * Math.max(camera.zoom, MIN_SAFE_ZOOM)) / Math.max(W, 1);
+  const coverageY = (bounds.spanY * Math.max(camera.zoom, MIN_SAFE_ZOOM)) / Math.max(H, 1);
+  const coverage = Math.max(coverageX, coverageY);
+  const centerOffsetX = Math.abs(bounds.centerX - camera.x);
+  const centerOffsetY = Math.abs(bounds.centerY - camera.y);
+  const offscreen =
+    centerOffsetX > (viewportWidth * 0.6 + bounds.spanX * 0.5) ||
+    centerOffsetY > (viewportHeight * 0.6 + bounds.spanY * 0.5);
+  const tiny = coverage < MIN_VISIBLE_COVERAGE;
+
+  if (force || invalidCamera || offscreen || tiny) {
+    fitToView(nodeList);
+    if (persist) savePositions();
+    return true;
+  }
+
+  updateZoomIndicator();
+  return false;
+}
+
+export function fitGraphToView({ persist = true } = {}) {
+  fitToView(nodes);
+  if (persist) savePositions();
+  draw();
+}
+
+window.fitToGraph = fitGraphToView;
 
 // ---- Drawing ----
 export function draw() {
@@ -326,7 +488,7 @@ export function draw() {
     ctx.fillStyle = '#e8e4df';
     ctx.textBaseline = 'middle';
     ctx.textAlign = 'left';
-    const displayName = n.class_name || n.filename.replace('.gd', '');
+    const displayName = getNodeDisplayName(n);
     ctx.fillText(displayName, x + 16, y + NODE_H / 2 - 6);
 
     // Subtitle with colored stats - scales with node
@@ -847,39 +1009,27 @@ export function hitTest(wx, wy) {
 }
 
 export function centerOnNodes(nodeList) {
-  if (!nodeList || nodeList.length === 0) return;
-
-  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-  nodeList.forEach(n => {
-    minX = Math.min(minX, n.x);
-    maxX = Math.max(maxX, n.x);
-    minY = Math.min(minY, n.y);
-    maxY = Math.max(maxY, n.y);
-  });
-
-  camera.x = (minX + maxX) / 2;
-  camera.y = (minY + maxY) / 2;
+  const bounds = getGraphBounds(nodeList);
+  if (!bounds) return;
+  camera.x = bounds.centerX;
+  camera.y = bounds.centerY;
   updateZoomIndicator();
 }
 
 export function fitToView(nodeList) {
-  if (!nodeList || nodeList.length === 0) return;
+  const bounds = getGraphBounds(nodeList);
+  if (!bounds) return;
 
-  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-  nodeList.forEach(n => {
-    minX = Math.min(minX, n.x);
-    maxX = Math.max(maxX, n.x);
-    minY = Math.min(minY, n.y);
-    maxY = Math.max(maxY, n.y);
-  });
+  camera.x = bounds.centerX;
+  camera.y = bounds.centerY;
 
-  camera.x = (minX + maxX) / 2;
-  camera.y = (minY + maxY) / 2;
-
-  const spanX = (maxX - minX) + NODE_W * 2;
-  const spanY = (maxY - minY) + NODE_H * 2;
+  const spanX = Math.max(bounds.spanX, NODE_W * 2);
+  const spanY = Math.max(bounds.spanY, NODE_H * 2);
   // Calculate zoom to fit all nodes, but cap at 100% (1.0) to avoid zooming in too much
   camera.zoom = Math.min(1.0, W / spanX, H / spanY) * 0.9;
+  if (!isFiniteNumber(camera.zoom) || camera.zoom <= 0) {
+    camera.zoom = defaultZoom;
+  }
   // Don't change defaultZoom - keep it at 1 (100%) so reset always goes to 100%
   updateZoomIndicator();
 }

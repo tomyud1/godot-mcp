@@ -60,10 +60,10 @@ func parse_value(value: Variant) -> Variant:
 		return value
 	return _scene_tools_ref.call("_parse_value", value)
 
-func parse_typed_value(value: Variant, type_hint: int) -> Variant:
+func parse_typed_value(value: Variant, type_hint: int, property_metadata: Dictionary = {}) -> Variant:
 	if not _scene_tools_ref:
 		return value
-	return _scene_tools_ref.call("_parse_typed_value", value, type_hint)
+	return _scene_tools_ref.call("_parse_typed_value", value, type_hint, property_metadata)
 
 func serialize_value(value: Variant) -> Variant:
 	if not _scene_tools_ref:

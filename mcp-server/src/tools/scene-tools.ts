@@ -135,7 +135,7 @@ export const sceneTools: ToolDefinition[] = [
   },
   {
     name: 'modify_node_property',
-    description: 'Modify a property on a node in a .tscn scene file. ALWAYS use this tool to modify properties in scene files - NEVER edit .tscn files directly. Supports 3D typed values such as Quaternion, Basis, Transform3D, and AABB in addition to vectors, colors, and primitives.',
+    description: 'Legacy-compatible scene property setter alias. Prefer set_scene_node_property as the canonical property mutator for new workflows. Supports resources, packed arrays, typed arrays, and 3D typed values such as Quaternion, Basis, Transform3D, and AABB.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -163,6 +163,90 @@ export const sceneTools: ToolDefinition[] = [
         }
       },
       required: ['scene_path', 'property_name', 'value']
+    }
+  },
+  {
+    name: 'get_scene_node_properties',
+    description: 'Inspect editor-facing properties for a specific node in a scene file. Returns current values plus property metadata such as type, class_name, hint, hint_string, and typed-array/resource expectations.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        scene_path: {
+          type: 'string',
+          description: 'Path to the scene file'
+        },
+        node_path: {
+          type: 'string',
+          description: 'Path to the node (. for root, or relative path like Props/Lever)'
+        }
+      },
+      required: ['scene_path']
+    }
+  },
+  {
+    name: 'set_scene_node_property',
+    description: 'Canonical scene property setter. Uses property metadata from the running Godot editor, so it is the preferred default for exported Resource references, PackedStringArray or typed Array properties, and other values where plain inference is not enough.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        scene_path: {
+          type: 'string',
+          description: 'Path to the scene file'
+        },
+        node_path: {
+          type: 'string',
+          description: 'Path to the node (. for root, or relative path like Enemies/Goblin1)'
+        },
+        property_name: {
+          type: 'string',
+          description: 'Name of the property to update'
+        },
+        value: {
+          oneOf: [
+            { type: 'object' },
+            { type: 'array' },
+            { type: 'string' },
+            { type: 'number' },
+            { type: 'boolean' }
+          ],
+          description: 'New value. Resources can be passed as {type:"Resource", path:"res://data/foo.tres"} or as a plain res:// string path. PackedStringArray and typed Array values can be passed as normal JSON arrays.'
+        },
+        value_type: {
+          type: 'number',
+          description: 'Optional explicit Godot Variant.Type override. Usually omit this and let the property metadata drive coercion.'
+        }
+      },
+      required: ['scene_path', 'property_name', 'value']
+    }
+  },
+  {
+    name: 'set_resource_property',
+    description: 'Focused convenience wrapper around set_scene_node_property for assigning an external .tres/.res resource to a Resource-typed scene property. Prefer set_scene_node_property when one canonical mutator is enough; use this when the workflow is specifically “assign this resource path here.”',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        scene_path: {
+          type: 'string',
+          description: 'Path to the scene file'
+        },
+        node_path: {
+          type: 'string',
+          description: 'Path to the node (. for root, or relative path like Actors/Goblin1)'
+        },
+        property_name: {
+          type: 'string',
+          description: 'Name of the Resource-typed property to assign'
+        },
+        resource_path: {
+          type: 'string',
+          description: 'Path to the resource file to assign (for example res://actors/goblin_grunt.tres)'
+        },
+        clear: {
+          type: 'boolean',
+          description: 'Clear the property instead of assigning a resource (default: false)'
+        }
+      },
+      required: ['scene_path', 'property_name']
     }
   },
   {

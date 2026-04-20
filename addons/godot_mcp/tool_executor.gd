@@ -11,6 +11,7 @@ var _editor_view_tools: Node
 var _layout_tools: Node
 var _lighting_tools: Node
 var _navigation_tools: Node
+var _signal_tools: Node
 var _script_tools: Node
 var _project_tools: Node
 var _asset_tools: Node
@@ -50,6 +51,10 @@ func _init_tools() -> void:
 	_navigation_tools = preload("res://addons/godot_mcp/tools/navigation_tools.gd").new()
 	_navigation_tools.name = "NavigationTools"
 	add_child(_navigation_tools)
+
+	_signal_tools = preload("res://addons/godot_mcp/tools/signal_tools.gd").new()
+	_signal_tools.name = "SignalTools"
+	add_child(_signal_tools)
 
 	_script_tools = preload("res://addons/godot_mcp/tools/script_tools.gd").new()
 	_script_tools.name = "ScriptTools"
@@ -95,6 +100,7 @@ func _init_tools() -> void:
 		&"get_scene_hierarchy": [_scene_tools, &"get_scene_hierarchy"],
 		&"get_scene_node_properties": [_scene_tools, &"get_scene_node_properties"],
 		&"set_scene_node_property": [_scene_tools, &"set_scene_node_property"],
+		&"set_resource_property": [_scene_tools, &"set_resource_property"],
 		&"snap_node_to_ground": [_scene_tools, &"snap_node_to_ground"],
 
 		&"take_editor_viewport_screenshot": [_editor_view_tools, &"take_editor_viewport_screenshot"],
@@ -107,6 +113,9 @@ func _init_tools() -> void:
 		&"set_navigation_mesh": [_navigation_tools, &"set_navigation_mesh"],
 		&"get_navigation_mesh_info": [_navigation_tools, &"get_navigation_mesh_info"],
 		&"bake_navigation_mesh": [_navigation_tools, &"bake_navigation_mesh"],
+
+		&"map_scene_signals": [_signal_tools, &"map_scene_signals"],
+		&"update_scene_signal_connections": [_signal_tools, &"update_scene_signal_connections"],
 
 		&"edit_script": [_script_tools, &"edit_script"],
 		&"validate_script": [_script_tools, &"validate_script"],
@@ -159,6 +168,9 @@ func set_editor_plugin(plugin: EditorPlugin) -> void:
 	if _navigation_tools:
 		_navigation_tools.set_editor_plugin(plugin)
 		_navigation_tools.set_scene_tools_ref(_scene_tools)
+	if _signal_tools:
+		_signal_tools.set_editor_plugin(plugin)
+		_signal_tools.set_scene_tools_ref(_scene_tools)
 	if _script_tools: _script_tools.set_editor_plugin(plugin)
 	if _project_tools: _project_tools.set_editor_plugin(plugin)
 	if _asset_tools: _asset_tools.set_editor_plugin(plugin)

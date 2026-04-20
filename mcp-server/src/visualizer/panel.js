@@ -3,7 +3,7 @@
  */
 
 import {
-  nodes, edges, selectedNode, setSelectedNode, esc,
+  nodes, edges, selectedNode, setSelectedNode, esc, getNodeDisplayName,
   selectedSceneNode, setSelectedSceneNode,
   sceneNodeProperties, setSceneNodeProperties,
   expandedScene, scriptToScenes
@@ -23,7 +23,7 @@ export function initPanel() {
 export function openPanel(node) {
   setSelectedNode(node);
 
-  document.getElementById('panel-title').textContent = node.class_name || node.filename.replace('.gd', '');
+  document.getElementById('panel-title').textContent = getNodeDisplayName(node);
   document.getElementById('panel-path').textContent = node.path;
 
   let html = '';

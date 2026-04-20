@@ -101,16 +101,315 @@ func _find_node(scene_root: Node, node_path: String) -> Node:
 func _parse_value(value: Variant) -> Variant:
 	return VariantCodec.parse_value(value)
 
-func _set_node_properties(node: Node, properties: Dictionary) -> void:
-	for prop_name: String in properties:
-		var prop_value = _parse_value(properties[prop_name])
-		node.set(prop_name, prop_value)
-
 func _serialize_value(value: Variant) -> Variant:
 	return VariantCodec.serialize_value(value)
 
-func _parse_typed_value(value, type_hint: int):
-	return VariantCodec.parse_typed_value(value, type_hint)
+func _parse_typed_value(value, type_hint: int, property_metadata: Dictionary = {}):
+	return VariantCodec.parse_typed_value(value, type_hint, property_metadata)
+
+func _get_property_definition(target: Object, property_name: String) -> Dictionary:
+	for prop: Dictionary in target.get_property_list():
+		if prop[&"name"] == property_name:
+			return prop
+	return {}
+
+func _get_expected_resource_type(prop: Dictionary) -> String:
+	var class_name_str := str(prop.get(&"class_name", "")).strip_edges()
+	if not class_name_str.is_empty() and class_name_str != "Object":
+		return class_name_str
+
+	if int(prop.get(&"hint", 0)) == PROPERTY_HINT_RESOURCE_TYPE:
+		var hint_string := str(prop.get(&"hint_string", "")).strip_edges()
+		if not hint_string.is_empty():
+			return hint_string.get_slice(",", 0).get_slice(":", 0).strip_edges()
+
+	return ""
+
+func _get_typed_array_metadata(current_value: Variant) -> Dictionary:
+	var metadata := {}
+	if not (current_value is Array):
+		return metadata
+
+	var array_value: Array = current_value
+	if not array_value.is_typed():
+		return metadata
+
+	metadata[&"array_typed"] = true
+	metadata[&"array_builtin_type"] = array_value.get_typed_builtin()
+	metadata[&"array_builtin_type_name"] = VariantCodec.type_id_to_name(metadata[&"array_builtin_type"])
+	metadata[&"array_class_name"] = str(array_value.get_typed_class_name())
+
+	var typed_script = array_value.get_typed_script()
+	if typed_script is Script and not typed_script.resource_path.is_empty():
+		metadata[&"array_script_path"] = typed_script.resource_path
+
+	return metadata
+
+func _build_property_metadata(prop: Dictionary, current_value: Variant) -> Dictionary:
+	var metadata := {
+		&"type": int(prop.get(&"type", TYPE_NIL)),
+		&"type_name": VariantCodec.type_id_to_name(int(prop.get(&"type", TYPE_NIL))),
+		&"hint": int(prop.get(&"hint", 0)),
+		&"hint_string": str(prop.get(&"hint_string", "")),
+		&"class_name": str(prop.get(&"class_name", "")),
+	}
+
+	var expected_resource_type := _get_expected_resource_type(prop)
+	if not expected_resource_type.is_empty():
+		metadata[&"resource_type"] = expected_resource_type
+
+	var typed_array_metadata := _get_typed_array_metadata(current_value)
+	for key in typed_array_metadata:
+		metadata[key] = typed_array_metadata[key]
+
+	return metadata
+
+func _build_property_info(target: Node, prop: Dictionary, current_value: Variant) -> Dictionary:
+	var prop_info := {
+		&"name": str(prop[&"name"]),
+		&"value": _serialize_value(current_value),
+		&"usage": prop.get(&"usage", 0),
+		&"category": _get_property_category(target, str(prop[&"name"])),
+	}
+
+	var metadata := _build_property_metadata(prop, current_value)
+	for key in metadata:
+		prop_info[key] = metadata[key]
+
+	return prop_info
+
+func _project_has_global_class(class_name_str: String) -> bool:
+	for info: Dictionary in ProjectSettings.get_global_class_list():
+		if str(info.get(&"class", "")) == class_name_str:
+			return true
+	return false
+
+func _can_validate_resource_type(expected_type: String) -> bool:
+	if expected_type.is_empty() or expected_type == "Object" or expected_type == "Resource":
+		return false
+	return ClassDB.class_exists(expected_type) or _project_has_global_class(expected_type)
+
+func _resource_matches_expected_type(resource: Resource, expected_type: String) -> bool:
+	if expected_type.is_empty() or expected_type == "Object" or expected_type == "Resource":
+		return true
+
+	if resource.is_class(expected_type):
+		return true
+
+	var script = resource.get_script()
+	if script and script.has_method(&"get_global_name"):
+		return str(script.call(&"get_global_name")) == expected_type
+
+	return false
+
+func _normalize_resource_path(path: String) -> String:
+	var normalized := path.strip_edges()
+	if normalized.is_empty():
+		return ""
+	if not normalized.begins_with("res://") and not normalized.begins_with("user://"):
+		normalized = "res://" + normalized
+	return normalized
+
+func _resolve_resource_property_value(raw_value: Variant, property_metadata: Dictionary) -> Dictionary:
+	var expected_type := str(property_metadata.get(&"resource_type", "")).strip_edges()
+	var loaded_resource: Resource = null
+	var resource_path := ""
+	var warnings: Array = []
+
+	if raw_value == null:
+		return {&"ok": true, &"value": null, &"warnings": warnings}
+
+	if raw_value is Resource:
+		loaded_resource = raw_value
+	elif raw_value is String:
+		resource_path = _normalize_resource_path(str(raw_value))
+	elif raw_value is Dictionary:
+		var dict: Dictionary = raw_value
+		var explicit_type := str(dict.get(&"type", ""))
+		if explicit_type == "Resource" or dict.has(&"path") or dict.has(&"resource_path"):
+			resource_path = _normalize_resource_path(str(dict.get(&"path", dict.get(&"resource_path", ""))))
+		else:
+			var parsed_candidate = _parse_typed_value(raw_value, TYPE_OBJECT, property_metadata)
+			if parsed_candidate is Resource:
+				loaded_resource = parsed_candidate
+			elif parsed_candidate == null:
+				return {&"ok": false, &"error": "Resource assignment is missing a valid 'path'"}
+			else:
+				return {&"ok": false, &"error": "Resource property expects a Resource path or Resource reference"}
+	else:
+		return {&"ok": false, &"error": "Resource property expects a res:// path or {type:\"Resource\", path:\"...\"}"}
+
+	if loaded_resource == null and not resource_path.is_empty():
+		if not ResourceLoader.exists(resource_path):
+			return {&"ok": false, &"error": "Resource does not exist: " + resource_path}
+		var loaded = load(resource_path)
+		if not (loaded is Resource):
+			return {&"ok": false, &"error": "Path did not load as a Resource: " + resource_path}
+		loaded_resource = loaded
+
+	if loaded_resource != null and not _resource_matches_expected_type(loaded_resource, expected_type):
+		if _can_validate_resource_type(expected_type):
+			return {
+				&"ok": false,
+				&"error": "Resource '%s' is not assignable to expected type '%s'" % [loaded_resource.resource_path, expected_type]
+			}
+		warnings.append("Could not verify that resource matches expected type '%s'" % expected_type)
+
+	return {
+		&"ok": true,
+		&"value": loaded_resource,
+		&"resource_path": resource_path if not resource_path.is_empty() else loaded_resource.resource_path,
+		&"warnings": warnings,
+	}
+
+func _parse_typed_array_property_value(raw_value: Variant, current_value: Variant) -> Dictionary:
+	if not (raw_value is Array):
+		var parsed_array = _parse_typed_value(raw_value, TYPE_ARRAY)
+		if parsed_array is Array:
+			raw_value = parsed_array
+		else:
+			return {&"ok": false, &"error": "Array property expects an array value"}
+
+	var source_values: Array = raw_value
+	if not (current_value is Array) or not (current_value as Array).is_typed():
+		var parsed_untyped: Array = []
+		for item in source_values:
+			parsed_untyped.append(_parse_value(item))
+		return {&"ok": true, &"value": parsed_untyped, &"warnings": []}
+
+	var template: Array = current_value
+	var typed_builtin: int = template.get_typed_builtin()
+	var typed_class_name: StringName = template.get_typed_class_name()
+	var typed_script = template.get_typed_script()
+	var parsed_values: Array = []
+
+	for item in source_values:
+		if typed_builtin == TYPE_OBJECT:
+			var item_metadata := {
+				&"resource_type": str(typed_class_name),
+				&"class_name": str(typed_class_name),
+			}
+			var resolved = _resolve_resource_property_value(item, item_metadata)
+			if not resolved.get(&"ok", false):
+				return resolved
+			parsed_values.append(resolved[&"value"])
+		else:
+			parsed_values.append(_parse_typed_value(item, typed_builtin))
+
+	return {
+		&"ok": true,
+		&"value": Array(parsed_values, typed_builtin, typed_class_name, typed_script),
+		&"warnings": []
+	}
+
+func _coerce_property_value(prop: Dictionary, current_value: Variant, raw_value: Variant, explicit_value_type: int = -1) -> Dictionary:
+	var property_metadata := _build_property_metadata(prop, current_value)
+	var target_type := explicit_value_type if explicit_value_type != -1 else int(property_metadata.get(&"type", TYPE_NIL))
+
+	match target_type:
+		TYPE_OBJECT:
+			return _resolve_resource_property_value(raw_value, property_metadata)
+		TYPE_ARRAY:
+			return _parse_typed_array_property_value(raw_value, current_value)
+		_:
+			return {
+				&"ok": true,
+				&"value": _parse_typed_value(raw_value, target_type, property_metadata),
+				&"warnings": []
+			}
+
+func _apply_property_to_node(target: Node, property_name: String, raw_value: Variant, explicit_value_type: int = -1) -> Dictionary:
+	var prop := _get_property_definition(target, property_name)
+	if prop.is_empty():
+		return {
+			&"ok": false,
+			&"error": "Property '%s' not found on %s (%s). Use get_scene_node_properties to discover available properties." % [property_name, target.name, target.get_class()],
+		}
+
+	var old_value = target.get(property_name)
+	var coercion := _coerce_property_value(prop, old_value, raw_value, explicit_value_type)
+	if not coercion.get(&"ok", false):
+		coercion[&"property_name"] = property_name
+		return coercion
+
+	var parsed_value = coercion[&"value"]
+	target.set(property_name, parsed_value)
+
+	return {
+		&"ok": true,
+		&"property_name": property_name,
+		&"old_value": _serialize_value(old_value),
+		&"new_value": _serialize_value(parsed_value),
+		&"property_metadata": _build_property_metadata(prop, parsed_value),
+		&"warnings": coercion.get(&"warnings", []),
+		&"resource_path": str(coercion.get(&"resource_path", "")),
+	}
+
+func _set_node_properties(node: Node, properties: Dictionary) -> Dictionary:
+	var warnings: Array = []
+
+	for prop_name: String in properties:
+		var assignment := _apply_property_to_node(node, prop_name, properties[prop_name])
+		if not assignment.get(&"ok", false):
+			return assignment
+		for warning in assignment.get(&"warnings", []):
+			warnings.append("%s: %s" % [prop_name, warning])
+
+	return {&"ok": true, &"warnings": warnings}
+
+func _set_scene_node_property_internal(args: Dictionary) -> Dictionary:
+	var scene_path: String = _ensure_res_path(str(args.get(&"scene_path", "")))
+	var node_path: String = str(args.get(&"node_path", "."))
+	var property_name: String = str(args.get(&"property_name", ""))
+	var value = args.get(&"value")
+	var value_type: int = int(args.get(&"value_type", -1))
+
+	if scene_path.strip_edges() == "res://":
+		return {&"ok": false, &"error": "Missing 'scene_path'"}
+	if property_name.strip_edges().is_empty():
+		return {&"ok": false, &"error": "Missing 'property_name'"}
+	if not args.has(&"value"):
+		return {&"ok": false, &"error": "Missing 'value'"}
+
+	var result := _load_scene(scene_path)
+	if not result[1].is_empty():
+		return result[1]
+
+	var root: Node = result[0]
+	var target = _find_node(root, node_path)
+	if not target:
+		root.queue_free()
+		return {&"ok": false, &"error": "Node not found: " + node_path}
+
+	var assignment := _apply_property_to_node(target, property_name, value, value_type)
+	if not assignment.get(&"ok", false):
+		root.queue_free()
+		return assignment
+
+	var err := _save_scene(root, scene_path)
+	if not err.is_empty():
+		return err
+
+	var response := {
+		&"ok": true,
+		&"scene_path": scene_path,
+		&"node_path": node_path,
+		&"property_name": property_name,
+		&"old_value": assignment[&"old_value"],
+		&"new_value": assignment[&"new_value"],
+		&"property_metadata": assignment[&"property_metadata"],
+		&"message": "Set %s.%s" % [node_path, property_name],
+	}
+
+	var warnings: Array = assignment.get(&"warnings", [])
+	if not warnings.is_empty():
+		response[&"warnings"] = warnings
+
+	var resource_path := str(assignment.get(&"resource_path", ""))
+	if not resource_path.is_empty():
+		response[&"resource_path"] = resource_path
+
+	return response
 
 func _get_node3d_global_transform(node: Node3D) -> Transform3D:
 	var current: Transform3D = node.transform
@@ -318,7 +617,11 @@ func create_scene(args: Dictionary) -> Dictionary:
 	var node_count := 0
 	for node_data: Variant in nodes:
 		if typeof(node_data) == TYPE_DICTIONARY:
-			var created = _create_node_recursive(node_data, root, root)
+			var creation_result := _create_node_recursive(node_data, root, root)
+			if not creation_result[1].is_empty():
+				root.queue_free()
+				return creation_result[1]
+			var created: Node = creation_result[0]
 			if created:
 				node_count += _count_nodes(created)
 
@@ -329,7 +632,7 @@ func create_scene(args: Dictionary) -> Dictionary:
 	return {&"ok": true, &"path": scene_path, &"root_type": root_node_type, &"child_count": node_count,
 		&"message": "Scene created at " + scene_path}
 
-func _create_node_recursive(data: Dictionary, parent: Node, owner: Node) -> Node:
+func _create_node_recursive(data: Dictionary, parent: Node, owner: Node) -> Array:
 	var n_name: String = str(data.get(&"name", "Node"))
 	var n_type: String = str(data.get(&"type", "Node"))
 	var n_script: String = str(data.get(&"script", ""))
@@ -337,26 +640,31 @@ func _create_node_recursive(data: Dictionary, parent: Node, owner: Node) -> Node
 	var children: Array = data.get(&"children", [])
 
 	if not ClassDB.class_exists(n_type):
-		return null
+		return [null, {&"ok": false, &"error": "Invalid node type: " + n_type}]
 	var node: Node = ClassDB.instantiate(n_type) as Node
 	if not node:
-		return null
+		return [null, {&"ok": false, &"error": "Failed to create node of type: " + n_type}]
 
 	node.name = n_name
-	_set_node_properties(node, props)
 
 	if not n_script.is_empty():
 		var s = load(n_script)
 		if s:
 			node.set_script(s)
 
+	var property_result := _set_node_properties(node, props)
+	if not property_result.get(&"ok", false):
+		return [null, property_result]
+
 	parent.add_child(node)
 	node.owner = owner
 
 	for child_data: Variant in children:
 		if typeof(child_data) == TYPE_DICTIONARY:
-			_create_node_recursive(child_data, node, owner)
-	return node
+			var child_result := _create_node_recursive(child_data, node, owner)
+			if not child_result[1].is_empty():
+				return [null, child_result[1]]
+	return [node, {}]
 
 func _count_nodes(node: Node) -> int:
 	var count := 1
@@ -441,7 +749,10 @@ func add_node(args: Dictionary) -> Dictionary:
 		return {&"ok": false, &"error": "Failed to create node of type: " + node_type}
 
 	new_node.name = node_name
-	_set_node_properties(new_node, properties)
+	var property_result := _set_node_properties(new_node, properties)
+	if not property_result.get(&"ok", false):
+		root.queue_free()
+		return property_result
 	parent.add_child(new_node, true)
 	new_node.owner = root
 
@@ -495,7 +806,10 @@ func instance_scene(args: Dictionary) -> Dictionary:
 		instance.name = node_name
 
 	# Apply property overrides (e.g., position, rotation, scale)
-	_set_node_properties(instance, properties)
+	var property_result := _set_node_properties(instance, properties)
+	if not property_result.get(&"ok", false):
+		root.queue_free()
+		return property_result
 
 	# Add to tree with readable names, then set owner to scene root only
 	# Do NOT set owner on instance children — they belong to the instance's internal scene
@@ -551,56 +865,7 @@ func remove_node(args: Dictionary) -> Dictionary:
 # modify_node_property
 # =============================================================================
 func modify_node_property(args: Dictionary) -> Dictionary:
-	var scene_path: String = _ensure_res_path(str(args.get(&"scene_path", "")))
-	var node_path: String = str(args.get(&"node_path", "."))
-	var property_name: String = str(args.get(&"property_name", ""))
-	var value = args.get(&"value")
-
-	if scene_path.strip_edges() == "res://":
-		return {&"ok": false, &"error": "Missing 'scene_path'"}
-	if property_name.strip_edges().is_empty():
-		return {&"ok": false, &"error": "Missing 'property_name'"}
-	if value == null:
-		return {&"ok": false, &"error": "Missing 'value'"}
-
-	var result := _load_scene(scene_path)
-	if not result[1].is_empty():
-		return result[1]
-
-	var root: Node = result[0]
-	var target = _find_node(root, node_path)
-	if not target:
-		root.queue_free()
-		return {&"ok": false, &"error": "Node not found: " + node_path}
-
-	# Check property exists
-	var prop_exists := false
-	for prop: Dictionary in target.get_property_list():
-		if prop[&"name"] == property_name:
-			prop_exists = true
-			break
-	if not prop_exists:
-		var node_type = target.get_class()
-		root.queue_free()
-		return {&"ok": false, &"error": "Property '%s' not found on %s (%s). Use get_node_properties to discover available properties." % [property_name, node_path, node_type]}
-
-	var parsed = _parse_value(value)
-	var old_value = target.get(property_name)
-
-	# Validate resource type compatibility
-	if old_value is Resource and not (parsed is Resource):
-		root.queue_free()
-		return {&"ok": false, &"error": "Property '%s' expects a Resource. Use specialized tools (set_collision_shape, set_sprite_texture, set_mesh, set_material) instead." % property_name}
-
-	target.set(property_name, parsed)
-
-	var err := _save_scene(root, scene_path)
-	if not err.is_empty():
-		return err
-
-	return {&"ok": true, &"scene_path": scene_path, &"node_path": node_path,
-		&"property_name": property_name, &"old_value": str(old_value), &"new_value": str(parsed),
-		&"message": "Set %s.%s = %s" % [node_path, property_name, str(parsed)]}
+	return _set_scene_node_property_internal(args)
 
 # =============================================================================
 # rename_node
@@ -1607,19 +1872,9 @@ func get_scene_node_properties(args: Dictionary) -> Dictionary:
 
 		var current_value = target.get(prop_name)
 
-		var prop_info := {
-			&"name": prop_name,
-			&"type": prop[&"type"],
-			&"type_name": _type_id_to_name(prop[&"type"]),
-			&"hint": prop.get(&"hint", 0),
-			&"hint_string": prop.get(&"hint_string", ""),
-			&"value": _serialize_value(current_value),
-			&"usage": usage
-		}
+		var prop_info := _build_property_info(target, prop, current_value)
 
-		var category = _get_property_category(target, prop_name)
-		prop_info[&"category"] = category
-
+		var category = prop_info[&"category"]
 		if not categories.has(category):
 			categories[category] = []
 		categories[category].append(prop_info)
@@ -1645,49 +1900,6 @@ func get_scene_node_properties(args: Dictionary) -> Dictionary:
 		&"property_count": properties.size()
 	}
 
-func _type_id_to_name(type_id: int) -> String:
-	"""Convert Godot type ID to human-readable name."""
-	match type_id:
-		TYPE_NIL: return "null"
-		TYPE_BOOL: return "bool"
-		TYPE_INT: return "int"
-		TYPE_FLOAT: return "float"
-		TYPE_STRING: return "String"
-		TYPE_VECTOR2: return "Vector2"
-		TYPE_VECTOR2I: return "Vector2i"
-		TYPE_RECT2: return "Rect2"
-		TYPE_RECT2I: return "Rect2i"
-		TYPE_VECTOR3: return "Vector3"
-		TYPE_VECTOR3I: return "Vector3i"
-		TYPE_TRANSFORM2D: return "Transform2D"
-		TYPE_VECTOR4: return "Vector4"
-		TYPE_VECTOR4I: return "Vector4i"
-		TYPE_PLANE: return "Plane"
-		TYPE_QUATERNION: return "Quaternion"
-		TYPE_AABB: return "AABB"
-		TYPE_BASIS: return "Basis"
-		TYPE_TRANSFORM3D: return "Transform3D"
-		TYPE_PROJECTION: return "Projection"
-		TYPE_COLOR: return "Color"
-		TYPE_STRING_NAME: return "StringName"
-		TYPE_NODE_PATH: return "NodePath"
-		TYPE_RID: return "RID"
-		TYPE_OBJECT: return "Object"
-		TYPE_CALLABLE: return "Callable"
-		TYPE_SIGNAL: return "Signal"
-		TYPE_DICTIONARY: return "Dictionary"
-		TYPE_ARRAY: return "Array"
-		TYPE_PACKED_BYTE_ARRAY: return "PackedByteArray"
-		TYPE_PACKED_INT32_ARRAY: return "PackedInt32Array"
-		TYPE_PACKED_INT64_ARRAY: return "PackedInt64Array"
-		TYPE_PACKED_FLOAT32_ARRAY: return "PackedFloat32Array"
-		TYPE_PACKED_FLOAT64_ARRAY: return "PackedFloat64Array"
-		TYPE_PACKED_STRING_ARRAY: return "PackedStringArray"
-		TYPE_PACKED_VECTOR2_ARRAY: return "PackedVector2Array"
-		TYPE_PACKED_VECTOR3_ARRAY: return "PackedVector3Array"
-		TYPE_PACKED_COLOR_ARRAY: return "PackedColorArray"
-		_: return "Variant"
-
 func _get_property_category(node: Node, prop_name: String) -> String:
 	"""Determine which class in the hierarchy defines this property."""
 	var cls: String = node.get_class()
@@ -1704,42 +1916,25 @@ func _get_property_category(node: Node, prop_name: String) -> String:
 # =============================================================================
 func set_scene_node_property(args: Dictionary) -> Dictionary:
 	"""Set a property on a node in a scene (supports complex types)."""
-	var scene_path: String = _ensure_res_path(str(args.get(&"scene_path", "")))
-	var node_path: String = str(args.get(&"node_path", "."))
-	var property_name: String = str(args.get(&"property_name", ""))
-	var value = args.get(&"value")
-	var value_type: int = int(args.get(&"value_type", -1))
+	return _set_scene_node_property_internal(args)
 
-	if scene_path.strip_edges() == "res://":
-		return {&"ok": false, &"error": "Missing 'scene_path'"}
-	if property_name.strip_edges().is_empty():
-		return {&"ok": false, &"error": "Missing 'property_name'"}
-
-	var result := _load_scene(scene_path)
-	if not result[1].is_empty():
-		return result[1]
-
-	var root: Node = result[0]
-	var target = _find_node(root, node_path)
-	if not target:
-		root.queue_free()
-		return {&"ok": false, &"error": "Node not found: " + node_path}
-
-	var parsed_value = _parse_typed_value(value, value_type)
-	var old_value = target.get(property_name)
-
-	target.set(property_name, parsed_value)
-
-	var err := _save_scene(root, scene_path)
-	if not err.is_empty():
-		return err
-
-	return {
-		&"ok": true,
-		&"scene_path": scene_path,
-		&"node_path": node_path,
-		&"property_name": property_name,
-		&"old_value": _serialize_value(old_value),
-		&"new_value": _serialize_value(parsed_value),
-		&"message": "Set %s.%s" % [node_path, property_name]
+func set_resource_property(args: Dictionary) -> Dictionary:
+	var property_args := {
+		&"scene_path": args.get(&"scene_path", ""),
+		&"node_path": args.get(&"node_path", "."),
+		&"property_name": args.get(&"property_name", ""),
+		&"value_type": TYPE_OBJECT,
 	}
+
+	if bool(args.get(&"clear", false)):
+		property_args[&"value"] = null
+	else:
+		var resource_path := str(args.get(&"resource_path", "")).strip_edges()
+		if resource_path.is_empty():
+			return {&"ok": false, &"error": "Missing 'resource_path' (or set clear=true)"}
+		property_args[&"value"] = {&"type": &"Resource", &"path": resource_path}
+
+	var result := _set_scene_node_property_internal(property_args)
+	if result.get(&"ok", false):
+		result[&"message"] = "Set resource %s.%s" % [str(property_args[&"node_path"]), str(property_args[&"property_name"])]
+	return result
