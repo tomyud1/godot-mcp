@@ -3,6 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, it, expect } from 'vitest';
 import { allTools, toolExists } from '../tools/index.js';
+import { RUNTIME_ONLY_TOOLS } from '../godot-bridge.js';
 
 function getExecutorToolNames(): Set<string> {
   const testDir = path.dirname(fileURLToPath(import.meta.url));
@@ -12,6 +13,15 @@ function getExecutorToolNames(): Set<string> {
     .map(match => match[1])
     .filter(name => !name.startsWith('visualizer._internal_'));
 
+  return new Set(toolNames);
+}
+
+function getRuntimeToolNames(): Set<string> {
+  const testDir = path.dirname(fileURLToPath(import.meta.url));
+  const runtimePath = path.resolve(testDir, '../../../addons/godot_mcp/runtime/mcp_runtime.gd');
+  const source = readFileSync(runtimePath, 'utf8');
+  const toolNames = [...source.matchAll(/"([a-z_]+)":\s*\n\s*return _[a-z_]+\(/g)]
+    .map(match => match[1]);
   return new Set(toolNames);
 }
 
@@ -45,12 +55,22 @@ describe('Tool registry', () => {
     expect(toolExists('definitely_not_a_tool_xyz')).toBe(false);
   });
 
-  it('every advertised MCP tool is registered in the Godot executor map', () => {
+  it('every advertised MCP tool is registered in the Godot executor map OR the runtime helper', () => {
     const executorTools = getExecutorToolNames();
+    const runtimeTools = getRuntimeToolNames();
     const missing = allTools
       .map(tool => tool.name)
-      .filter(name => !executorTools.has(name));
+      .filter(name => !executorTools.has(name) && !runtimeTools.has(name));
 
     expect(missing).toEqual([]);
+  });
+
+  it('runtime-only tools are declared in the runtime helper, not the editor map', () => {
+    const executorTools = getExecutorToolNames();
+    const runtimeTools = getRuntimeToolNames();
+    for (const name of RUNTIME_ONLY_TOOLS) {
+      expect(runtimeTools.has(name), `${name} missing from mcp_runtime.gd`).toBe(true);
+      expect(executorTools.has(name), `${name} should NOT be in tool_executor.gd`).toBe(false);
+    }
   });
 });

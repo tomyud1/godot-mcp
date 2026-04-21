@@ -274,6 +274,7 @@ func delete_file(args: Dictionary) -> Dictionary:
 	var path: String = str(args.get(&"path", ""))
 	var confirm: bool = bool(args.get(&"confirm", false))
 	var create_backup: bool = bool(args.get(&"create_backup", true))
+	var force: bool = bool(args.get(&"force", false))
 
 	if path.strip_edges().is_empty():
 		return {&"ok": false, &"error": "Missing 'path'"}
@@ -285,7 +286,20 @@ func delete_file(args: Dictionary) -> Dictionary:
 	if not FileAccess.file_exists(path):
 		return {&"ok": false, &"error": "File not found: " + path}
 
-	# Create backup
+	# Refuse to delete files the editor currently has open. Deleting the
+	# live scene/script out from under the editor (especially the active tab)
+	# can crash Godot because internal pointers still reference the
+	# in-memory copy. The agent must close the tab first, then retry.
+	var open_info := _file_is_open_in_editor(path)
+	if open_info[&"open"] and not force:
+		return {
+			&"ok": false,
+			&"error": "Refusing to delete %s: it is currently open in the editor (%s). Close the tab first, or pass force=true to delete anyway (WILL LIKELY CRASH if it's the active scene)." % [path, open_info[&"where"]],
+			&"open_in_editor": true,
+			&"where": open_info[&"where"],
+			&"is_active": open_info[&"is_active"],
+		}
+
 	if create_backup:
 		var backup_path := path + ".bak"
 		DirAccess.copy_absolute(path, backup_path)
@@ -297,6 +311,45 @@ func delete_file(args: Dictionary) -> Dictionary:
 	_refresh_filesystem()
 
 	return {&"ok": true, &"path": path, &"message": "File deleted" + (" (backup created)" if create_backup else "")}
+
+## Detect whether `path` is currently open in the editor (either as an edited
+## scene tab or as a script in the script editor). Returns a dict with:
+##   open:      bool — open anywhere in the editor
+##   where:     String — short human description (which tab/panel)
+##   is_active: bool — true if it's the CURRENTLY FOCUSED scene tab (deleting
+##              this case is the most crash-prone)
+func _file_is_open_in_editor(path: String) -> Dictionary:
+	var out := {&"open": false, &"where": "", &"is_active": false}
+	if _editor_plugin == null:
+		return out
+	var ei := _editor_plugin.get_editor_interface()
+
+	# Scene tabs
+	if ei.has_method("get_open_scenes"):
+		var open_scenes: PackedStringArray = ei.get_open_scenes()
+		if open_scenes.has(path):
+			out[&"open"] = true
+			out[&"where"] = "scene tab"
+			var edited = ei.get_edited_scene_root()
+			if edited and edited.scene_file_path == path:
+				out[&"is_active"] = true
+				out[&"where"] = "active scene tab"
+			return out
+
+	# Script editor
+	var se := ei.get_script_editor()
+	if se:
+		for s in se.get_open_scripts():
+			if s is Script and s.resource_path == path:
+				out[&"open"] = true
+				out[&"where"] = "script editor"
+				var cur := se.get_current_script()
+				if cur and cur.resource_path == path:
+					out[&"is_active"] = true
+					out[&"where"] = "active script editor tab"
+				return out
+
+	return out
 
 # =============================================================================
 # rename_file

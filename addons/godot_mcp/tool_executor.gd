@@ -4,6 +4,7 @@ class_name ToolExecutor
 ## Routes tool invocations to the appropriate handler.
 
 var _editor_plugin: EditorPlugin = null
+var _mcp_client: Object = null
 
 var _file_tools: Node
 var _scene_tools: Node
@@ -74,6 +75,16 @@ func _init_tools() -> void:
 		&"get_scene_hierarchy": [_scene_tools, &"get_scene_hierarchy"],
 		&"get_scene_node_properties": [_scene_tools, &"get_scene_node_properties"],
 		&"set_scene_node_property": [_scene_tools, &"set_scene_node_property"],
+		&"set_node_properties": [_scene_tools, &"set_node_properties"],
+		&"set_node_groups": [_scene_tools, &"set_node_groups"],
+		&"get_node_groups": [_scene_tools, &"get_node_groups"],
+		&"find_nodes_in_group": [_scene_tools, &"find_nodes_in_group"],
+		&"set_resource_property": [_scene_tools, &"set_resource_property"],
+		&"save_resource_to_file": [_scene_tools, &"save_resource_to_file"],
+		&"get_resource_info": [_scene_tools, &"get_resource_info"],
+		&"list_signal_connections": [_scene_tools, &"list_signal_connections"],
+		&"connect_signal": [_scene_tools, &"connect_signal"],
+		&"disconnect_signal": [_scene_tools, &"disconnect_signal"],
 
 		&"edit_script": [_script_tools, &"edit_script"],
 		&"validate_script": [_script_tools, &"validate_script"],
@@ -100,6 +111,8 @@ func _init_tools() -> void:
 		&"run_scene": [_project_tools, &"run_scene"],
 		&"stop_scene": [_project_tools, &"stop_scene"],
 		&"is_playing": [_project_tools, &"is_playing"],
+		&"get_runtime_status": [_project_tools, &"get_runtime_status"],
+		&"wait": [_project_tools, &"wait"],
 
 		&"generate_2d_asset": [_asset_tools, &"generate_2d_asset"],
 
@@ -124,17 +137,34 @@ func set_editor_plugin(plugin: EditorPlugin) -> void:
 		# Pass scene_tools reference for visualizer internal scene functions
 		_visualizer_tools.set_scene_tools_ref(_scene_tools)
 
+func set_mcp_client(client: Object) -> void:
+	_mcp_client = client
+	if _project_tools and _project_tools.has_method("set_mcp_client"):
+		_project_tools.set_mcp_client(client)
+
+## Tools that are coroutines (contain `await`). They MUST be dispatched via
+## a direct method call + await so the return value is preserved. Generic
+## `node.call()` / `callv()` do NOT return the right value for coroutines in
+## GDScript 4 (see godotengine/godot#50894, #103887). Keep this set small.
+const _COROUTINE_TOOLS := {
+	"wait": true,
+}
+
 func execute_tool(tool_name: String, args: Dictionary) -> Dictionary:
-	"""Execute a tool by name with the given arguments."""
-	
+	"""Execute a tool by name with the given arguments.
+
+	This function is a coroutine because at least one tool (`wait`) uses
+	`await` to yield to the SceneTree. Callers MUST `await` the result or
+	they'll get a GDScriptFunctionState instead of a Dictionary."""
+
 	# Handle internal visualizer commands (not exposed as MCP tools)
 	if tool_name.begins_with("visualizer._internal_"):
-		var method: String = tool_name.replace("visualizer.", "")
-		if _visualizer_tools and _visualizer_tools.has_method(method):
-			return _visualizer_tools.call(method, args)
+		var vmethod: String = tool_name.replace("visualizer.", "")
+		if _visualizer_tools and _visualizer_tools.has_method(vmethod):
+			return _visualizer_tools.call(vmethod, args)
 		else:
-			return {&"ok": false, &"error": "Internal method not found: " + method}
-	
+			return {&"ok": false, &"error": "Internal method not found: " + vmethod}
+
 	if not _tool_map.has(tool_name):
 		return {
 			&"ok": false,
@@ -149,7 +179,18 @@ func execute_tool(tool_name: String, args: Dictionary) -> Dictionary:
 		return {&"ok": false, &"error": "Tool handler not found: %s.%s" % [node.name, method]}
 
 	_parse_stringified_args(args)
-	var result = node.call(method, args)
+	var result: Variant
+	if _COROUTINE_TOOLS.has(tool_name):
+		# Direct method dispatch for coroutine tools so `await` returns the
+		# Dictionary correctly.
+		match tool_name:
+			"wait":
+				result = await node.wait(args)
+			_:
+				push_error("[MCP] Coroutine tool '%s' has no direct dispatch case." % tool_name)
+				result = {&"ok": false, &"error": "Coroutine tool '%s' missing dispatch case" % tool_name}
+	else:
+		result = node.call(method, args)
 
 	if result == null or not (result is Dictionary):
 		push_error("[MCP] Tool '%s' returned invalid result: %s" % [tool_name, str(result)])

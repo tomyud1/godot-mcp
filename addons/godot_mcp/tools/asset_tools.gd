@@ -5,6 +5,8 @@ class_name AssetTools
 ## Handles: generate_2d_asset, search_comfyui_nodes,
 ##          inspect_runninghub_workflow, customize_and_run_workflow
 
+const MCPPaths = preload("res://addons/godot_mcp/utils/paths.gd")
+
 var _editor_plugin: EditorPlugin = null
 
 func set_editor_plugin(plugin: EditorPlugin) -> void:
@@ -15,95 +17,111 @@ func _refresh_filesystem() -> void:
 		_editor_plugin.get_editor_interface().get_resource_filesystem().scan()
 
 # =============================================================================
-# generate_2d_asset - Generate PNG from SVG code
+# generate_2d_asset - Render an SVG to a PNG asset
 # =============================================================================
+#
+# Implementation notes (Bugs 1, 2, 3 from MCP feedback):
+#   * No temp file on disk. Image.load_svg_from_buffer() takes raw bytes,
+#     eliminating the user:// dependency and the parallel-call race condition.
+#   * Reported dimensions come from the rendered Image, not from string-parsing
+#     the SVG, so single-quoted attributes and missing width/height work.
+#   * Optional explicit width/height arguments override the SVG's intrinsic
+#     size by computing a render scale.
+#   * If anything still goes wrong, we surface the actual Godot error code so
+#     the caller can diagnose it without code-spelunking.
 func generate_2d_asset(args: Dictionary) -> Dictionary:
 	var svg_code: String = str(args.get(&"svg_code", ""))
 	var filename: String = str(args.get(&"filename", ""))
 	var save_path: String = str(args.get(&"save_path", "res://assets/generated/"))
+	var explicit_width: int = int(args.get(&"width", 0))
+	var explicit_height: int = int(args.get(&"height", 0))
+	var scale_arg: float = float(args.get(&"scale", 0.0))
 
 	if svg_code.strip_edges().is_empty():
 		return {&"ok": false, &"error": "Missing 'svg_code'"}
 	if filename.strip_edges().is_empty():
 		return {&"ok": false, &"error": "Missing 'filename'"}
 
-	# Ensure .png extension
 	if not filename.ends_with(".png"):
 		filename += ".png"
 
-	# Ensure save path
 	if not save_path.begins_with("res://"):
 		save_path = "res://" + save_path
 	if not save_path.ends_with("/"):
 		save_path += "/"
 
-	# Create directory if needed
 	if not DirAccess.dir_exists_absolute(save_path):
-		DirAccess.make_dir_recursive_absolute(save_path)
+		var mkerr := DirAccess.make_dir_recursive_absolute(save_path)
+		if mkerr != OK and not DirAccess.dir_exists_absolute(save_path):
+			return {&"ok": false, &"error": "Could not create save_path %s (err=%d %s)" % [
+				ProjectSettings.globalize_path(save_path), mkerr, error_string(mkerr)]}
 
-	# Parse SVG dimensions from the svg_code
-	var width := 64
-	var height := 64
+	# Determine render scale.
+	# Priority: explicit `scale` > derived from explicit width/height > 1.0.
+	var render_scale: float = 1.0
+	if scale_arg > 0.0:
+		render_scale = scale_arg
+	elif explicit_width > 0 or explicit_height > 0:
+		# Pull intrinsic size if possible (best-effort, regex tolerates either quote style).
+		var intrinsic := _intrinsic_svg_size(svg_code)
+		var int_w: int = intrinsic.get("width", 0)
+		var int_h: int = intrinsic.get("height", 0)
+		if int_w > 0 and explicit_width > 0:
+			render_scale = float(explicit_width) / float(int_w)
+		elif int_h > 0 and explicit_height > 0:
+			render_scale = float(explicit_height) / float(int_h)
+		# Otherwise fall through; agent must trust whatever render comes out.
 
-	# Simple regex-free parsing for width/height
-	var w_start := svg_code.find("width=\"")
-	if w_start != -1:
-		var w_val := svg_code.substr(w_start + 7)
-		var w_end := w_val.find("\"")
-		if w_end != -1:
-			width = int(w_val.substr(0, w_end))
-
-	var h_start := svg_code.find("height=\"")
-	if h_start != -1:
-		var h_val := svg_code.substr(h_start + 8)
-		var h_end := h_val.find("\"")
-		if h_end != -1:
-			height = int(h_val.substr(0, h_end))
-
-	# Create Image from SVG
+	# Render SVG → Image directly from bytes. No temp file, no race.
 	var image := Image.new()
-
-	# Save SVG to temp file, then load as image
-	var temp_svg_path := "user://temp_asset.svg"
-	var svg_file := FileAccess.open(temp_svg_path, FileAccess.WRITE)
-	if not svg_file:
-		return {&"ok": false, &"error": "Failed to create temp SVG file"}
-	svg_file.store_string(svg_code)
-	svg_file.close()
-
-	# Load SVG as image
-	var err := image.load(temp_svg_path)
+	var svg_bytes := svg_code.to_utf8_buffer()
+	var err := image.load_svg_from_buffer(svg_bytes, render_scale)
 	if err != OK:
-		# Fallback: try loading SVG data directly
-		image = Image.create(width, height, false, Image.FORMAT_RGBA8)
-		image.fill(Color(1, 0, 1, 1))  # Magenta fallback = something went wrong
-		print("[MCP] Warning: Could not render SVG, created fallback image")
+		return {
+			&"ok": false,
+			&"error": "Image.load_svg_from_buffer failed (err=%d %s). The SVG may be malformed." % [err, error_string(err)]
+		}
 
-	# Clean up temp file
-	DirAccess.remove_absolute(temp_svg_path)
-
-	# Save as PNG
 	var full_path := save_path + filename
 	var global_path := ProjectSettings.globalize_path(full_path)
 	err = image.save_png(global_path)
 	if err != OK:
-		return {&"ok": false, &"error": "Failed to save PNG: " + str(err)}
+		return {
+			&"ok": false,
+			&"error": "Failed to save PNG to %s (err=%d %s)" % [global_path, err, error_string(err)]
+		}
 
 	_refresh_filesystem()
 
 	return {
 		&"ok": true,
 		&"resource_path": full_path,
-		&"dimensions": {&"width": width, &"height": height},
-		&"message": "Generated %s (%dx%d)" % [full_path, width, height],
+		&"absolute_path": global_path,
+		&"dimensions": {&"width": image.get_width(), &"height": image.get_height()},
+		&"render_scale": render_scale,
+		&"message": "Generated %s (%dx%d, scale=%.3f)" % [full_path, image.get_width(), image.get_height(), render_scale],
 	}
+
+# Best-effort SVG size extraction. Tolerates either quote style and arbitrary
+# whitespace. Used only as a fallback; the rendered Image is authoritative.
+func _intrinsic_svg_size(svg_code: String) -> Dictionary:
+	var result: Dictionary = {}
+	var re := RegEx.new()
+	if re.compile("\\b(width|height)\\s*=\\s*[\"\\']([0-9.]+)") != OK:
+		return result
+	for m in re.search_all(svg_code):
+		var attr := m.get_string(1)
+		var val := int(m.get_string(2))
+		if attr == "width":
+			result["width"] = val
+		else:
+			result["height"] = val
+	return result
 
 # =============================================================================
 # search_comfyui_nodes - Stub (requires external database)
 # =============================================================================
-func search_comfyui_nodes(args: Dictionary) -> Dictionary:
-	# This tool requires the ComfyUI node database which was bundled with the old plugin
-	# For now, return a message indicating it needs setup
+func search_comfyui_nodes(_args: Dictionary) -> Dictionary:
 	return {
 		&"ok": true,
 		&"results": [],
@@ -118,7 +136,6 @@ func inspect_runninghub_workflow(args: Dictionary) -> Dictionary:
 	var workflow_id: String = str(args.get(&"workflow_id", ""))
 	if workflow_id.strip_edges().is_empty():
 		return {&"ok": false, &"error": "Missing 'workflow_id'"}
-
 	return {
 		&"ok": true,
 		&"workflow_id": workflow_id,
@@ -128,8 +145,8 @@ func inspect_runninghub_workflow(args: Dictionary) -> Dictionary:
 # =============================================================================
 # customize_and_run_workflow - Stub (requires API key)
 # =============================================================================
-func customize_and_run_workflow(args: Dictionary) -> Dictionary:
+func customize_and_run_workflow(_args: Dictionary) -> Dictionary:
 	return {
 		&"ok": true,
-		&"message": "RunningHub workflow execution requires API configuration. This feature will be available in a future update.",
+		&"message": "Workflow customization requires RunningHub API configuration.",
 	}

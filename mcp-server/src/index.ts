@@ -30,8 +30,12 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 
 import { execSync } from 'child_process';
+import { readFileSync } from 'fs';
+import { fileURLToPath } from 'url';
+import { dirname, resolve as resolvePath } from 'path';
 import { allTools, toolExists } from './tools/index.js';
 import { GodotBridge } from './godot-bridge.js';
+import { registerResources, GUIDES } from './resources.js';
 import { serveVisualization, stopVisualizationServer, setGodotBridge } from './visualizer-server.js';
 import { PrimaryHttpServer, type ToolCallResult } from './primary-http.js';
 import { probeExistingServer, proxyToolCall, registerProxyClient, unregisterProxyClient } from './proxy-client.js';
@@ -41,7 +45,22 @@ import { probeExistingServer, proxyToolCall, registerProxyClient, unregisterProx
 // ---------------------------------------------------------------------------
 
 const SERVER_NAME = 'godot-mcp-server';
-const SERVER_VERSION = '0.4.3';
+
+// Read version from package.json so it stays in sync with the published
+// package.  Falls back to a hardcoded string only if the file is unreadable
+// (e.g. the file got renamed in a custom build).
+const SERVER_VERSION = (() => {
+  try {
+    const here = dirname(fileURLToPath(import.meta.url));
+    // dist/index.js → ../package.json   |   src/index.ts (tsx) → ../package.json
+    const pkgPath = resolvePath(here, '..', 'package.json');
+    const pkg = JSON.parse(readFileSync(pkgPath, 'utf8')) as { version?: string };
+    if (pkg.version) return pkg.version;
+  } catch {
+    // ignore — fall through to default
+  }
+  return '0.0.0-dev';
+})();
 const WEBSOCKET_PORT = parseInt(process.env.GODOT_MCP_PORT || '6505', 10);
 const HTTP_PORT = parseInt(process.env.GODOT_MCP_HTTP_PORT || '6506', 10);
 const TOOL_TIMEOUT = parseInt(process.env.GODOT_MCP_TIMEOUT_MS || '30000', 10);
@@ -60,6 +79,53 @@ async function executeToolCall(
   name: string,
   toolArgs: Record<string, unknown>
 ): Promise<ToolCallResult> {
+  if (name === 'get_guide') {
+    const slug = typeof toolArgs.slug === 'string' ? toolArgs.slug.trim() : '';
+    if (!slug) {
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            ok: true,
+            guides: GUIDES.map((g) => ({
+              slug: g.slug,
+              name: g.name,
+              description: g.description,
+              uri: g.uri,
+            })),
+            hint: 'Call get_guide again with one of these slugs to read the full markdown.',
+          }, null, 2),
+        }],
+      };
+    }
+    const guide = GUIDES.find((g) => g.slug === slug || g.uri === slug);
+    if (!guide) {
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            ok: false,
+            error: `Unknown guide slug: ${slug}`,
+            available_slugs: GUIDES.map((g) => g.slug),
+          }, null, 2),
+        }],
+        isError: true,
+      };
+    }
+    return {
+      content: [{
+        type: 'text',
+        text: JSON.stringify({
+          ok: true,
+          slug: guide.slug,
+          name: guide.name,
+          uri: guide.uri,
+          markdown: guide.text,
+        }, null, 2),
+      }],
+    };
+  }
+
   if (name === 'get_godot_status') {
     const status = godotBridge!.getStatus();
     return {
@@ -132,18 +198,30 @@ async function executeToolCall(
     };
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
+    // Merge any structured details the tool shipped back (open_in_editor,
+    // where, is_active, clamped, requested_ms, …) into the visible response
+    // so the agent doesn't lose context on failure.
+    const details =
+      error && typeof error === 'object' && 'details' in error
+        ? (error as { details?: unknown }).details
+        : undefined;
+    const payload: Record<string, unknown> = {
+      error: errorMessage,
+      tool: name,
+      args: toolArgs,
+      mode: 'live',
+      hint: 'The tool call was sent to Godot but failed. Check Godot editor for details.',
+    };
+    if (details && typeof details === 'object') {
+      // Spread structured fields at the top level (callers already look for
+      // `open_in_editor`, `clamped`, etc. at the root). Drop `ok` since it
+      // is always false here and adds no information.
+      const { ok: _ok, error: _err, ...rest } = details as Record<string, unknown>;
+      Object.assign(payload, rest);
+    }
     return {
-      content: [{
-        type: 'text',
-        text: JSON.stringify({
-          error: errorMessage,
-          tool: name,
-          args: toolArgs,
-          mode: 'live',
-          hint: 'The tool call was sent to Godot but failed. Check Godot editor for details.'
-        }, null, 2)
-      }],
-      isError: true
+      content: [{ type: 'text', text: JSON.stringify(payload, null, 2) }],
+      isError: true,
     };
   }
 }
@@ -157,8 +235,10 @@ type ToolHandler = (name: string, args: Record<string, unknown>) => Promise<Tool
 function createMcpServer(handleTool: ToolHandler): Server {
   const server = new Server(
     { name: SERVER_NAME, version: SERVER_VERSION },
-    { capabilities: { tools: {} } }
+    { capabilities: { tools: {}, resources: {} } }
   );
+
+  registerResources(server);
 
   server.setRequestHandler(ListToolsRequestSchema, async () => {
     const connectionStatusTool = {
@@ -171,9 +251,25 @@ function createMcpServer(handleTool: ToolHandler): Server {
       }
     };
 
+    const getGuideTool = {
+      name: 'get_guide',
+      description: `Read a short markdown guide from the server. Same content as the MCP resources/read protocol, exposed as a tool so it works in MCP clients that do not support resources (e.g. Claude Desktop, Cursor chat). Call with no args to list available guides: ${GUIDES.map((g) => g.slug).join(', ')}. Call with {slug: "..."} to get the full markdown. Useful when a workflow is non-obvious (testing a running game, choosing between scene-editing tools, troubleshooting "Runtime helper not connected", etc.).`,
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          slug: {
+            type: 'string',
+            description: `Guide slug. Omit to list all available guides. Known slugs: ${GUIDES.map((g) => g.slug).join(', ')}.`,
+          },
+        },
+        required: [] as string[],
+      }
+    };
+
     return {
       tools: [
         connectionStatusTool,
+        getGuideTool,
         ...allTools.map(tool => ({
           name: tool.name,
           description: tool.description,
@@ -209,8 +305,12 @@ async function killProcessOnPort(port: number): Promise<boolean> {
       const match = output.trim().split('\n')[0]?.match(/\s+(\d+)\s*$/);
       pid = match?.[1];
     } else {
+      // -sTCP:LISTEN is critical: plain `lsof -ti :PORT` also returns PIDs of
+      // *clients* with an ESTABLISHED socket to that port. Godot is a client
+      // of our WebSocket on 6505, so without this filter a "kill the process
+      // on 6505" call can SIGTERM the Godot editor and crash it.
       const output = execSync(
-        `lsof -ti :${port}`,
+        `lsof -ti :${port} -sTCP:LISTEN`,
         { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] }
       );
       pid = output.trim().split('\n')[0];
@@ -301,7 +401,7 @@ async function startPrimary(): Promise<void> {
   }
 
   // --- Start HTTP server for proxies ---
-  const httpServer = new PrimaryHttpServer(HTTP_PORT, SERVER_VERSION, executeToolCall, allTools.length + 1);
+  const httpServer = new PrimaryHttpServer(HTTP_PORT, SERVER_VERSION, executeToolCall, allTools.length + 2);
   httpServer.setClientCountChangeCallback(() => notifyClientStatus());
 
   try {
@@ -333,7 +433,7 @@ async function startPrimary(): Promise<void> {
     console.error(`[${SERVER_NAME}] ⚠️  HTTP server failed to start. Proxy clients will not work.`);
   }
 
-  console.error(`[${SERVER_NAME}] Available tools: ${allTools.length + 1}`);
+  console.error(`[${SERVER_NAME}] Available tools: ${allTools.length + 2}`);
   console.error(`[${SERVER_NAME}] Waiting for Godot editor connection...`);
 
   // --- Connect stdio MCP transport ---
@@ -472,7 +572,7 @@ async function main(): Promise<void> {
   const probe = await probeExistingServer(HTTP_PORT);
 
   if (probe.alive) {
-    const localToolCount = allTools.length + 1; // +1 for get_godot_status
+    const localToolCount = allTools.length + 2; // +1 for get_godot_status, +1 for get_guide
     const primaryStale = probe.version !== SERVER_VERSION
       || (probe.toolCount != null && probe.toolCount !== localToolCount);
     if (primaryStale) {

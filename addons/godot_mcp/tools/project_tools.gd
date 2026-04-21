@@ -9,8 +9,22 @@ class_name ProjectTools
 ##          open_in_godot, scene_tree_dump
 
 const VariantCodec = preload("res://addons/godot_mcp/utils/variant_codec.gd")
+const MCPPaths = preload("res://addons/godot_mcp/utils/paths.gd")
 
 var _editor_plugin: EditorPlugin = null
+
+# Reference to the MCPClient in the addon. Set by the plugin so we can ask
+# the TS server (via the editor WebSocket connection) whether the runtime
+# helper is currently connected.
+var _mcp_client: Object = null
+
+func set_mcp_client(client: Object) -> void:
+	_mcp_client = client
+
+# Track the moment the editor most recently launched a scene so we can report
+# uptime and detect "started but immediately crashed" cases.
+var _last_run_scene_started_at_ms: int = 0
+var _last_run_scene_target: String = ""
 
 # Cached reference to the editor Output panel's RichTextLabel.
 var _editor_log_rtl: RichTextLabel = null
@@ -113,6 +127,25 @@ func update_project_settings(args: Dictionary) -> Dictionary:
 	if not settings is Dictionary or settings.is_empty():
 		return {&"ok": false, &"error": "Missing or empty 'settings' dictionary. Use list_settings to discover available setting paths."}
 
+	var warnings: Array = []
+	var rename_info: Dictionary = {}
+
+	# Detect a config-name change BEFORE we apply it. Godot rebinds user://
+	# whenever application/config/name changes, but does not create the new
+	# folder on disk. The first FileAccess.WRITE into user:// then silently
+	# fails. We pre-create the folder and warn the caller.
+	if settings.has("application/config/name"):
+		var old_name := str(ProjectSettings.get_setting("application/config/name", ""))
+		var new_name := str(settings["application/config/name"])
+		if old_name != new_name:
+			rename_info = {
+				&"setting": "application/config/name",
+				&"old": old_name,
+				&"new": new_name,
+				&"warning": "Renaming the project changes the user:// path. Existing user:// files (saved games, settings, generated assets cached in user://) will appear to disappear because user:// now points at a different folder. The new folder will be auto-created."
+			}
+			warnings.append(rename_info)
+
 	var updated: Array = []
 	for key: String in settings:
 		if key.begins_with("input/"):
@@ -128,7 +161,18 @@ func update_project_settings(args: Dictionary) -> Dictionary:
 		updated.append(key)
 
 	_save_and_refresh_settings()
-	return {&"ok": true, &"updated": updated, &"count": updated.size()}
+
+	# After the save, the new application/config/name takes effect. Make sure
+	# user:// resolves to a real folder so subsequent tool calls don't fail.
+	if not rename_info.is_empty():
+		var ok := MCPPaths.ensure_user_dir()
+		rename_info[&"new_user_path"] = MCPPaths.absolute_for("user://")
+		rename_info[&"new_user_path_created"] = ok
+
+	var out: Dictionary = {&"ok": true, &"updated": updated, &"count": updated.size()}
+	if not warnings.is_empty():
+		out[&"warnings"] = warnings
+	return out
 
 # =============================================================================
 # get_input_map
@@ -881,27 +925,95 @@ func _dump_node(node: Node, depth: int) -> String:
 # run_scene / stop_scene / is_playing
 # =============================================================================
 
+## Launch a scene in the editor. With block_until_started=true (default true)
+## the call waits until the editor's play state flips on, so the agent can
+## reliably call get_errors/get_runtime_log/take_screenshot immediately after.
+## Set wait_for_runtime=true to additionally block until the MCPRuntime
+## autoload connects back; required for take_screenshot / send_input to work
+## right away.
 func run_scene(args: Dictionary) -> Dictionary:
 	if not _editor_plugin:
 		return {&"ok": false, &"error": "Editor plugin not available"}
 	var ei := _editor_plugin.get_editor_interface()
 	var scene: String = str(args.get(&"scene", ""))
+	var block_until_started: bool = bool(args.get(&"block_until_started", true))
+	var wait_for_runtime: bool = bool(args.get(&"wait_for_runtime", false))
+	# Default of 10s gives slower machines (cold-cache import, autoload heavy
+	# games) enough headroom for the editor to reach the playing state and
+	# for MCPRuntime to connect. Tune up via the argument if needed.
+	var startup_timeout_ms: int = int(args.get(&"startup_timeout_ms", 10000))
 
 	if ei.is_playing_scene():
 		return {&"ok": false, &"error": "A scene is already running. Call stop_scene first."}
 
+	# Determine which scene file will run, so we can compute /root/<RootName>
+	# for the agent's downstream query_runtime_node calls.
+	var resolved_scene_path: String = ""
 	if scene == "current":
+		var edited := ei.get_edited_scene_root()
+		resolved_scene_path = edited.scene_file_path if edited else ""
 		ei.play_current_scene()
+		_last_run_scene_target = "current"
 	elif not scene.is_empty():
 		if not scene.begins_with("res://"):
 			scene = "res://" + scene
 		if not FileAccess.file_exists(scene):
 			return {&"ok": false, &"error": "Scene file not found: %s" % scene}
+		resolved_scene_path = scene
 		ei.play_custom_scene(scene)
+		_last_run_scene_target = scene
 	else:
+		resolved_scene_path = str(ProjectSettings.get_setting("application/run/main_scene", ""))
 		ei.play_main_scene()
+		_last_run_scene_target = "main"
 
-	return {&"ok": true, &"message": "Scene launched" + (" (%s)" % scene if not scene.is_empty() else " (main scene)")}
+	_last_run_scene_started_at_ms = Time.get_ticks_msec()
+	var root_node_name: String = _peek_scene_root_name(resolved_scene_path)
+	var runtime_root: String = "/root/%s" % root_node_name if not root_node_name.is_empty() else ""
+
+	var started: bool = ei.is_playing_scene()
+	var runtime_connected: bool = _runtime_is_connected()
+	var poll_started_ms: int = 0
+	var poll_runtime_ms: int = 0
+
+	if block_until_started and not started:
+		var t0 := Time.get_ticks_msec()
+		while not started and (Time.get_ticks_msec() - t0) < startup_timeout_ms:
+			OS.delay_msec(50)
+			started = ei.is_playing_scene()
+		poll_started_ms = Time.get_ticks_msec() - t0
+
+	if wait_for_runtime and started and not runtime_connected:
+		var t1 := Time.get_ticks_msec()
+		while not runtime_connected and (Time.get_ticks_msec() - t1) < startup_timeout_ms:
+			OS.delay_msec(100)
+			runtime_connected = _runtime_is_connected()
+		poll_runtime_ms = Time.get_ticks_msec() - t1
+
+	return {
+		&"ok": true,
+		&"message": "Scene launched" + (" (%s)" % scene if not scene.is_empty() else " (main scene)"),
+		&"started": started,
+		&"runtime_connected": runtime_connected,
+		&"wait_for_started_ms": poll_started_ms,
+		&"wait_for_runtime_ms": poll_runtime_ms,
+		&"scene_path": resolved_scene_path,
+		&"runtime_root": runtime_root,
+		&"hint": "" if started else "Editor did not flip to playing state within startup_timeout_ms. Check get_errors and get_console_log for autoload/load errors.",
+	}
+
+## Read the root node name out of a .tscn without instantiating it. Returns an
+## empty string if the file can't be loaded (autoload-only / corrupt / .scn).
+func _peek_scene_root_name(scene_path: String) -> String:
+	if scene_path.is_empty() or not FileAccess.file_exists(scene_path):
+		return ""
+	var packed := load(scene_path) as PackedScene
+	if packed == null:
+		return ""
+	var st := packed.get_state()
+	if st.get_node_count() == 0:
+		return ""
+	return str(st.get_node_name(0))
 
 func stop_scene(_args: Dictionary) -> Dictionary:
 	if not _editor_plugin:
@@ -912,6 +1024,9 @@ func stop_scene(_args: Dictionary) -> Dictionary:
 	ei.stop_playing_scene()
 	return {&"ok": true, &"message": "Scene stopped"}
 
+## Backward-compatible thin wrapper around get_runtime_status. Keep using this
+## if you only need the boolean. For richer info (uptime, runtime helper status,
+## last launched scene), prefer get_runtime_status.
 func is_playing(_args: Dictionary) -> Dictionary:
 	if not _editor_plugin:
 		return {&"ok": false, &"error": "Editor plugin not available"}
@@ -919,6 +1034,86 @@ func is_playing(_args: Dictionary) -> Dictionary:
 	var playing := ei.is_playing_scene()
 	var scene_path := ei.get_playing_scene() if playing else ""
 	return {&"ok": true, &"playing": playing, &"scene": scene_path}
+
+## Combined editor-side and runtime-side status snapshot.
+func get_runtime_status(_args: Dictionary) -> Dictionary:
+	if not _editor_plugin:
+		return {&"ok": false, &"error": "Editor plugin not available"}
+	var ei := _editor_plugin.get_editor_interface()
+	var playing := ei.is_playing_scene()
+	var uptime_ms := 0
+	if playing and _last_run_scene_started_at_ms > 0:
+		uptime_ms = Time.get_ticks_msec() - _last_run_scene_started_at_ms
+
+	return {
+		&"ok": true,
+		&"playing": playing,
+		&"playing_scene": ei.get_playing_scene() if playing else "",
+		&"last_launched": _last_run_scene_target,
+		&"uptime_ms": uptime_ms,
+		&"runtime_helper_connected": _runtime_is_connected(),
+	}
+
+# =============================================================================
+# Editor-side wait. Runtime tools (take_screenshot, send_input,
+# query_runtime_node, get_runtime_log, list_signal_connections with
+# source="runtime") are routed by the TS MCP server directly to the
+# MCPRuntime autoload running inside the user's game and never reach this
+# editor-side dispatcher.
+# =============================================================================
+func _runtime_is_connected() -> bool:
+	if _mcp_client == null:
+		return false
+	if _mcp_client.has_method("is_runtime_connected"):
+		return _mcp_client.is_runtime_connected()
+	return false
+
+## Hard cap for `wait`. Must stay comfortably below the TS server's per-request
+## timeout (30000ms) so the tool always has time to round-trip the result
+## back before the transport gives up. We also never want to freeze the editor
+## for a long time, so 20s is already on the generous side.
+const _WAIT_MAX_MS: int = 20000
+
+func wait(args: Dictionary) -> Dictionary:
+	# Accept either ms (int) or seconds (float). If both are provided, ms wins.
+	# Values above _WAIT_MAX_MS are clamped (not rejected) so the agent can
+	# pass generous timeouts without tripping an error.
+	#
+	# IMPORTANT: we yield to the scene tree via `create_timer().timeout` INSTEAD
+	# of `OS.delay_msec`, because the latter freezes the editor's main thread,
+	# which in turn freezes the WebSocket pump, causes the TS server to hit
+	# its 30s request timeout, and leaves the socket in a broken state when
+	# Godot tries to write the response.
+	var ms_raw: float = 0.0
+	var had_input: bool = false
+	if args.has(&"ms") and typeof(args.get(&"ms")) != TYPE_NIL:
+		ms_raw = float(args.get(&"ms", 0))
+		had_input = true
+	elif args.has(&"seconds") and typeof(args.get(&"seconds")) != TYPE_NIL:
+		ms_raw = float(args.get(&"seconds", 0.0)) * 1000.0
+		had_input = true
+
+	if not had_input or ms_raw <= 0.0:
+		return {&"ok": false, &"error": "Missing or non-positive duration. Pass ms (int) or seconds (float)."}
+
+	var requested_ms: int = int(round(ms_raw))
+	var ms: int = clampi(requested_ms, 1, _WAIT_MAX_MS)
+	var clamped: bool = requested_ms > _WAIT_MAX_MS
+
+	var tree := Engine.get_main_loop() as SceneTree
+	if tree:
+		await tree.create_timer(ms / 1000.0, false, false, true).timeout
+	else:
+		# Fallback (headless / no SceneTree). Still safer than a long blocking
+		# delay because `ms` is already clamped to _WAIT_MAX_MS.
+		OS.delay_msec(ms)
+
+	var out: Dictionary = {&"ok": true, &"waited_ms": ms}
+	if clamped:
+		out[&"clamped"] = true
+		out[&"requested_ms"] = requested_ms
+		out[&"note"] = "Requested duration exceeded the %dms cap; waited %dms. Keep waits short; for long operations use get_runtime_status polling instead." % [_WAIT_MAX_MS, ms]
+	return out
 
 # =============================================================================
 # rescan_filesystem

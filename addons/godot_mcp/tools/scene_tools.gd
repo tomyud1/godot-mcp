@@ -145,10 +145,15 @@ func create_scene(args: Dictionary) -> Dictionary:
 
 	var node_count := 0
 	for node_data: Variant in nodes:
-		if typeof(node_data) == TYPE_DICTIONARY:
-			var created = _create_node_recursive(node_data, root, root)
-			if created:
-				node_count += _count_nodes(created)
+		if typeof(node_data) != TYPE_DICTIONARY:
+			root.queue_free()
+			return {&"ok": false, &"error": "Every entry in 'nodes' must be a Dictionary; got %s" % type_string(typeof(node_data))}
+		var created_pair := _create_node_recursive(node_data, root, root)
+		if created_pair[1] != "":
+			root.queue_free()
+			return {&"ok": false, &"error": "create_scene: %s" % String(created_pair[1])}
+		if created_pair[0] != null:
+			node_count += _count_nodes(created_pair[0])
 
 	var err := _save_scene(root, scene_path)
 	if not err.is_empty():
@@ -157,34 +162,68 @@ func create_scene(args: Dictionary) -> Dictionary:
 	return {&"ok": true, &"path": scene_path, &"root_type": root_node_type, &"child_count": node_count,
 		&"message": "Scene created at " + scene_path}
 
-func _create_node_recursive(data: Dictionary, parent: Node, owner: Node) -> Node:
-	var n_name: String = str(data.get(&"name", "Node"))
-	var n_type: String = str(data.get(&"type", "Node"))
+## Known child-spec keys. Anything else is a typo (common agent mistake: using
+## parent_path, class, kind, etc. in a child block). We reject unknown keys so
+## the bug surfaces loudly rather than defaulting to a generic Node.
+const _CHILD_SPEC_KEYS: PackedStringArray = [
+	"name", "node_name", "type", "node_type", "script",
+	"properties", "children", "groups",
+]
+
+## Recursively create a child node. Returns [Node_or_null, error_string].
+## Accepts EITHER {name, type} OR {node_name, node_type} so the child spec can
+## use the same key names as add_node's top-level arguments. Unknown keys
+## trigger an error so malformed specs are caught instead of silently
+## producing a generic Node with the wrong name.
+func _create_node_recursive(data: Dictionary, parent: Node, owner: Node) -> Array:
+	# Validate keys first so typos fail loudly instead of silently.
+	for key in data.keys():
+		var key_str: String = str(key)
+		if not _CHILD_SPEC_KEYS.has(key_str):
+			return [null, "Unknown child spec key '%s'. Valid keys: %s" % [key_str, ", ".join(_CHILD_SPEC_KEYS)]]
+
+	var n_name: String = str(data.get(&"node_name", data.get(&"name", "")))
+	var n_type: String = str(data.get(&"node_type", data.get(&"type", "")))
 	var n_script: String = str(data.get(&"script", ""))
 	var props: Dictionary = data.get(&"properties", {})
 	var children: Array = data.get(&"children", [])
+	var groups: Array = data.get(&"groups", [])
 
+	if n_type.is_empty():
+		return [null, "Child spec missing 'node_type' (or 'type')"]
 	if not ClassDB.class_exists(n_type):
-		return null
+		return [null, "Unknown node type in child spec: %s" % n_type]
 	var node: Node = ClassDB.instantiate(n_type) as Node
 	if not node:
-		return null
+		return [null, "Failed to instantiate node of type: %s" % n_type]
 
-	node.name = n_name
+	if not n_name.is_empty():
+		node.name = n_name
 	_set_node_properties(node, props)
 
 	if not n_script.is_empty():
 		var s = load(n_script)
 		if s:
 			node.set_script(s)
+		else:
+			node.free()
+			return [null, "Failed to load script for child '%s': %s" % [n_name, n_script]]
 
-	parent.add_child(node)
+	for g in groups:
+		var gname := str(g)
+		if not gname.is_empty():
+			node.add_to_group(gname, true)
+
+	parent.add_child(node, true)
 	node.owner = owner
 
 	for child_data: Variant in children:
-		if typeof(child_data) == TYPE_DICTIONARY:
-			_create_node_recursive(child_data, node, owner)
-	return node
+		if typeof(child_data) != TYPE_DICTIONARY:
+			return [null, "Every entry in 'children' must be a Dictionary; got %s" % type_string(typeof(child_data))]
+		var sub := _create_node_recursive(child_data, node, owner)
+		if sub[1] != "":
+			return sub
+	return [node, ""]
 
 func _count_nodes(node: Node) -> int:
 	var count := 1
@@ -245,6 +284,9 @@ func add_node(args: Dictionary) -> Dictionary:
 	var node_type: String = str(args.get(&"node_type", "Node"))
 	var parent_path: String = str(args.get(&"parent_path", "."))
 	var properties: Dictionary = args.get(&"properties", {})
+	var script_path: String = str(args.get(&"script", ""))
+	var children: Array = args.get(&"children", [])
+	var groups: Array = args.get(&"groups", [])
 
 	if scene_path.strip_edges() == "res://":
 		return {&"ok": false, &"error": "Missing 'scene_path'"}
@@ -270,15 +312,43 @@ func add_node(args: Dictionary) -> Dictionary:
 
 	new_node.name = node_name
 	_set_node_properties(new_node, properties)
+
+	if not script_path.is_empty():
+		var s := load(script_path)
+		if s:
+			new_node.set_script(s)
+		else:
+			root.queue_free()
+			return {&"ok": false, &"error": "Failed to load script: " + script_path}
+
+	for g in groups:
+		var gname := str(g)
+		if not gname.is_empty():
+			new_node.add_to_group(gname, true)
+
 	parent.add_child(new_node, true)
 	new_node.owner = root
+
+	var added_descendants: int = 0
+	for child_data: Variant in children:
+		if typeof(child_data) != TYPE_DICTIONARY:
+			root.queue_free()
+			return {&"ok": false, &"error": "Every entry in 'children' must be a Dictionary; got %s" % type_string(typeof(child_data))}
+		var created_pair := _create_node_recursive(child_data, new_node, root)
+		if created_pair[1] != "":
+			root.queue_free()
+			return {&"ok": false, &"error": "add_node: %s" % String(created_pair[1])}
+		if created_pair[0] != null:
+			added_descendants += _count_nodes(created_pair[0])
 
 	var err := _save_scene(root, scene_path)
 	if not err.is_empty():
 		return err
 
 	return {&"ok": true, &"scene_path": scene_path, &"node_name": new_node.name, &"node_type": node_type,
-		&"message": "Added %s (%s) to scene" % [new_node.name, node_type]}
+		&"descendants_added": added_descendants,
+		&"message": "Added %s (%s) to scene%s" % [new_node.name, node_type,
+			(" with %d descendant(s)" % added_descendants) if added_descendants > 0 else ""]}
 
 # =============================================================================
 # remove_node
@@ -329,6 +399,12 @@ func modify_node_property(args: Dictionary) -> Dictionary:
 		return {&"ok": false, &"error": "Missing 'property_name'"}
 	if value == null:
 		return {&"ok": false, &"error": "Missing 'value'"}
+
+	# Refuse to set the script via modify_node_property: it rewrites the .tscn
+	# but doesn't update the editor's live node, which makes connect_signal
+	# fail later. attach_script does both.
+	if property_name == "script":
+		return {&"ok": false, &"error": "Use attach_script to set or change a node's script. modify_node_property only edits the .tscn on disk, leaving the editor's in-memory node without the script (which breaks connect_signal and other tools that validate against the live node)."}
 
 	var result := _load_scene(scene_path)
 	if not result[1].is_empty():
@@ -689,15 +765,31 @@ func set_sprite_texture(args: Dictionary) -> Dictionary:
 	var texture: Texture2D = null
 
 	match texture_type:
-		"ImageTexture":
+		# Canonical name for "load whatever texture is at this path".
+		# "ImageTexture" is kept as a deprecated alias for backward compat.
+		"FromPath", "ImageTexture":
 			var tex_path: String = str(texture_params.get(&"path", ""))
 			if tex_path.is_empty():
 				root.queue_free()
-				return {&"ok": false, &"error": "Missing 'path' in texture_params for ImageTexture"}
+				return {&"ok": false, &"error": "Missing 'path' in texture_params for %s" % texture_type}
 			texture = load(tex_path)
 			if not texture:
 				root.queue_free()
 				return {&"ok": false, &"error": "Failed to load texture: " + tex_path}
+
+		# Real ImageTexture from raw image data on disk (use when you need
+		# an in-memory ImageTexture rather than a CompressedTexture2D).
+		"NewImageTexture":
+			var src_path: String = str(texture_params.get(&"path", ""))
+			if src_path.is_empty():
+				root.queue_free()
+				return {&"ok": false, &"error": "Missing 'path' in texture_params for NewImageTexture"}
+			var img := Image.new()
+			var ierr := img.load(ProjectSettings.globalize_path(src_path))
+			if ierr != OK:
+				root.queue_free()
+				return {&"ok": false, &"error": "Image.load failed for %s (err=%d %s)" % [src_path, ierr, error_string(ierr)]}
+			texture = ImageTexture.create_from_image(img)
 
 		"PlaceholderTexture2D":
 			texture = PlaceholderTexture2D.new()
@@ -725,7 +817,24 @@ func set_sprite_texture(args: Dictionary) -> Dictionary:
 	if not err.is_empty():
 		return err
 
-	return {&"ok": true, &"message": "Set %s texture on node '%s'" % [texture_type, node_path]}
+	# Report what the texture actually decodes to. For texture_type "FromPath"
+	# (or its alias "ImageTexture"), Godot's importer typically returns a
+	# CompressedTexture2D, NOT an ImageTexture — surfacing this here saves the
+	# agent a round trip via get_resource_info.
+	var resolved_class: String = texture.get_class() if texture else ""
+	var tex_path: String = ""
+	if texture_type in ["FromPath", "ImageTexture", "NewImageTexture"]:
+		tex_path = str(texture_params.get(&"path", ""))
+
+	return {
+		&"ok": true,
+		&"texture_type": texture_type,
+		&"texture_class": resolved_class,
+		&"texture_path": tex_path,
+		&"width": texture.get_width() if texture else 0,
+		&"height": texture.get_height() if texture else 0,
+		&"message": "Set %s (%s) on node '%s'" % [texture_type, resolved_class, node_path],
+	}
 
 # =============================================================================
 # instance_scene
@@ -1472,3 +1581,713 @@ func set_scene_node_property(args: Dictionary) -> Dictionary:
 
 func _parse_typed_value(value, type_hint: int):
 	return VariantCodec.parse_typed_value(value, type_hint)
+
+# =============================================================================
+# set_node_properties (bulk)
+# =============================================================================
+## Apply multiple properties to a node in a single load/save cycle.
+## Non-atomic: properties that exist and validate are applied; the rest are
+## reported as failures. The scene is only saved if at least one applied.
+func set_node_properties(args: Dictionary) -> Dictionary:
+	var scene_path: String = _ensure_res_path(str(args.get(&"scene_path", "")))
+	var node_path: String = str(args.get(&"node_path", "."))
+	var properties: Dictionary = args.get(&"properties", {})
+
+	if scene_path.strip_edges() == "res://":
+		return {&"ok": false, &"error": "Missing 'scene_path'"}
+	if properties.is_empty():
+		return {&"ok": false, &"error": "Missing or empty 'properties' dictionary"}
+
+	var result := _load_scene(scene_path)
+	if not result[1].is_empty():
+		return result[1]
+
+	var root: Node = result[0]
+	var target := _find_node(root, node_path)
+	if not target:
+		root.queue_free()
+		return {&"ok": false, &"error": "Node not found: " + node_path}
+
+	# Build the set of valid property names once.
+	var valid_props: Dictionary = {}
+	for prop in target.get_property_list():
+		valid_props[str(prop[&"name"])] = true
+
+	var applied: Array = []
+	var failed: Array = []
+
+	for prop_name_v in properties.keys():
+		var prop_name := str(prop_name_v)
+		var raw_value = properties[prop_name_v]
+
+		if not valid_props.has(prop_name):
+			failed.append({&"property": prop_name, &"reason": "no such property on " + target.get_class()})
+			continue
+
+		var old_value = target.get(prop_name)
+		var parsed = _parse_value(raw_value)
+
+		if old_value is Resource and not (parsed is Resource):
+			failed.append({&"property": prop_name, &"reason": "expects a Resource (use set_resource_property or specialized tool)"})
+			continue
+
+		target.set(prop_name, parsed)
+		applied.append({
+			&"property": prop_name,
+			&"old": _serialize_value(old_value),
+			&"new": _serialize_value(parsed),
+		})
+
+	if applied.is_empty():
+		root.queue_free()
+		return {
+			&"ok": false,
+			&"error": "No properties applied. See 'failed' for per-property reasons.",
+			&"failed": failed,
+		}
+
+	var err := _save_scene(root, scene_path)
+	if not err.is_empty():
+		return err
+
+	return {
+		&"ok": true,
+		&"scene_path": scene_path,
+		&"node_path": node_path,
+		&"applied": applied,
+		&"failed": failed,
+		&"message": "Applied %d/%d propert%s on %s" % [
+			applied.size(), applied.size() + failed.size(),
+			"y" if (applied.size() + failed.size()) == 1 else "ies",
+			node_path,
+		],
+	}
+
+# =============================================================================
+# Node groups (scene-file editing)
+# =============================================================================
+## Set the FULL group membership of a node. `mode` controls behavior:
+##   "replace" (default) — node ends up in exactly the listed groups
+##   "add"     — listed groups added; existing groups untouched
+##   "remove"  — listed groups removed; others untouched
+func set_node_groups(args: Dictionary) -> Dictionary:
+	var scene_path: String = _ensure_res_path(str(args.get(&"scene_path", "")))
+	var node_path: String = str(args.get(&"node_path", "."))
+	var groups_arg: Array = args.get(&"groups", [])
+	var mode: String = str(args.get(&"mode", "replace"))
+
+	if scene_path.strip_edges() == "res://":
+		return {&"ok": false, &"error": "Missing 'scene_path'"}
+
+	var result := _load_scene(scene_path)
+	if not result[1].is_empty():
+		return result[1]
+
+	var root: Node = result[0]
+	var target := _find_node(root, node_path)
+	if not target:
+		root.queue_free()
+		return {&"ok": false, &"error": "Node not found: " + node_path}
+
+	var requested: Array[String] = []
+	for g in groups_arg:
+		var s := str(g).strip_edges()
+		if not s.is_empty():
+			requested.append(s)
+
+	var current_groups := target.get_groups()
+
+	match mode:
+		"replace":
+			for g in current_groups:
+				target.remove_from_group(g)
+			for g in requested:
+				target.add_to_group(g, true)
+		"add":
+			for g in requested:
+				target.add_to_group(g, true)
+		"remove":
+			for g in requested:
+				target.remove_from_group(g)
+		_:
+			root.queue_free()
+			return {&"ok": false, &"error": "Invalid 'mode': " + mode + ". Use 'replace', 'add', or 'remove'."}
+
+	var err := _save_scene(root, scene_path)
+	if not err.is_empty():
+		return err
+
+	# Re-load to read the persisted groups.
+	var verify := _load_scene(scene_path)
+	var resulting_groups: Array = []
+	if verify[1].is_empty():
+		var v_target := _find_node(verify[0], node_path)
+		if v_target:
+			resulting_groups = v_target.get_groups()
+		verify[0].queue_free()
+
+	return {
+		&"ok": true,
+		&"scene_path": scene_path,
+		&"node_path": node_path,
+		&"mode": mode,
+		&"groups": resulting_groups,
+		&"message": "Node '%s' groups (%s): %s" % [node_path, mode, str(resulting_groups)],
+	}
+
+func get_node_groups(args: Dictionary) -> Dictionary:
+	var scene_path: String = _ensure_res_path(str(args.get(&"scene_path", "")))
+	var node_path: String = str(args.get(&"node_path", "."))
+
+	if scene_path.strip_edges() == "res://":
+		return {&"ok": false, &"error": "Missing 'scene_path'"}
+
+	var result := _load_scene(scene_path)
+	if not result[1].is_empty():
+		return result[1]
+
+	var root: Node = result[0]
+	var target := _find_node(root, node_path)
+	if not target:
+		root.queue_free()
+		return {&"ok": false, &"error": "Node not found: " + node_path}
+
+	var groups := target.get_groups()
+	root.queue_free()
+
+	return {
+		&"ok": true,
+		&"scene_path": scene_path,
+		&"node_path": node_path,
+		&"groups": groups,
+	}
+
+func find_nodes_in_group(args: Dictionary) -> Dictionary:
+	var scene_path: String = _ensure_res_path(str(args.get(&"scene_path", "")))
+	var group_name: String = str(args.get(&"group", ""))
+
+	if scene_path.strip_edges() == "res://":
+		return {&"ok": false, &"error": "Missing 'scene_path'"}
+	if group_name.strip_edges().is_empty():
+		return {&"ok": false, &"error": "Missing 'group'"}
+
+	var result := _load_scene(scene_path)
+	if not result[1].is_empty():
+		return result[1]
+
+	var root: Node = result[0]
+	var matches: Array = []
+	_collect_nodes_in_group(root, group_name, ".", matches)
+	root.queue_free()
+
+	return {
+		&"ok": true,
+		&"scene_path": scene_path,
+		&"group": group_name,
+		&"matches": matches,
+		&"count": matches.size(),
+	}
+
+func _collect_nodes_in_group(node: Node, group_name: String, path: String, matches: Array) -> void:
+	if node.is_in_group(group_name):
+		matches.append({&"path": path, &"name": str(node.name), &"type": node.get_class()})
+	for child in node.get_children():
+		var child_path = child.name if path == "." else path + "/" + child.name
+		_collect_nodes_in_group(child, group_name, child_path, matches)
+
+# =============================================================================
+# Generic resource property tools
+# =============================================================================
+## Set a property on a node's existing Resource property (or on a sub-resource of one).
+## Example uses: tweak a SphereShape3D radius without re-creating the shape;
+## change a StandardMaterial3D albedo_color on an existing material.
+##
+## resource_path: dot/slash path from the node to the resource.
+##   "shape"                       → the node's shape resource
+##   "material/albedo_color_texture" → texture sub-resource of the node's material
+func set_resource_property(args: Dictionary) -> Dictionary:
+	var scene_path: String = _ensure_res_path(str(args.get(&"scene_path", "")))
+	var node_path: String = str(args.get(&"node_path", "."))
+	var resource_path: String = str(args.get(&"resource_path", ""))
+	var property_name: String = str(args.get(&"property_name", ""))
+	var value = args.get(&"value")
+
+	if scene_path.strip_edges() == "res://":
+		return {&"ok": false, &"error": "Missing 'scene_path'"}
+	if property_name.strip_edges().is_empty():
+		return {&"ok": false, &"error": "Missing 'property_name'"}
+
+	var result := _load_scene(scene_path)
+	if not result[1].is_empty():
+		return result[1]
+
+	var root: Node = result[0]
+	var target := _find_node(root, node_path)
+	if not target:
+		root.queue_free()
+		return {&"ok": false, &"error": "Node not found: " + node_path}
+
+	# Walk to the resource.
+	var resource: Object = target
+	if not resource_path.is_empty():
+		for segment in resource_path.split("/", false):
+			if resource == null:
+				root.queue_free()
+				return {&"ok": false, &"error": "Resource path broke at segment '%s' (got null)" % segment}
+			resource = resource.get(segment)
+		if resource == null:
+			root.queue_free()
+			return {&"ok": false, &"error": "Resource at '%s' is null on node '%s'" % [resource_path, node_path]}
+		if not (resource is Resource):
+			root.queue_free()
+			return {&"ok": false, &"error": "'%s' is not a Resource (got %s)" % [resource_path, typeof(resource)]}
+
+	var has_prop := false
+	for p in resource.get_property_list():
+		if str(p[&"name"]) == property_name:
+			has_prop = true
+			break
+	if not has_prop:
+		root.queue_free()
+		return {&"ok": false, &"error": "Property '%s' not found on %s" % [property_name, resource.get_class()]}
+
+	var old_value = resource.get(property_name)
+	var parsed = _parse_value(value)
+	resource.set(property_name, parsed)
+
+	var err := _save_scene(root, scene_path)
+	if not err.is_empty():
+		return err
+
+	return {
+		&"ok": true,
+		&"scene_path": scene_path,
+		&"node_path": node_path,
+		&"resource_path": resource_path,
+		&"property_name": property_name,
+		&"old_value": _serialize_value(old_value),
+		&"new_value": _serialize_value(parsed),
+		&"message": "Set %s.%s.%s" % [node_path, resource_path, property_name],
+	}
+
+## Save a Resource currently held by a node (or sub-resource) to its own .tres file
+## so it can be shared by other scenes / referenced by path. After saving, the
+## node's property is reassigned to the loaded-from-disk version so future edits
+## via this tool persist to that file.
+func save_resource_to_file(args: Dictionary) -> Dictionary:
+	var scene_path: String = _ensure_res_path(str(args.get(&"scene_path", "")))
+	var node_path: String = str(args.get(&"node_path", "."))
+	var resource_path: String = str(args.get(&"resource_path", ""))
+	var save_to: String = _ensure_res_path(str(args.get(&"save_to", "")))
+
+	if scene_path.strip_edges() == "res://":
+		return {&"ok": false, &"error": "Missing 'scene_path'"}
+	if save_to.strip_edges() == "res://":
+		return {&"ok": false, &"error": "Missing 'save_to'"}
+
+	var result := _load_scene(scene_path)
+	if not result[1].is_empty():
+		return result[1]
+
+	var root: Node = result[0]
+	var target := _find_node(root, node_path)
+	if not target:
+		root.queue_free()
+		return {&"ok": false, &"error": "Node not found: " + node_path}
+
+	# Walk to the resource. Track parent for re-assignment.
+	var parent_obj: Object = target
+	var parent_prop: String = ""
+	var resource: Object = target
+	if resource_path.is_empty():
+		root.queue_free()
+		return {&"ok": false, &"error": "Missing 'resource_path' (e.g., 'shape', 'material', 'mesh')"}
+
+	var segments := Array(resource_path.split("/", false))
+	for i in range(segments.size()):
+		var seg = str(segments[i])
+		if i == segments.size() - 1:
+			parent_obj = resource
+			parent_prop = seg
+		resource = resource.get(seg)
+		if resource == null:
+			root.queue_free()
+			return {&"ok": false, &"error": "Resource walk broke at '%s'" % seg}
+
+	if not (resource is Resource):
+		root.queue_free()
+		return {&"ok": false, &"error": "Target is not a Resource (got %s)" % typeof(resource)}
+
+	# Ensure target dir exists.
+	var dir := save_to.get_base_dir()
+	if not DirAccess.dir_exists_absolute(dir):
+		DirAccess.make_dir_recursive_absolute(dir)
+
+	var save_err := ResourceSaver.save(resource, save_to)
+	if save_err != OK:
+		root.queue_free()
+		return {&"ok": false, &"error": "ResourceSaver.save failed: %s (%d)" % [error_string(save_err), save_err]}
+
+	var loaded := load(save_to)
+	if loaded == null:
+		root.queue_free()
+		return {&"ok": false, &"error": "Saved but failed to reload from %s" % save_to}
+
+	parent_obj.set(parent_prop, loaded)
+
+	var serr := _save_scene(root, scene_path)
+	if not serr.is_empty():
+		return serr
+
+	return {
+		&"ok": true,
+		&"scene_path": scene_path,
+		&"node_path": node_path,
+		&"resource_path": resource_path,
+		&"saved_to": save_to,
+		&"resource_class": loaded.get_class(),
+		&"message": "Saved %s to %s and reattached to node" % [loaded.get_class(), save_to],
+	}
+
+# =============================================================================
+# get_resource_info — generic resource introspection (any .tres/.res/.png/etc.)
+# =============================================================================
+## Inspect any resource on disk: type, dimensions for textures, vertex counts
+## for meshes, key properties, and dependencies. Replaces ad-hoc image/PNG checks
+## with a uniform tool that works for Resource, PackedScene, Texture2D, Mesh,
+## AudioStream, Material, FontFile, Animation, Shader, etc.
+func get_resource_info(args: Dictionary) -> Dictionary:
+	# Two modes:
+	#   1) path = "res://...resource"     → load from disk and inspect
+	#   2) scene_path + node_path + resource_property → read a resource that
+	#      lives ON a node inside a scene file (no need to save it as .tres
+	#      first). Supports either or both of these arg shapes.
+	var path: String = _ensure_res_path(str(args.get(&"path", "")))
+	var scene_path: String = _ensure_res_path(str(args.get(&"scene_path", "")))
+	var node_path: String = str(args.get(&"node_path", ""))
+	var resource_property: String = str(args.get(&"resource_property", ""))
+
+	var res: Resource = null
+	var info: Dictionary = {&"ok": true}
+	var loaded_root: Node = null
+
+	if path.strip_edges() != "res://":
+		if not FileAccess.file_exists(path):
+			return {&"ok": false, &"error": "File not found: " + path}
+		res = load(path)
+		if res == null:
+			return {&"ok": false, &"error": "Failed to load resource: " + path}
+		info[&"path"] = path
+		var f := FileAccess.open(path, FileAccess.READ)
+		if f:
+			info[&"file_size_bytes"] = f.get_length()
+			f.close()
+	elif scene_path.strip_edges() != "res://" and not node_path.is_empty() and not resource_property.is_empty():
+		var sresult := _load_scene(scene_path)
+		if not sresult[1].is_empty():
+			return sresult[1]
+		loaded_root = sresult[0]
+		var target := _find_node(loaded_root, node_path)
+		if not target:
+			loaded_root.queue_free()
+			return {&"ok": false, &"error": "Node not found: " + node_path}
+		var prop_value = target.get(resource_property)
+		if prop_value == null or not (prop_value is Resource):
+			loaded_root.queue_free()
+			return {&"ok": false, &"error": "Property '%s' on node '%s' is not a Resource (got %s)" % [resource_property, node_path, type_string(typeof(prop_value))]}
+		res = prop_value
+		info[&"scene_path"] = scene_path
+		info[&"node_path"] = node_path
+		info[&"resource_property"] = resource_property
+	else:
+		return {&"ok": false, &"error": "Provide either 'path' (resource on disk) or 'scene_path'+'node_path'+'resource_property' (resource attached to a node)."}
+
+	info[&"class"] = res.get_class()
+	info[&"resource_name"] = res.resource_name
+	if res.resource_path:
+		info[&"resource_path"] = res.resource_path
+
+	# Type-specific extras.
+	if res is Texture2D:
+		var t: Texture2D = res
+		info[&"width"] = t.get_width()
+		info[&"height"] = t.get_height()
+		info[&"has_alpha"] = t.has_alpha() if t.has_method("has_alpha") else null
+
+	elif res is Mesh:
+		var m: Mesh = res
+		var surfaces: Array = []
+		for i in range(m.get_surface_count()):
+			var arr := m.surface_get_arrays(i)
+			var verts: int = arr[Mesh.ARRAY_VERTEX].size() if arr and arr.size() > Mesh.ARRAY_VERTEX else 0
+			surfaces.append({&"index": i, &"vertices": verts})
+		info[&"surface_count"] = m.get_surface_count()
+		info[&"surfaces"] = surfaces
+		info[&"aabb"] = _serialize_value(m.get_aabb())
+
+	elif res is AudioStream:
+		var a: AudioStream = res
+		info[&"length_seconds"] = a.get_length() if a.has_method("get_length") else null
+
+	elif res is PackedScene:
+		var ps: PackedScene = res
+		var st := ps.get_state()
+		info[&"node_count"] = st.get_node_count()
+
+	elif res is Material:
+		# Surface a few common Material properties.
+		var keys := ["albedo_color", "metallic", "roughness", "emission", "shading_mode"]
+		var mat_props := {}
+		for k in keys:
+			var v = res.get(k)
+			if v != null:
+				mat_props[k] = _serialize_value(v)
+		info[&"properties"] = mat_props
+
+	elif res is Animation:
+		var anim: Animation = res
+		info[&"length_seconds"] = anim.length
+		info[&"track_count"] = anim.get_track_count()
+		info[&"loop_mode"] = anim.loop_mode
+
+	elif res is Shape2D or res is Shape3D:
+		var keys2 := ["radius", "height", "size", "extents"]
+		var sh_props := {}
+		for k in keys2:
+			var v = res.get(k)
+			if v != null:
+				sh_props[k] = _serialize_value(v)
+		info[&"properties"] = sh_props
+
+	# Dependencies (other resources this one references). Only meaningful for
+	# resources actually on disk.
+	var dep_path: String = path if path.strip_edges() != "res://" else (res.resource_path if res else "")
+	if not dep_path.is_empty():
+		var deps := ResourceLoader.get_dependencies(dep_path)
+		if deps.size() > 0:
+			info[&"dependencies"] = Array(deps)
+
+	if loaded_root:
+		loaded_root.queue_free()
+
+	return info
+
+# =============================================================================
+# Signal connection tools (scene file source)
+# =============================================================================
+## List signal connections originating from a node in a scene file.
+## For runtime queries on a live game, set source="runtime" (handled separately).
+func list_signal_connections(args: Dictionary) -> Dictionary:
+	var source: String = str(args.get(&"source", "scene_file"))
+	if source != "scene_file":
+		return {&"ok": false, &"error": "list_signal_connections source='%s' is handled by the runtime helper. Ensure your game is running and try again." % source}
+
+	var scene_path: String = _ensure_res_path(str(args.get(&"scene_path", "")))
+	var node_path: String = str(args.get(&"node_path", "."))
+	var include_outgoing: bool = bool(args.get(&"include_outgoing", true))
+	var include_incoming: bool = bool(args.get(&"include_incoming", true))
+
+	if scene_path.strip_edges() == "res://":
+		return {&"ok": false, &"error": "Missing 'scene_path'"}
+
+	var result := _load_scene(scene_path)
+	if not result[1].is_empty():
+		return result[1]
+
+	var root: Node = result[0]
+	var target := _find_node(root, node_path)
+	if not target:
+		root.queue_free()
+		return {&"ok": false, &"error": "Node not found: " + node_path}
+
+	var outgoing: Array = []
+	var incoming: Array = []
+
+	if include_outgoing:
+		for sig in target.get_signal_list():
+			var sig_name := str(sig[&"name"])
+			for conn in target.get_signal_connection_list(sig_name):
+				outgoing.append(_serialize_connection(conn, root))
+
+	if include_incoming:
+		# Walk the whole scene and collect connections targeting our node.
+		_collect_incoming(root, target, root, incoming)
+
+	root.queue_free()
+
+	return {
+		&"ok": true,
+		&"source": "scene_file",
+		&"scene_path": scene_path,
+		&"node_path": node_path,
+		&"outgoing": outgoing,
+		&"incoming": incoming,
+		&"outgoing_count": outgoing.size(),
+		&"incoming_count": incoming.size(),
+	}
+
+func _collect_incoming(node: Node, target: Node, root: Node, out: Array) -> void:
+	for sig in node.get_signal_list():
+		var sig_name := str(sig[&"name"])
+		for conn in node.get_signal_connection_list(sig_name):
+			var callable: Callable = conn[&"callable"]
+			if callable.get_object() == target:
+				out.append(_serialize_connection(conn, root))
+	for child in node.get_children():
+		_collect_incoming(child, target, root, out)
+
+func _serialize_connection(conn: Dictionary, root: Node) -> Dictionary:
+	var callable: Callable = conn[&"callable"]
+	var src_obj = conn.get(&"source", null)
+	var src_node = src_obj if src_obj is Node else null
+	var dst_node = callable.get_object() if callable.get_object() is Node else null
+	return {
+		&"signal": str(conn.get(&"signal", "")) if conn.has(&"signal") else str(conn.get(&"name", "")),
+		&"from_node": _node_path_str(src_node, root) if src_node else null,
+		&"to_node": _node_path_str(dst_node, root) if dst_node else null,
+		&"method": callable.get_method(),
+		&"flags": int(conn.get(&"flags", 0)),
+	}
+
+func _node_path_str(node: Node, root: Node) -> String:
+	if node == null:
+		return ""
+	if node == root:
+		return "."
+	return str(root.get_path_to(node))
+
+## Add a signal connection between two nodes in a scene file.
+func connect_signal(args: Dictionary) -> Dictionary:
+	var scene_path: String = _ensure_res_path(str(args.get(&"scene_path", "")))
+	var from_node: String = str(args.get(&"from_node", ""))
+	var signal_name: String = str(args.get(&"signal", ""))
+	var to_node: String = str(args.get(&"to_node", ""))
+	var method: String = str(args.get(&"method", ""))
+	var flags: int = int(args.get(&"flags", 0))
+
+	if scene_path.strip_edges() == "res://":
+		return {&"ok": false, &"error": "Missing 'scene_path'"}
+	if from_node.is_empty() or signal_name.is_empty() or to_node.is_empty() or method.is_empty():
+		return {&"ok": false, &"error": "from_node, signal, to_node, and method are all required"}
+
+	var result := _load_scene(scene_path)
+	if not result[1].is_empty():
+		return result[1]
+
+	var root: Node = result[0]
+	var src := _find_node(root, from_node)
+	var dst := _find_node(root, to_node)
+	if not src:
+		root.queue_free()
+		return {&"ok": false, &"error": "from_node not found: " + from_node}
+	if not dst:
+		root.queue_free()
+		return {&"ok": false, &"error": "to_node not found: " + to_node}
+	if not src.has_signal(signal_name):
+		root.queue_free()
+		return {&"ok": false, &"error": "Signal '%s' not found on %s" % [signal_name, src.get_class()]}
+	if not dst.has_method(method):
+		root.queue_free()
+		return {&"ok": false, &"error": "Method '%s' not found on %s. Make sure the target script defines it (and that the script was attached via attach_script so the editor's live node sees it)." % [method, dst.get_class()]}
+
+	var callable := Callable(dst, method)
+	if src.is_connected(signal_name, callable):
+		root.queue_free()
+		return {&"ok": true, &"already_connected": true,
+			&"message": "Connection already exists; no change."}
+
+	# CRITICAL: connections must be made with CONNECT_PERSIST (flag 8) or
+	# PackedScene.pack() will strip them when we save. Force it on so the
+	# caller can't silently end up with a runtime-only connection that
+	# vanishes on save.
+	var persist_flags: int = flags | Object.CONNECT_PERSIST
+	var err := src.connect(signal_name, callable, persist_flags)
+	if err != OK:
+		root.queue_free()
+		return {&"ok": false, &"error": "connect() returned %d (%s)" % [err, error_string(err)]}
+
+	var serr := _save_scene(root, scene_path)
+	if not serr.is_empty():
+		return serr
+
+	# Verify the connection actually landed in the .tscn by re-reading the
+	# scene state. If it didn't, the save silently dropped it (usually
+	# because the dst node is not an owned descendant of root) and we should
+	# return a clear error rather than claim success.
+	var persisted := _signal_is_persisted(scene_path, from_node, signal_name, to_node, method)
+	if not persisted:
+		return {&"ok": false, &"error": "connect() succeeded at runtime but the connection did not persist into the .tscn. Ensure the target node is part of the scene (not an external autoload) and that the script is attached via attach_script."}
+
+	return {
+		&"ok": true,
+		&"scene_path": scene_path,
+		&"from_node": from_node,
+		&"signal": signal_name,
+		&"to_node": to_node,
+		&"method": method,
+		&"flags": persist_flags,
+		&"persisted": true,
+		&"message": "Connected %s.%s -> %s.%s (written to .tscn)" % [from_node, signal_name, to_node, method],
+	}
+
+## Re-read the saved .tscn and confirm the [connection] is there. This catches
+## the silent "pack stripped it" case.
+func _signal_is_persisted(scene_path: String, from_node: String, signal_name: String, to_node: String, method: String) -> bool:
+	# Force re-read from disk; the resource we just saved may still be cached
+	# in memory from the in-editor loader.
+	var packed := ResourceLoader.load(scene_path, "PackedScene", ResourceLoader.CACHE_MODE_IGNORE) as PackedScene
+	if packed == null:
+		return false
+	var st := packed.get_state()
+	var want_from := NodePath(from_node).get_concatenated_names()
+	var want_to := NodePath(to_node).get_concatenated_names()
+	for i in range(st.get_connection_count()):
+		var src_path: NodePath = st.get_connection_source(i)
+		var dst_path: NodePath = st.get_connection_target(i)
+		var sig: StringName = st.get_connection_signal(i)
+		var mth: StringName = st.get_connection_method(i)
+		if String(sig) != signal_name or String(mth) != method:
+			continue
+		if src_path.get_concatenated_names() == want_from and dst_path.get_concatenated_names() == want_to:
+			return true
+	return false
+
+func disconnect_signal(args: Dictionary) -> Dictionary:
+	var scene_path: String = _ensure_res_path(str(args.get(&"scene_path", "")))
+	var from_node: String = str(args.get(&"from_node", ""))
+	var signal_name: String = str(args.get(&"signal", ""))
+	var to_node: String = str(args.get(&"to_node", ""))
+	var method: String = str(args.get(&"method", ""))
+
+	if scene_path.strip_edges() == "res://":
+		return {&"ok": false, &"error": "Missing 'scene_path'"}
+	if from_node.is_empty() or signal_name.is_empty() or to_node.is_empty() or method.is_empty():
+		return {&"ok": false, &"error": "from_node, signal, to_node, and method are all required"}
+
+	var result := _load_scene(scene_path)
+	if not result[1].is_empty():
+		return result[1]
+
+	var root: Node = result[0]
+	var src := _find_node(root, from_node)
+	var dst := _find_node(root, to_node)
+	if not src or not dst:
+		root.queue_free()
+		return {&"ok": false, &"error": "from_node or to_node not found"}
+
+	var callable := Callable(dst, method)
+	if not src.is_connected(signal_name, callable):
+		root.queue_free()
+		return {&"ok": true, &"already_disconnected": true,
+			&"message": "Connection did not exist; no change."}
+
+	src.disconnect(signal_name, callable)
+
+	var serr := _save_scene(root, scene_path)
+	if not serr.is_empty():
+		return serr
+
+	return {
+		&"ok": true,
+		&"message": "Disconnected %s.%s -> %s.%s" % [from_node, signal_name, to_node, method],
+	}

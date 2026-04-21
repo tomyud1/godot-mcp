@@ -178,13 +178,25 @@ export const projectTools: ToolDefinition[] = [
   },
   {
     name: 'run_scene',
-    description: 'Run a scene in the Godot editor. Returns immediately — the scene launches asynchronously. Recommended workflow after editing code: 1) run_scene, 2) wait a few seconds (longer for large projects), 3) is_playing to confirm the scene started (if false, it crashed — check get_errors), 4) get_errors to check for runtime errors, 5) stop_scene before making fixes.',
+    description: 'Launch a scene in the Godot editor. By default the call BLOCKS until the editor flips to playing state (so the next get_errors / take_screenshot / send_input call sees a real game). The response includes started, runtime_connected, wait_for_started_ms, wait_for_runtime_ms, scene_path, and runtime_root. Use runtime_root (e.g. "/root/Main") as the prefix for query_runtime_node node_path arguments \u2014 it is computed from the actual root node name in the .tscn, NOT from the file name. Set wait_for_runtime=true to additionally wait for the in-game MCPRuntime helper to connect (required before take_screenshot / send_input will work). Recommended testing loop: run_scene({wait_for_runtime:true}) \u2192 query_runtime_node / send_input / take_screenshot \u2192 get_errors \u2192 stop_scene.',
     inputSchema: {
       type: 'object',
       properties: {
         scene: {
           type: 'string',
-          description: 'Scene to run: omit for main scene, "current" for the open scene, or a res:// path for a specific scene'
+          description: 'Scene to run: omit for main scene, "current" for the currently open scene, or a res:// path for a specific scene'
+        },
+        block_until_started: {
+          type: 'boolean',
+          description: 'Wait until the editor reports playing=true before returning (default: true). Up to startup_timeout_ms.'
+        },
+        wait_for_runtime: {
+          type: 'boolean',
+          description: 'Wait until the MCPRuntime in-game helper connects back (required for take_screenshot/send_input). Default: false.'
+        },
+        startup_timeout_ms: {
+          type: 'number',
+          description: 'Max time in ms to wait for the above signals. Default: 10000. Bump to 15000\u201320000 on slower machines or autoload-heavy projects.'
         }
       }
     }
@@ -199,10 +211,76 @@ export const projectTools: ToolDefinition[] = [
   },
   {
     name: 'is_playing',
-    description: 'Check if a scene is currently running in the Godot editor. Returns playing status and the scene path. Use after run_scene to confirm the scene started successfully — if playing is false shortly after run_scene, the scene likely crashed on startup.',
+    description: 'Compatibility shim: returns {playing, scene}. For richer info (uptime, runtime helper connectivity, last-launched target) prefer get_runtime_status.',
     inputSchema: {
       type: 'object',
       properties: {}
+    }
+  },
+  {
+    name: 'get_runtime_status',
+    description: 'Combined editor + runtime status snapshot. Returns playing, playing_scene, last_launched ("current"|"main"|res-path), uptime_ms since the most recent run_scene, and runtime_helper_connected (true once the in-game MCPRuntime autoload is talking to the MCP server).',
+    inputSchema: { type: 'object', properties: {} }
+  },
+  {
+    name: 'wait',
+    description: 'Sleep server-side. Useful between input events to let the game process them. Capped at 30000ms / 30s. Pass either ms or seconds (ms wins if both given).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ms: { type: 'number', description: 'Milliseconds to wait (1..30000).' },
+        seconds: { type: 'number', description: 'Seconds to wait (0.001..30). Convenient when the agent is thinking in seconds.' }
+      }
+    }
+  },
+  {
+    name: 'take_screenshot',
+    description: 'Capture the current viewport of the running game and save it as a PNG. REQUIRES the game to be running with the MCPRuntime autoload connected (run_scene with wait_for_runtime=true first). Returns resource_path, absolute_path, width, height, and (optionally) base64_png. Default save location is res://addons/godot_mcp/cache/screenshots/.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        save_to: { type: 'string', description: 'Optional res:// or user:// destination path. Defaults to res://addons/godot_mcp/cache/screenshots/screenshot_<ms>.png' },
+        return_base64: { type: 'boolean', description: 'Also include the PNG bytes inline as base64 (default: false). Useful when the agent has no filesystem access.' }
+      }
+    }
+  },
+  {
+    name: 'send_input',
+    description: 'Synthesize an InputEvent and dispatch it to the running game via Input.parse_input_event. REQUIRES the game to be running with the MCPRuntime autoload connected. Use this to drive automated tests: click buttons, press keys, fire input actions. For multi-step interactions, alternate send_input \u2192 wait \u2192 query_runtime_node / take_screenshot.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        event: {
+          type: 'object',
+          description: 'InputEvent descriptor:\n  Key: {type:"key", key:"Space", pressed:true, shift?:bool, ctrl?:bool, alt?:bool} or {type:"key", keycode:32, pressed:true}\n  Mouse button: {type:"mouse_button", button_index:1, pressed:true, position:{x,y}, double_click?:bool} (1=left, 2=right, 3=middle)\n  Mouse motion: {type:"mouse_motion", position:{x,y}, relative?:{x,y}}\n  Action (named input from the InputMap): {type:"action", action:"jump", pressed:true, strength?:1.0}'
+        }
+      },
+      required: ['event']
+    }
+  },
+  {
+    name: 'query_runtime_node',
+    description: 'Query a live node in the running scene tree. REQUIRES the game to be running with the MCPRuntime autoload connected. Returns class, path, valid, groups, and a map of property values. By default returns position, global_position, rotation, scale, visible, modulate \u2014 pass `properties:["..."]` to override. Set include_children=true to also list direct child nodes.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        node_path: { type: 'string', description: 'Absolute path (e.g. /root/Main/Player) or relative to current_scene.' },
+        properties: { type: 'array', items: { type: 'string' }, description: 'Property names to read. Default: position, global_position, rotation, scale, visible, modulate.' },
+        include_children: { type: 'boolean', description: 'List direct children {name, class}. Default: false.' },
+        include_groups: { type: 'boolean', description: 'Include the node\'s group memberships. Default: true.' }
+      },
+      required: ['node_path']
+    }
+  },
+  {
+    name: 'get_runtime_log',
+    description: 'Return entries from the MCPRuntime in-game ring buffer. The buffer holds the last ~500 lines pushed via MCPRuntime.push_runtime_log(level, text) from your scripts plus internal connection events. For full engine stdout (script prints, errors, warnings) use get_console_log \u2014 the editor already captures the running game\'s stdout. Returns entries with ts_ms, level, and text plus started_at_ms (when the helper started) and now_ms.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        limit: { type: 'number', description: 'Maximum entries to return (default: 200, max 500)' },
+        since_ms: { type: 'number', description: 'Only return entries with ts_ms >= since_ms. Use 0 (default) for all.' }
+      }
     }
   },
   {

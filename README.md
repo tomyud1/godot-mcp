@@ -162,6 +162,12 @@ Then point your AI client at `mcp-server/dist/index.js` instead of using `npx`.
 
 ---
 
+## Release notes
+
+Narrative write-ups of each release live in [`release-notes/`](./release-notes/) (starting with [v0.5.0](./release-notes/v0.5.0.md)). For the full change history, see [`CHANGELOG.md`](./CHANGELOG.md).
+
+---
+
 ## License
 
 MIT

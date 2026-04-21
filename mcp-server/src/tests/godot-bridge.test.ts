@@ -162,20 +162,39 @@ describe('GodotBridge — connections', () => {
     expect(events).toEqual([]);
   });
 
-  it('rejects a second simultaneous connection', async () => {
+  it('rejects a second editor connection', async () => {
     bridge = createBridge(TEST_PORT, SHORT_TIMEOUT);
     await bridge.start();
 
     client = await connectClient(TEST_PORT);
+    client.send(JSON.stringify({ type: 'godot_ready', role: 'editor', project_path: '/p1' }));
     await new Promise((r) => setTimeout(r, 50));
 
-    // Second connection should be closed by the server
     const second = await connectClient(TEST_PORT);
     const closePromise = new Promise<number>((resolve) => {
       second.on('close', (code) => resolve(code));
     });
+    // Second connection claims editor — should be rejected with 4000.
+    second.send(JSON.stringify({ type: 'godot_ready', role: 'editor', project_path: '/p2' }));
     const code = await closePromise;
     expect(code).toBe(4000);
+  });
+
+  it('accepts a runtime connection alongside an editor connection', async () => {
+    bridge = createBridge(TEST_PORT, SHORT_TIMEOUT);
+    await bridge.start();
+
+    client = await connectClient(TEST_PORT);
+    client.send(JSON.stringify({ type: 'godot_ready', role: 'editor', project_path: '/editor' }));
+    await new Promise((r) => setTimeout(r, 50));
+
+    const runtime = await connectClient(TEST_PORT);
+    runtime.send(JSON.stringify({ type: 'godot_ready', role: 'runtime', project_path: '/runtime' }));
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(bridge.isConnected()).toBe(true);
+    expect(bridge.isRuntimeConnected()).toBe(true);
+    runtime.close();
   });
 });
 

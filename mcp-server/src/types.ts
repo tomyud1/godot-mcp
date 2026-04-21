@@ -36,6 +36,10 @@ export interface ToolResultMessage {
   type: 'tool_result';
   id: string;
   success: boolean;
+  // `result` is now populated on both success and failure when the tool
+  // returned a structured dict. On failure it carries details like
+  // `open_in_editor`, `where`, `clamped`, … alongside the top-level
+  // `error` string, so nothing is lost on the wire.
   result?: unknown;
   error?: string;
 }
@@ -51,11 +55,20 @@ export interface PongMessage {
 export interface GodotReadyMessage {
   type: 'godot_ready';
   project_path: string;
+  // role distinguishes the editor plugin connection from the in-game runtime
+  // helper. Older addons (pre-runtime support) omit this; we treat that as 'editor'.
+  role?: 'editor' | 'runtime';
+  started_at?: number;
 }
 
 export interface ClientStatusMessage {
   type: 'client_status';
   count: number;
+}
+
+export interface RuntimeStatusMessage {
+  type: 'runtime_status';
+  connected: boolean;
 }
 
 export type WebSocketMessage =
@@ -64,7 +77,8 @@ export type WebSocketMessage =
   | PingMessage
   | PongMessage
   | GodotReadyMessage
-  | ClientStatusMessage;
+  | ClientStatusMessage
+  | RuntimeStatusMessage;
 
 // Tool result types
 export interface ListDirResult {

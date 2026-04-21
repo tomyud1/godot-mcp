@@ -50,21 +50,25 @@ export const scriptTools: ToolDefinition[] = [
   },
   {
     name: 'delete_file',
-    description: 'Delete a file permanently. ONLY use when explicitly requested. NEVER use to "edit" a file.',
+    description: 'Permanently delete a file from the project. REQUIRES confirm=true as an explicit safety gate \u2014 omitting confirm returns an error. Creates a .bak backup alongside the original by default (disable with create_backup=false). REFUSES if the file is currently open in the editor (any scene tab or script editor tab); close the tab first, or pass force=true to bypass the check (not recommended \u2014 deleting the active scene out from under the editor can crash Godot). Use ONLY when deletion is explicitly requested; NEVER as a way to "edit" or "reset" a file (use edit_script instead). Does not delete directories.',
     inputSchema: {
       type: 'object',
       properties: {
         path: {
           type: 'string',
-          description: 'File to delete'
+          description: 'Path to the file to delete (e.g. res://scenes/old.tscn)'
         },
         confirm: {
           type: 'boolean',
-          description: 'Must be true to proceed'
+          description: 'REQUIRED. Must be explicitly set to true \u2014 safety gate to prevent accidental deletes. Calls without confirm=true fail with an error.'
         },
         create_backup: {
           type: 'boolean',
-          description: 'Create backup before deleting (default: true)'
+          description: 'If true (default), saves a .bak copy next to the original before deletion so the file can be recovered. Set false to delete without backup.'
+        },
+        force: {
+          type: 'boolean',
+          description: 'If true, bypass the "file is open in editor" guard. Use ONLY if you know the file is not the active scene. The guard exists because deleting the active scene tab from under the editor can crash Godot.'
         }
       },
       required: ['path', 'confirm']
