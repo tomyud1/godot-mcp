@@ -10,10 +10,12 @@ const outputPath = path.resolve(repoRoot, 'docs', 'tool-catalog.md');
 const toolModules = [
   { title: 'File Tools', file: 'file-tools.js' },
   { title: 'Scene Tools', file: 'scene-tools.js' },
+  { title: 'Editor Scene Tools', file: 'editor-scene-tools.js' },
   { title: 'Editor View Tools', file: 'editor-view-tools.js' },
   { title: 'Layout Tools', file: 'layout-tools.js' },
   { title: 'Lighting Tools', file: 'lighting-tools.js' },
   { title: 'Navigation Tools', file: 'navigation-tools.js' },
+  { title: 'Signal Tools', file: 'signal-tools.js' },
   { title: 'Script Tools', file: 'script-tools.js' },
   { title: 'Project Tools', file: 'project-tools.js' },
   { title: 'Asset Tools', file: 'asset-tools.js' },
