@@ -7,6 +7,7 @@ var _editor_plugin: EditorPlugin = null
 
 var _file_tools: Node
 var _scene_tools: Node
+var _editor_scene_tools: Node
 var _editor_view_tools: Node
 var _layout_tools: Node
 var _lighting_tools: Node
@@ -35,6 +36,10 @@ func _init_tools() -> void:
 	_scene_tools = preload("res://addons/godot_mcp/tools/scene_tools.gd").new()
 	_scene_tools.name = "SceneTools"
 	add_child(_scene_tools)
+
+	_editor_scene_tools = preload("res://addons/godot_mcp/tools/editor_scene_tools.gd").new()
+	_editor_scene_tools.name = "EditorSceneTools"
+	add_child(_editor_scene_tools)
 
 	_editor_view_tools = preload("res://addons/godot_mcp/tools/editor_view_tools.gd").new()
 	_editor_view_tools.name = "EditorViewTools"
@@ -103,6 +108,8 @@ func _init_tools() -> void:
 		&"set_resource_property": [_scene_tools, &"set_resource_property"],
 		&"snap_node_to_ground": [_scene_tools, &"snap_node_to_ground"],
 
+		&"call_node_method": [_editor_scene_tools, &"call_node_method"],
+
 		&"take_editor_viewport_screenshot": [_editor_view_tools, &"take_editor_viewport_screenshot"],
 		&"summarize_scene_layout": [_layout_tools, &"summarize_scene_layout"],
 
@@ -158,6 +165,9 @@ func set_editor_plugin(plugin: EditorPlugin) -> void:
 	# Pass editor plugin reference to all tool handlers
 	if _file_tools: _file_tools.set_editor_plugin(plugin)
 	if _scene_tools: _scene_tools.set_editor_plugin(plugin)
+	if _editor_scene_tools:
+		_editor_scene_tools.set_editor_plugin(plugin)
+		_editor_scene_tools.set_scene_tools_ref(_scene_tools)
 	if _editor_view_tools: _editor_view_tools.set_editor_plugin(plugin)
 	if _layout_tools:
 		_layout_tools.set_editor_plugin(plugin)

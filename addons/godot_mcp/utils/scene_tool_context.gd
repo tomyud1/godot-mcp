@@ -46,6 +46,56 @@ func save_scene(scene_root: Node, scene_path: String) -> Dictionary:
 		return dependency_error
 	return _scene_tools_ref.call("_save_scene", scene_root, scene_path)
 
+func load_editor_scene_root(scene_path: String = "") -> Array:
+	if not _editor_plugin:
+		return [null, {&"ok": false, &"error": "Live editor scene access requires an active editor plugin"}]
+
+	var ei := _editor_plugin.get_editor_interface()
+	var edited_scene := ei.get_edited_scene_root()
+	if not edited_scene:
+		return [null, {&"ok": false, &"error": "No scene is currently open in the editor"}]
+
+	if not scene_path.is_empty():
+		var normalized_scene_path := ensure_res_path(scene_path)
+		if edited_scene.scene_file_path != normalized_scene_path:
+			return [
+				null,
+				{
+					&"ok": false,
+					&"error": "This tool only operates on the currently open editor scene. Open '%s' in the editor and retry." % normalized_scene_path,
+					&"open_scene_path": edited_scene.scene_file_path,
+				},
+			]
+
+	return [edited_scene, {}]
+
+func refresh_filesystem() -> void:
+	if not _editor_plugin:
+		return
+	var filesystem := _editor_plugin.get_editor_interface().get_resource_filesystem()
+	if filesystem and not filesystem.is_scanning():
+		filesystem.scan()
+
+func mark_editor_scene_as_unsaved(scene_path: String = "") -> Dictionary:
+	var result := load_editor_scene_root(scene_path)
+	if not result[1].is_empty():
+		return result[1]
+
+	_editor_plugin.get_editor_interface().mark_scene_as_unsaved()
+	return {}
+
+func save_editor_scene(scene_path: String = "") -> Dictionary:
+	var result := load_editor_scene_root(scene_path)
+	if not result[1].is_empty():
+		return result[1]
+
+	var save_result := _editor_plugin.get_editor_interface().save_scene()
+	if save_result != OK:
+		return {&"ok": false, &"error": "Failed to save the current editor scene: " + str(save_result)}
+
+	refresh_filesystem()
+	return {}
+
 func release_scene_root(scene_root: Node, should_free: bool) -> void:
 	if should_free and is_instance_valid(scene_root):
 		scene_root.queue_free()
@@ -88,24 +138,16 @@ func get_node_global_aabb(node: Node) -> Variant:
 
 func load_inspection_root(scene_path: String, runtime: bool) -> Array:
 	if runtime:
-		if not _editor_plugin:
-			return [null, {&"ok": false, &"error": "Runtime inspection requires an active editor plugin"}, "", false]
-		var ei := _editor_plugin.get_editor_interface()
-		var edited_scene := ei.get_edited_scene_root()
-		if not edited_scene:
-			return [null, {&"ok": false, &"error": "No scene is currently open in the editor for runtime inspection"}, "", false]
-		if not scene_path.is_empty() and edited_scene.scene_file_path != scene_path:
-			return [
-				null,
-				{
-					&"ok": false,
-					&"error": "Runtime inspection only sees the currently open editor scene. Open '%s' in the editor or disable runtime mode." % scene_path,
-					&"open_scene_path": edited_scene.scene_file_path,
-				},
-				"",
-				false,
-			]
-		return [edited_scene, {}, "editor_live", false]
+		var editor_scene_result := load_editor_scene_root(scene_path)
+		if not editor_scene_result[1].is_empty():
+			var runtime_error: Dictionary = editor_scene_result[1].duplicate(true)
+			if not runtime_error.get(&"error", "").contains("runtime inspection"):
+				runtime_error[&"error"] = str(runtime_error.get(&"error", "")).replace(
+					"This tool only operates on the currently open editor scene.",
+					"Runtime inspection only sees the currently open editor scene."
+				)
+			return [null, runtime_error, "", false]
+		return [editor_scene_result[0], {}, "editor_live", false]
 
 	var result := load_scene(scene_path)
 	if not result[1].is_empty():

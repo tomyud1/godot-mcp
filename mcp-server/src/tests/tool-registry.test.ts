@@ -62,6 +62,10 @@ describe('Tool registry', () => {
     expect(toolExists('take_editor_viewport_screenshot')).toBe(true);
   });
 
+  it('includes live editor scene-tree method tooling in the advertised MCP registry', () => {
+    expect(toolExists('call_node_method')).toBe(true);
+  });
+
   it('includes scene layout analysis tooling in the advertised MCP registry', () => {
     expect(toolExists('summarize_scene_layout')).toBe(true);
   });
