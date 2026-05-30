@@ -1,5 +1,52 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- **`validate_script` now uses Godot's Language Server Protocol (LSP)** — replaced the fragile `GDScript.reload()` + EditorLog text-scraping approach with a direct TCP connection to Godot's built-in LSP server. Diagnostics are now structured (line/column/severity/error-code) and benefit from full project-wide class-inheritance context, fixing false positives from `can_instantiate()`.
+- **`goto_definition` tool** — jump to the definition of any symbol (class, function, variable, signal, etc.) in a GDScript file. Returns file, line, and column.
+- **`find_references` tool** — find all references to a symbol across the entire project. Returns a list of locations (file, line, column).
+- **`get_symbol_info` tool** — retrieve hover-type information (type annotations, documentation, function signatures) for any symbol in a GDScript file.
+- **`list_document_symbols` tool** — list all symbols in a GDScript file as a hierarchical tree (classes, functions, variables, signals, with children).
+- **`GODOT_MCP_LSP_PORT` environment variable** — configure the LSP TCP port (default `6005`). Set this in your MCP client config when Godot's LSP port differs from the default.
+- **LSP client in TypeScript server** (`src/lsp/`) — a standalone `LspClient` class that speaks the LSP protocol (JSON-RPC 2.0 over TCP with `Content-Length` framing) directly to Godot's LSP server, bypassing the WebSocket bridge entirely for these five tools.
+- **Exponential-backoff LSP reconnect** — when Godot's LSP server is not yet ready after editor restart, the server retries up to 8 times with a 1.6× backoff (200 ms → 320 → 512 → … capped at 5 s). A generation token ensures only the most recent connection cycle is active.
+- **`process.on('unhandledRejection')` safety net** — socket-level promise rejections from `vscode-jsonrpc` during LSP reconnect cycles are caught at the process level and suppressed so the MCP server never crashes on transient socket errors.
+
+### Changed
+- **`get_godot_status`** — now includes `lsp_port` and `lsp_connected` fields so the agent can verify LSP connectivity.
+- **`godot-bridge.ts`** — the editor `godot_ready` handler re-notifies `onConnectionChange` listeners when the project path arrives asynchronously, allowing the LSP retry loop to wait for a known root path before connecting.
+- **`tool_executor.gd`** — removed `validate_script` registration (now handled by the TypeScript LSP client).
+- **`script_tools.gd`** — removed `validate_script()`, `_collect_recent_script_errors()`, `_find_node_by_class()`, and `_find_child_rtl()` (~70 lines). The remaining file handles `edit_script`, `list_scripts`, `create_folder`, `delete_file`, and `rename_file`.
+- **Tool list** — `validate_script` moved from `script-tools.ts` to the new `lsp-tools.ts`; four new LSP tools added (total tool count: 69 → 73 before removal, net +4).
+
+### Fixed
+- **`validate_script` false positives on inherited classes** — `GDScript.reload()` parsed scripts in isolation without project context, so `can_instantiate()` returned `false` for any class that extended another script. The LSP server has full project context and correctly resolves inheritance chains.
+- **`validate_script` stale error capture** — the old implementation scraped the EditorLog `RichTextLabel` text, picking up errors from previous edits. LSP diagnostics are always current.
+- **`validate_script` fragile UI dependency** — the `_find_node_by_class("EditorLog")` + `_find_child_rtl()` traversal depended on Godot's internal editor UI structure and would break silently if Godot renamed or restructured those nodes.
+
+### Technical notes
+
+**LSP transport layer** (`src/lsp/transport.ts`):
+- Implements `MessageReader` / `MessageWriter` from `vscode-jsonrpc` over a raw `net.Socket`.
+- Parses standard LSP framing: `Content-Length: N\r\n\r\n` + JSON body.
+- Handles TCP framing edge cases (multiple messages arriving in one `data` event, partial frames).
+- Uses a minimal in-tree `Event<T>` shim (no dependency on `vscode-jsonrpc`'s `Event.Emitter`).
+
+**LSP client** (`src/lsp/client.ts`):
+- Manages LSP lifecycle: `initialize` → `initialized` → `didOpen` / `didClose` / `publishDiagnostics`.
+- `getDiagnostics()` polls with a settle strategy (300 ms minimum + 200 ms quiet window) to avoid catching intermediate empty diagnostic batches from Godot.
+- Handles Godot's Windows-specific URI encoding (`D%3A` → `D:`) via `decodeURIComponent()`.
+- Maintains a `res://` ↔ `file:///` bidirectional cache for diagnostics so both URI schemes resolve correctly.
+
+**Why not WebSocket?** Godot's LSP server speaks raw LSP protocol over TCP (not WebSocket), so the existing `ws`-based `GodotBridge` cannot be reused. The LSP tools bypass the Godot plugin and WebSocket bridge entirely — the TypeScript server connects directly to `127.0.0.1:{GODOT_MCP_LSP_PORT}`.
+
+**LSP connection robustness** — the raw `net.Socket` layer handles several edge cases uncovered during testing:
+- `socket.connect()` is called *after* all event listeners are registered to avoid a race where the TCP handshake completes before listeners are wired.
+- A permanent `socket.on('error', ...)` sink is installed in `createLspTransport()` *before* `LspMessageReader`/`Writer` add their own listeners. `dispose()` uses targeted `socket.off()` instead of `socket.removeAllListeners()` so the error sink survives transport cleanup — preventing `ERR_SOCKET_CLOSED_BEFORE_CONNECTION` from becoming an uncaught exception.
+- Godot's LSP server may accept TCP connections before the LSP handshake is fully initialized (especially after editor restart). The retry loop with exponential backoff absorbs these transient failures without user intervention.
+- A `process.on('unhandledRejection')` handler catches asynchronous promise rejections from `vscode-jsonrpc` on dead sockets during reconnect cycles.
+
 ## [0.5.0] - 2026-04-19
 
 See [`release-notes/v0.5.0.md`](./release-notes/v0.5.0.md) for the narrative write-up.

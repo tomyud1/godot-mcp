@@ -39,6 +39,7 @@ import { registerResources, GUIDES } from './resources.js';
 import { serveVisualization, stopVisualizationServer, setGodotBridge } from './visualizer-server.js';
 import { PrimaryHttpServer, type ToolCallResult } from './primary-http.js';
 import { probeExistingServer, proxyToolCall, registerProxyClient, unregisterProxyClient } from './proxy-client.js';
+import { LspClient } from './lsp/client.js';
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -65,6 +66,26 @@ const WEBSOCKET_PORT = parseInt(process.env.GODOT_MCP_PORT || '6505', 10);
 const HTTP_PORT = parseInt(process.env.GODOT_MCP_HTTP_PORT || '6506', 10);
 const TOOL_TIMEOUT = parseInt(process.env.GODOT_MCP_TIMEOUT_MS || '30000', 10);
 const IDLE_TIMEOUT = parseInt(process.env.GODOT_MCP_IDLE_TIMEOUT_MS || '30000', 10);
+const LSP_PORT = parseInt(process.env.GODOT_MCP_LSP_PORT || '6005', 10);
+
+// ---------------------------------------------------------------------------
+// Process-level safety net
+//
+// Godot's LSP server restarts with the editor process.  During reconnect
+// cycles `vscode-jsonrpc` may produce asynchronous Promise rejections for
+// pending requests on a dead socket — these escape our local try/catch.
+// This handler catches them before Node.js treats them as uncaught.
+// ---------------------------------------------------------------------------
+process.on('unhandledRejection', (reason: unknown) => {
+  const msg = reason instanceof Error ? reason.message : String(reason);
+  // Expected during LSP reconnect (socket-level noise — the retry loop
+  // in connectLspWithRetry will recover).  Log once, don't crash.
+  if (msg.includes('Socket closed') || msg.includes('ECONN') || msg.includes('EPIPE')) {
+    return;
+  }
+  console.error(`[${SERVER_NAME}] Unhandled rejection: ${msg}`);
+  if (reason instanceof Error && reason.stack) console.error(reason.stack);
+});
 
 const args = process.argv.slice(2);
 const noForce = args.includes('--no-force');
@@ -74,6 +95,185 @@ const noForce = args.includes('--no-force');
 // ---------------------------------------------------------------------------
 
 let godotBridge: GodotBridge | null = null;
+let lspClient: LspClient | null = null;
+
+// ---------------------------------------------------------------------------
+// LSP tool routing
+//
+// These five tools are handled locally by the TypeScript server via a
+// direct TCP connection to Godot's built-in Language Server Protocol
+// server (port 6065 in this project), rather than through the WebSocket
+// bridge to the Godot plugin.  This gives us project-wide diagnostics
+// with full class-inheritance context.
+// ---------------------------------------------------------------------------
+const LSP_TOOLS = new Set([
+  'validate_script',
+  'goto_definition',
+  'find_references',
+  'get_symbol_info',
+  'list_document_symbols',
+]);
+
+async function executeLspToolCall(name: string, args: Record<string, unknown>): Promise<ToolCallResult> {
+  if (!lspClient || !lspClient.connected) {
+    return {
+      content: [{ type: 'text', text: JSON.stringify({
+        ok: false,
+        error: 'Godot Language Server is not available. Enable it in Godot: Editor Settings → Network → Language Server → Enable, verify the port (default 6005, set GODOT_MCP_LSP_PORT to override), then restart the MCP server.',
+        hint: `LSP port: ${LSP_PORT}`,
+      }, null, 2) }],
+      isError: true,
+    };
+  }
+
+  try {
+    let result: unknown;
+
+    switch (name) {
+      case 'validate_script': {
+        const filePath = String(args.path ?? '');
+        const diagnostics = await lspClient.getDiagnostics(filePath);
+        const errors = diagnostics.filter(d => d.severity === 1); // 1 = Error
+        const warnings = diagnostics.filter(d => d.severity === 2); // 2 = Warning
+        result = {
+          ok: true,
+          valid: errors.length === 0,
+          path: filePath,
+          diagnostics: diagnostics.map(d => ({
+            severity: d.severity === 1 ? 'error' : d.severity === 2 ? 'warning' : d.severity === 3 ? 'info' : 'hint',
+            message: d.message,
+            line: d.range.start.line,
+            column: d.range.start.character,
+            endLine: d.range.end.line,
+            endColumn: d.range.end.character,
+            code: d.code ?? undefined,
+            source: d.source ?? 'gdscript',
+          })),
+          errorCount: errors.length,
+          warningCount: warnings.length,
+          message: diagnostics.length === 0
+            ? 'No issues found.'
+            : `Found ${errors.length} error(s) and ${warnings.length} warning(s).`,
+        };
+        break;
+      }
+      case 'goto_definition': {
+        const filePath = String(args.path ?? '');
+        const line = Number(args.line ?? 0);
+        const character = Number(args.character ?? 0);
+        const def = await lspClient.gotoDefinition(filePath, line, character);
+        if (!def) {
+          result = { ok: true, path: filePath, line, character, definition: null, message: 'No definition found.' };
+        } else if (Array.isArray(def)) {
+          result = {
+            ok: true, path: filePath, line, character,
+            definitions: def.map((loc: unknown) => {
+              const l = loc as Record<string, unknown>;
+              const isLocationLink = 'targetUri' in l;
+              return {
+                uri: isLocationLink ? l.targetUri : l.uri,
+                line: isLocationLink
+                  ? (l.targetRange as { start: { line: number } }).start.line
+                  : (l.range as { start: { line: number } }).start.line,
+                character: isLocationLink
+                  ? (l.targetRange as { start: { character: number } }).start.character
+                  : (l.range as { start: { character: number } }).start.character,
+              };
+            }),
+            count: def.length,
+          };
+        } else {
+          result = {
+            ok: true, path: filePath, line, character,
+            definition: { uri: def.uri, line: def.range.start.line, character: def.range.start.character },
+          };
+        }
+        break;
+      }
+      case 'find_references': {
+        const filePath = String(args.path ?? '');
+        const line = Number(args.line ?? 0);
+        const character = Number(args.character ?? 0);
+        const includeDeclaration = args.include_declaration !== false;
+        const refs = await lspClient.findReferences(filePath, line, character, includeDeclaration);
+        result = {
+          ok: true,
+          path: filePath,
+          line,
+          character,
+          references: refs.map(r => ({
+            uri: r.uri,
+            line: r.range.start.line,
+            character: r.range.start.character,
+          })),
+          count: refs.length,
+        };
+        break;
+      }
+      case 'get_symbol_info': {
+        const filePath = String(args.path ?? '');
+        const line = Number(args.line ?? 0);
+        const character = Number(args.character ?? 0);
+        const hover = await lspClient.getHover(filePath, line, character);
+        if (!hover) {
+          result = { ok: true, path: filePath, line, character, symbol: null, message: 'No hover information available.' };
+        } else {
+          const contents = hover.contents;
+          result = {
+            ok: true,
+            path: filePath,
+            line,
+            character,
+            symbol: {
+              contents: Array.isArray(contents) ? contents.map(c => (typeof c === 'string' ? c : c.value)).join('\n') : (typeof contents === 'string' ? contents : contents.value),
+              range: hover.range ? {
+                start: { line: hover.range.start.line, character: hover.range.start.character },
+                end: { line: hover.range.end.line, character: hover.range.end.character },
+              } : null,
+            },
+          };
+        }
+        break;
+      }
+      case 'list_document_symbols': {
+        const filePath = String(args.path ?? '');
+        const symbols = await lspClient.getDocumentSymbols(filePath);
+        const flatten = (syms: typeof symbols): Record<string, unknown>[] =>
+          syms.map(s => ({
+            name: s.name,
+            kind: LspClient.symbolKindToString(s.kind),
+            detail: s.detail ?? '',
+            line: s.range.start.line,
+            children: s.children ? flatten(s.children) : [],
+          }));
+        result = {
+          ok: true,
+          path: filePath,
+          symbols: flatten(symbols),
+          count: symbols.length,
+        };
+        break;
+      }
+      default:
+        throw new Error(`Unknown LSP tool: ${name}`);
+    }
+
+    return {
+      content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+    };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    return {
+      content: [{ type: 'text', text: JSON.stringify({
+        ok: false,
+        error: errorMessage,
+        tool: name,
+        hint: 'LSP tool call failed. Ensure Godot editor is running with Language Server enabled.',
+      }, null, 2) }],
+      isError: true,
+    };
+  }
+}
 
 async function executeToolCall(
   name: string,
@@ -135,6 +335,8 @@ async function executeToolCall(
           connected: status.connected,
           server_version: SERVER_VERSION,
           websocket_port: status.port,
+          lsp_port: LSP_PORT,
+          lsp_connected: lspClient?.connected ?? false,
           mode: status.connected ? 'live' : 'waiting',
           project_path: status.projectPath || null,
           connected_at: status.connectedAt?.toISOString() || null,
@@ -145,6 +347,11 @@ async function executeToolCall(
         }, null, 2)
       }]
     };
+  }
+
+  // LSP tools are handled locally without going through the Godot bridge
+  if (LSP_TOOLS.has(name)) {
+    return executeLspToolCall(name, toolArgs);
   }
 
   if (!toolExists(name)) {
@@ -340,13 +547,76 @@ async function startPrimary(): Promise<void> {
   godotBridge = new GodotBridge(WEBSOCKET_PORT, TOOL_TIMEOUT);
   setGodotBridge(godotBridge);
 
+  // Create LSP client BEFORE WebSocket starts so it exists when the
+  // onConnectionChange callback fires.  If Godot connects between
+  // wss.listen() and this line the callback would otherwise see a null
+  // lspClient and skip LSP setup entirely.
+  lspClient = new LspClient(LSP_PORT);
+
+  // ---- LSP retry loop ---------------------------------------------------
+  //
+  // Godot's built-in LSP server restarts with the editor process, and
+  // its TCP port may accept connections before the LSP handshake is
+  // ready.  The symptom is "TCP connected → socket closed → sendRequest
+  // fails".  We retry with exponential backoff (200 ms → 320 → 512 → …,
+  // capped at 5 s, max 8 attempts).  A generation token cancels any
+  // in-flight retries when Godot disconnects again.
+  // -----------------------------------------------------------------------
+  let lspRetryGeneration = 0;
+
+  function connectLspWithRetry() {
+    const gen = ++lspRetryGeneration;
+    const maxTries = 8;
+
+    const attempt = (delay: number, tries: number) => {
+      if (gen !== lspRetryGeneration) return;
+      if (!lspClient) return;
+
+      lspClient.connect().then(() => {
+        if (gen !== lspRetryGeneration) {
+          lspClient!.disconnect().catch(() => {});
+          return;
+        }
+        console.error(`[${SERVER_NAME}] LSP connected on port ${LSP_PORT}`);
+      }).catch((err: Error) => {
+        if (gen !== lspRetryGeneration) return;
+        if (tries >= maxTries) {
+          console.error(`[${SERVER_NAME}] LSP unavailable on port ${LSP_PORT} after ${maxTries} attempts`);
+          return;
+        }
+        const nextDelay = Math.min(delay * 1.6, 5_000);
+        setTimeout(() => attempt(nextDelay, tries + 1), delay);
+      });
+    };
+    attempt(200, 1);
+  }
+
   godotBridge.onConnectionChange((connected) => {
     if (connected) {
       console.error(`[${SERVER_NAME}] Godot connected`);
       cancelIdleShutdown();
-      notifyClientStatus(); // send current client count immediately on connect
+      notifyClientStatus();
+
+      const projectPath = godotBridge?.getStatus().projectPath;
+
+      // LSP lazy-connect: wait until godot_ready delivers the project
+      // path, then start the retry loop.  The first onConnectionChange
+      // fires on WebSocket open (no projectPath yet); the second fires
+      // when godot_ready arrives and godot-bridge.ts re-notifies us.
+      if (projectPath && lspClient && !lspClient.connected) {
+        lspClient.setProjectRoot(projectPath);
+        connectLspWithRetry();
+      } else if (lspClient?.connected) {
+        if (projectPath) {
+          lspClient.setProjectRoot(projectPath);
+        }
+      }
     } else {
       console.error(`[${SERVER_NAME}] Godot disconnected`);
+      ++lspRetryGeneration;                       // cancel retry loop
+      if (lspClient?.connected) {
+        lspClient.disconnect().catch(() => {});   // release stale LSP TCP socket
+      }
       maybeStartIdleShutdown();
     }
   });
@@ -507,6 +777,7 @@ async function startPrimary(): Promise<void> {
     console.error(`[${SERVER_NAME}] Shutting down...`);
     if (idleTimer) clearTimeout(idleTimer);
     stopVisualizationServer();
+    lspClient?.disconnect();
     httpServer.stop();
     godotBridge?.stop();
     process.exit(0);

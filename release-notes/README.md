@@ -6,6 +6,7 @@ These are narrative, feature-first write-ups aimed at users of the project. For 
 
 ## Index
 
+- [LSP-powered script validation & code intelligence](./v0.6.0-lsp.md) — Replace `validate_script` with Godot's Language Server Protocol; add `goto_definition`, `find_references`, `get_symbol_info`, `list_document_symbols`
 - [v0.5.0](./v0.5.0.md) — Runtime loop, generic resource editing, and a serious crash purge (2026-04-19)
 
 ## Conventions

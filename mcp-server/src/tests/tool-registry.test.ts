@@ -58,9 +58,23 @@ describe('Tool registry', () => {
   it('every advertised MCP tool is registered in the Godot executor map OR the runtime helper', () => {
     const executorTools = getExecutorToolNames();
     const runtimeTools = getRuntimeToolNames();
+
+    // LSP tools are handled directly by the TypeScript server (LSP client),
+    // not by the Godot plugin or runtime helper.
+    const LSP_HANDLED_TOOLS = new Set([
+      'validate_script',
+      'goto_definition',
+      'find_references',
+      'get_symbol_info',
+      'list_document_symbols',
+    ]);
+
     const missing = allTools
       .map(tool => tool.name)
-      .filter(name => !executorTools.has(name) && !runtimeTools.has(name));
+      .filter(name =>
+        !executorTools.has(name) &&
+        !runtimeTools.has(name) &&
+        !LSP_HANDLED_TOOLS.has(name));
 
     expect(missing).toEqual([]);
   });

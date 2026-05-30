@@ -202,7 +202,15 @@ export class GodotBridge {
           this.startPingLoop();
           this.notifyConnectionChange(true, this.editor.info);
         } else {
+          const hadPath = !!this.editor.info.projectPath;
           this.editor.info.projectPath = message.project_path;
+          // godot_ready carries the project path asynchronously after
+          // the WebSocket handshake.  Re-notify listeners (namely the
+          // LSP reconnect loop in index.ts) so they can connect with a
+          // known root path for res:// → file:/// resolution.
+          if (!hadPath && message.project_path) {
+            this.notifyConnectionChange(true, this.editor.info);
+          }
         }
         this.log('info', `Godot editor ready (project=${message.project_path})`);
         this.sendRuntimeStatusToEditor();

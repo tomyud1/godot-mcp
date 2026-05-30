@@ -87,7 +87,6 @@ func _init_tools() -> void:
 		&"disconnect_signal": [_scene_tools, &"disconnect_signal"],
 
 		&"edit_script": [_script_tools, &"edit_script"],
-		&"validate_script": [_script_tools, &"validate_script"],
 		&"list_scripts": [_script_tools, &"list_scripts"],
 		&"create_folder": [_script_tools, &"create_folder"],
 		&"delete_file": [_script_tools, &"delete_file"],
