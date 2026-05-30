@@ -197,6 +197,7 @@ func _build_input_event(desc: Dictionary) -> InputEvent:
 			if desc.has("ctrl"): k.ctrl_pressed = bool(desc["ctrl"])
 			if desc.has("alt"): k.alt_pressed = bool(desc["alt"])
 			if desc.has("meta"): k.meta_pressed = bool(desc["meta"])
+			if desc.has("unicode"): k.unicode = int(desc["unicode"])
 			return k
 		"mouse_button":
 			var mb := InputEventMouseButton.new()
