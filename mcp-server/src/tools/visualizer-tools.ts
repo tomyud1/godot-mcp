@@ -7,7 +7,7 @@ import type { ToolDefinition } from '../types.js';
 export const visualizerTools: ToolDefinition[] = [
   {
     name: 'map_project',
-    description: 'Crawl the entire Godot project and build an interactive visual map of all scripts showing their structure (variables, functions, signals), connections (extends, preloads, signal connections), and descriptions. Opens an interactive browser-based visualization.',
+    description: 'Crawl the entire Godot project and build an interactive script-level map of GDScript files showing their structure (variables, functions, declared signals) and inferred code relationships (extends, preloads, regex-parsed connect() usage). This is a source-code graph, not saved scene-connection truth. Opens an interactive browser-based visualization.',
     inputSchema: {
       type: 'object',
       properties: {

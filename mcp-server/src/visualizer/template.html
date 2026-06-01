@@ -22,6 +22,7 @@
 </div>
 
 <div id="zoom-indicator" title="Click to reset, or type custom zoom">
+  <button type="button" class="view-btn" onclick="fitToGraph()" title="Center and fit the whole graph">Fit</button>
   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="2" onclick="resetZoom()" style="cursor:pointer"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/><path d="M8 11h6"/><path d="M11 8v6"/></svg>
   <input type="text" class="zoom-input" id="zoom-text" value="100%" onchange="setCustomZoom(this.value)" onkeydown="if(event.key==='Enter'){this.blur()}" onclick="this.select()">
 </div>

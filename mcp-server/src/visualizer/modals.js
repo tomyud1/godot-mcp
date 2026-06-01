@@ -8,7 +8,7 @@ import {
   setHoveredSceneNode, expandedScene
 } from './state.js';
 import { sendCommand } from './websocket.js';
-import { draw, getCanvas, roundRect, getContext, clearPositions, fitToView } from './canvas.js';
+import { draw, getCanvas, roundRect, getContext, clearPositions, fitToView, savePositions } from './canvas.js';
 import { initLayout } from './layout.js';
 import { closePanel, closeSceneNodePanel } from './panel.js';
 import { updateStats } from './events.js';
@@ -117,6 +117,8 @@ window.refreshProject = async function () {
       edges.length = 0;
       edges.push(...result.project_map.edges);
       initLayout();
+      fitToView(nodes);
+      savePositions();
       draw();
     }
   } catch (err) {
@@ -137,6 +139,7 @@ window.resetLayout = function () {
   initLayout();
   // Fit view to show all nodes
   fitToView(nodes);
+  savePositions();
   // Redraw
   draw();
 };

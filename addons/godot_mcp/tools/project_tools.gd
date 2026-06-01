@@ -104,7 +104,7 @@ func list_settings(args: Dictionary) -> Dictionary:
 
 		var info: Dictionary = {
 			&"path": prop_name,
-			&"type": _type_to_string(prop[&"type"]),
+			&"type": VariantCodec.type_id_to_name(prop[&"type"], "Resource"),
 			&"value": _serialize_value(ProjectSettings.get_setting(prop_name))
 		}
 
@@ -478,7 +478,7 @@ func get_node_properties(args: Dictionary) -> Dictionary:
 
 		var info := {
 			&"name": prop_name,
-			&"type": _type_to_string(prop[&"type"]),
+			&"type": VariantCodec.type_id_to_name(prop[&"type"], "Resource"),
 			&"default": _serialize_value(temp.get(prop_name))
 		}
 
@@ -501,27 +501,6 @@ func get_node_properties(args: Dictionary) -> Dictionary:
 
 	return {&"ok": true, &"node_type": node_type, &"inheritance_chain": chain,
 		&"property_count": properties.size(), &"properties": properties}
-
-func _type_to_string(type_id: int) -> String:
-	match type_id:
-		TYPE_BOOL: return "bool"
-		TYPE_INT: return "int"
-		TYPE_FLOAT: return "float"
-		TYPE_STRING: return "String"
-		TYPE_VECTOR2: return "Vector2"
-		TYPE_VECTOR3: return "Vector3"
-		TYPE_VECTOR2I: return "Vector2i"
-		TYPE_VECTOR3I: return "Vector3i"
-		TYPE_COLOR: return "Color"
-		TYPE_RECT2: return "Rect2"
-		TYPE_QUATERNION: return "Quaternion"
-		TYPE_AABB: return "AABB"
-		TYPE_BASIS: return "Basis"
-		TYPE_TRANSFORM3D: return "Transform3D"
-		TYPE_OBJECT: return "Resource"
-		TYPE_ARRAY: return "Array"
-		TYPE_DICTIONARY: return "Dictionary"
-		_: return "Variant"
 
 func _serialize_value(value: Variant) -> Variant:
 	return VariantCodec.serialize_value(value)

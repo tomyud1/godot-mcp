@@ -180,3 +180,19 @@ export function setCurrentUsages(value) {
 export function esc(s) {
   return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
+
+export function getNodeDisplayName(node) {
+  const className = String(node?.class_name || '').trim();
+  if (className) return className;
+
+  const filename = String(node?.filename || '').trim();
+  if (filename) return filename.replace(/\.gd$/i, '');
+
+  const path = String(node?.path || '').trim();
+  if (path) {
+    const tail = path.split('/').pop() || path;
+    return tail.replace(/\.gd$/i, '');
+  }
+
+  return 'Unnamed Script';
+}

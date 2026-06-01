@@ -3,6 +3,126 @@ extends RefCounted
 class_name VariantCodec
 ## Shared serialization/parsing helpers for MCP tool arguments and results.
 
+static func type_id_to_name(type_id: int, object_label: String = "Object") -> String:
+	match type_id:
+		TYPE_NIL:
+			return "null"
+		TYPE_BOOL:
+			return "bool"
+		TYPE_INT:
+			return "int"
+		TYPE_FLOAT:
+			return "float"
+		TYPE_STRING:
+			return "String"
+		TYPE_VECTOR2:
+			return "Vector2"
+		TYPE_VECTOR2I:
+			return "Vector2i"
+		TYPE_RECT2:
+			return "Rect2"
+		TYPE_RECT2I:
+			return "Rect2i"
+		TYPE_VECTOR3:
+			return "Vector3"
+		TYPE_VECTOR3I:
+			return "Vector3i"
+		TYPE_TRANSFORM2D:
+			return "Transform2D"
+		TYPE_VECTOR4:
+			return "Vector4"
+		TYPE_VECTOR4I:
+			return "Vector4i"
+		TYPE_PLANE:
+			return "Plane"
+		TYPE_QUATERNION:
+			return "Quaternion"
+		TYPE_AABB:
+			return "AABB"
+		TYPE_BASIS:
+			return "Basis"
+		TYPE_TRANSFORM3D:
+			return "Transform3D"
+		TYPE_PROJECTION:
+			return "Projection"
+		TYPE_COLOR:
+			return "Color"
+		TYPE_STRING_NAME:
+			return "StringName"
+		TYPE_NODE_PATH:
+			return "NodePath"
+		TYPE_RID:
+			return "RID"
+		TYPE_OBJECT:
+			return object_label
+		TYPE_CALLABLE:
+			return "Callable"
+		TYPE_SIGNAL:
+			return "Signal"
+		TYPE_DICTIONARY:
+			return "Dictionary"
+		TYPE_ARRAY:
+			return "Array"
+		TYPE_PACKED_BYTE_ARRAY:
+			return "PackedByteArray"
+		TYPE_PACKED_INT32_ARRAY:
+			return "PackedInt32Array"
+		TYPE_PACKED_INT64_ARRAY:
+			return "PackedInt64Array"
+		TYPE_PACKED_FLOAT32_ARRAY:
+			return "PackedFloat32Array"
+		TYPE_PACKED_FLOAT64_ARRAY:
+			return "PackedFloat64Array"
+		TYPE_PACKED_STRING_ARRAY:
+			return "PackedStringArray"
+		TYPE_PACKED_VECTOR2_ARRAY:
+			return "PackedVector2Array"
+		TYPE_PACKED_VECTOR3_ARRAY:
+			return "PackedVector3Array"
+		TYPE_PACKED_COLOR_ARRAY:
+			return "PackedColorArray"
+		_:
+			return "Variant"
+
+static func type_name_to_id(type_name: String) -> int:
+	match type_name:
+		"bool", "Bool":
+			return TYPE_BOOL
+		"int", "Int":
+			return TYPE_INT
+		"float", "Float":
+			return TYPE_FLOAT
+		"String", "string":
+			return TYPE_STRING
+		"StringName":
+			return TYPE_STRING_NAME
+		"NodePath":
+			return TYPE_NODE_PATH
+		"Vector2":
+			return TYPE_VECTOR2
+		"Vector2i":
+			return TYPE_VECTOR2I
+		"Vector3":
+			return TYPE_VECTOR3
+		"Vector3i":
+			return TYPE_VECTOR3I
+		"Color":
+			return TYPE_COLOR
+		"Quaternion":
+			return TYPE_QUATERNION
+		"Basis":
+			return TYPE_BASIS
+		"Transform3D":
+			return TYPE_TRANSFORM3D
+		"AABB":
+			return TYPE_AABB
+		"Array":
+			return TYPE_ARRAY
+		"Resource", "Object":
+			return TYPE_OBJECT
+		_:
+			return TYPE_NIL
+
 static func parse_value(value: Variant) -> Variant:
 	if value is Dictionary:
 		var dict: Dictionary = value
@@ -19,9 +139,24 @@ static func parse_value(value: Variant) -> Variant:
 
 	return value
 
-static func parse_typed_value(value: Variant, type_hint: int) -> Variant:
+static func parse_typed_value(value: Variant, type_hint: int, property_metadata: Dictionary = {}) -> Variant:
+	if value == null:
+		return null
+
 	if type_hint == -1:
 		return parse_value(value)
+
+	match type_hint:
+		TYPE_OBJECT:
+			return _parse_object_typed_value(value)
+		TYPE_ARRAY:
+			return _parse_array_typed_value(value)
+		TYPE_STRING_NAME:
+			return StringName(str(value))
+		TYPE_NODE_PATH:
+			return NodePath(str(value))
+		TYPE_PACKED_BYTE_ARRAY, TYPE_PACKED_INT32_ARRAY, TYPE_PACKED_INT64_ARRAY, TYPE_PACKED_FLOAT32_ARRAY, TYPE_PACKED_FLOAT64_ARRAY, TYPE_PACKED_STRING_ARRAY, TYPE_PACKED_VECTOR2_ARRAY, TYPE_PACKED_VECTOR3_ARRAY, TYPE_PACKED_COLOR_ARRAY:
+			return _parse_packed_array_typed_value(value, type_hint)
 
 	if value is Dictionary:
 		var dict: Dictionary = value
@@ -98,6 +233,24 @@ static func serialize_value(value: Variant) -> Variant:
 				&"position": serialize_value(value.position),
 				&"size": serialize_value(value.size)
 			}
+		TYPE_PACKED_BYTE_ARRAY:
+			return {&"type": &"PackedByteArray", &"values": Array(value)}
+		TYPE_PACKED_INT32_ARRAY:
+			return {&"type": &"PackedInt32Array", &"values": Array(value)}
+		TYPE_PACKED_INT64_ARRAY:
+			return {&"type": &"PackedInt64Array", &"values": Array(value)}
+		TYPE_PACKED_FLOAT32_ARRAY:
+			return {&"type": &"PackedFloat32Array", &"values": Array(value)}
+		TYPE_PACKED_FLOAT64_ARRAY:
+			return {&"type": &"PackedFloat64Array", &"values": Array(value)}
+		TYPE_PACKED_STRING_ARRAY:
+			return {&"type": &"PackedStringArray", &"values": Array(value)}
+		TYPE_PACKED_VECTOR2_ARRAY:
+			return {&"type": &"PackedVector2Array", &"values": serialize_value(Array(value))}
+		TYPE_PACKED_VECTOR3_ARRAY:
+			return {&"type": &"PackedVector3Array", &"values": serialize_value(Array(value))}
+		TYPE_PACKED_COLOR_ARRAY:
+			return {&"type": &"PackedColorArray", &"values": serialize_value(Array(value))}
 		TYPE_ARRAY:
 			var out: Array = []
 			for item in value:
@@ -142,6 +295,28 @@ static func _parse_explicit_dictionary(type_name: String, dict: Dictionary) -> V
 			return _parse_transform3d_dictionary(dict)
 		"AABB":
 			return _parse_aabb_dictionary(dict)
+		"Resource":
+			return _parse_resource_dictionary(dict)
+		"Array":
+			return _parse_array_dictionary(dict)
+		"PackedByteArray":
+			return _parse_packed_array_dictionary(dict, TYPE_PACKED_BYTE_ARRAY)
+		"PackedInt32Array":
+			return _parse_packed_array_dictionary(dict, TYPE_PACKED_INT32_ARRAY)
+		"PackedInt64Array":
+			return _parse_packed_array_dictionary(dict, TYPE_PACKED_INT64_ARRAY)
+		"PackedFloat32Array":
+			return _parse_packed_array_dictionary(dict, TYPE_PACKED_FLOAT32_ARRAY)
+		"PackedFloat64Array":
+			return _parse_packed_array_dictionary(dict, TYPE_PACKED_FLOAT64_ARRAY)
+		"PackedStringArray":
+			return _parse_packed_array_dictionary(dict, TYPE_PACKED_STRING_ARRAY)
+		"PackedVector2Array":
+			return _parse_packed_array_dictionary(dict, TYPE_PACKED_VECTOR2_ARRAY)
+		"PackedVector3Array":
+			return _parse_packed_array_dictionary(dict, TYPE_PACKED_VECTOR3_ARRAY)
+		"PackedColorArray":
+			return _parse_packed_array_dictionary(dict, TYPE_PACKED_COLOR_ARRAY)
 		_:
 			return dict
 
@@ -262,3 +437,104 @@ static func _parse_aabb_dictionary(dict: Dictionary) -> AABB:
 			size = parsed_size
 
 	return AABB(position, size)
+
+static func _parse_object_typed_value(value: Variant) -> Variant:
+	if value == null:
+		return null
+
+	if value is Resource:
+		return value
+
+	if value is String:
+		return _load_resource_from_path(str(value))
+
+	var parsed = parse_value(value)
+	if parsed is Resource or parsed == null:
+		return parsed
+
+	return parsed
+
+static func _parse_array_typed_value(value: Variant) -> Variant:
+	if value is Dictionary and str((value as Dictionary).get(&"type", "")) == "Array":
+		return parse_value(value)
+
+	if value is Array:
+		var parsed: Array = []
+		for item in value:
+			parsed.append(parse_value(item))
+		return parsed
+
+	return parse_value(value)
+
+static func _parse_array_dictionary(dict: Dictionary) -> Array:
+	var raw_values = dict.get(&"values", dict.get(&"items", []))
+	var base: Array = []
+
+	if raw_values is Array:
+		for item in raw_values:
+			base.append(parse_value(item))
+
+	var typed_builtin = int(dict.get(&"typed_builtin", TYPE_NIL))
+	if typed_builtin == TYPE_NIL and dict.has(&"element_type"):
+		typed_builtin = type_name_to_id(str(dict.get(&"element_type", "")))
+
+	if typed_builtin == TYPE_NIL:
+		return base
+
+	var typed_class_name := StringName(str(dict.get(&"typed_class_name", dict.get(&"class_name", ""))))
+	var typed_script: Variant = null
+	var typed_script_path := str(dict.get(&"typed_script_path", dict.get(&"script_path", "")))
+	if not typed_script_path.is_empty():
+		typed_script = _load_resource_from_path(typed_script_path)
+
+	if typed_builtin != TYPE_OBJECT:
+		return Array(base, typed_builtin, StringName(), null)
+
+	return Array(base, typed_builtin, typed_class_name, typed_script)
+
+static func _parse_resource_dictionary(dict: Dictionary) -> Variant:
+	var raw_path := str(dict.get(&"path", dict.get(&"resource_path", "")))
+	if raw_path.strip_edges().is_empty():
+		return null
+	return _load_resource_from_path(raw_path)
+
+static func _load_resource_from_path(raw_path: String) -> Variant:
+	var path := raw_path.strip_edges()
+	if path.is_empty():
+		return null
+	if not path.begins_with("res://") and not path.begins_with("user://"):
+		path = "res://" + path
+	var loaded = load(path)
+	return loaded if loaded is Resource else null
+
+static func _parse_packed_array_typed_value(value: Variant, type_hint: int) -> Variant:
+	if value is Dictionary and not str((value as Dictionary).get(&"type", "")).is_empty():
+		return parse_value(value)
+	if not (value is Array):
+		return value
+
+	match type_hint:
+		TYPE_PACKED_BYTE_ARRAY:
+			return PackedByteArray(value)
+		TYPE_PACKED_INT32_ARRAY:
+			return PackedInt32Array(value)
+		TYPE_PACKED_INT64_ARRAY:
+			return PackedInt64Array(value)
+		TYPE_PACKED_FLOAT32_ARRAY:
+			return PackedFloat32Array(value)
+		TYPE_PACKED_FLOAT64_ARRAY:
+			return PackedFloat64Array(value)
+		TYPE_PACKED_STRING_ARRAY:
+			return PackedStringArray(value)
+		TYPE_PACKED_VECTOR2_ARRAY:
+			return PackedVector2Array(value)
+		TYPE_PACKED_VECTOR3_ARRAY:
+			return PackedVector3Array(value)
+		TYPE_PACKED_COLOR_ARRAY:
+			return PackedColorArray(value)
+		_:
+			return value
+
+static func _parse_packed_array_dictionary(dict: Dictionary, type_hint: int) -> Variant:
+	var raw_values = dict.get(&"values", dict.get(&"items", []))
+	return _parse_packed_array_typed_value(raw_values, type_hint)
