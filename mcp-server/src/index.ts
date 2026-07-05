@@ -171,6 +171,21 @@ async function executeToolCall(
   try {
     const result = await godotBridge!.invokeTool(name, toolArgs);
 
+    if (result && typeof result === 'object' && 'image_b64' in (result as Record<string, unknown>)) {
+      const payload = result as Record<string, unknown>;
+      const imageData = typeof payload.image_b64 === 'string' ? payload.image_b64 : '';
+      const mimeType = typeof payload.mime === 'string' ? payload.mime : 'image/png';
+      const { image_b64: _image, ...summary } = payload;
+      if (imageData) {
+        return {
+          content: [
+            { type: 'image', data: imageData, mimeType },
+            { type: 'text', text: JSON.stringify(summary, null, 2) },
+          ],
+        };
+      }
+    }
+
     if (name === 'map_project' && result && typeof result === 'object' && 'project_map' in (result as Record<string, unknown>)) {
       try {
         const projectMap = (result as Record<string, unknown>).project_map;
@@ -282,7 +297,7 @@ function createMcpServer(handleTool: ToolHandler): Server {
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
     const result = await handleTool(name, (args || {}) as Record<string, unknown>);
-    return result as { content: Array<{ type: string; text: string }>; isError?: boolean; [key: string]: unknown };
+    return result as { content: Array<{ type: string; text?: string; data?: string; mimeType?: string }>; isError?: boolean; [key: string]: unknown };
   });
 
   return server;

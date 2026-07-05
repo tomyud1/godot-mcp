@@ -4,7 +4,7 @@
 
 Build games faster with Claude, Cursor, or any MCP-compatible AI — no copy-pasting, no context switching. The AI reads, writes, and manipulates your scenes, scripts, nodes, and project settings directly inside the running Godot editor.
 
-> Godot 4.x · 32 tools · Interactive project visualizer · MIT license
+> Godot 4.x · 92 editor/runtime tools · Interactive project visualizer · MIT license
 
 ---
 
@@ -14,7 +14,7 @@ Build games faster with Claude, Cursor, or any MCP-compatible AI — no copy-pas
 
 Download and run the installer from **[nodejs.org](https://nodejs.org/en/download)** (LTS version). It's a standard installer — no terminal needed.
 
-### 1. Install the Godot plugin
+### 1. Configure the MCP server
 
 No cloning or building required — runs directly via npx.
 
@@ -58,16 +58,17 @@ Restart your Godot project. Check the **top-right corner** of the editor — you
 
 ## What Can It Do?
 
-### 32 Tools Across 6 Categories
+### Expanded editor and runtime tool surface
 
 | Category | Tools | Examples |
 |---|---|---|
-| **File Operations** | 4 | Browse directories, read files, search project, create scripts |
-| **Scene Operations** | 11 | Create scenes, add/remove/move nodes, set properties, attach scripts, assign collision shapes and textures |
-| **Script Operations** | 6 | Apply code edits, validate syntax, rename/move files with reference updates |
-| **Project Tools** | 9 | Read project settings, input map, collision layers, console errors, scene tree dumps |
+| **File Operations** | 6 | Bounded previews, regex/glob search, filename lookup, GDScript outlines |
+| **Scene Operations** | 40 | Create and inspect scenes, mutate nodes/resources, structured `.tscn` patches |
+| **Script Operations** | 10 | Line patches, parse validation, indentation repair, reference-safe moves |
+| **Project Tools** | 24 | Settings, input, console/errors, ClassDB, execution, docs and editor capture |
 | **Asset Generation** | 1 | Generate 2D sprites from SVG |
-| **Visualization** | 1 | Interactive browser-based project map |
+| **Visualization** | 2 | Interactive script and scene project maps |
+| **Runtime Tools** | 9 | Screenshots/input plus live inspect/find/call, UI diagnosis, logs and performance |
 
 ### Interactive Visualizer
 

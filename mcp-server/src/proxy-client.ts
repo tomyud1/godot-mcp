@@ -4,6 +4,7 @@
  */
 
 import http from 'node:http';
+import type { ToolCallResult } from './primary-http.js';
 
 export interface ProbeResult {
   alive: boolean;
@@ -11,10 +12,7 @@ export interface ProbeResult {
   toolCount?: number;
 }
 
-export interface ProxyToolResult {
-  content: Array<{ type: string; text: string }>;
-  isError?: boolean;
-}
+export type ProxyToolResult = ToolCallResult;
 
 const REQUEST_TIMEOUT = 5000; // 5s for health probes
 

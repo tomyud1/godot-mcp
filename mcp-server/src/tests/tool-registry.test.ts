@@ -46,6 +46,18 @@ describe('Tool registry', () => {
     expect(new Set(names).size).toBe(names.length);
   });
 
+  it('advertises the assistant-derived editor and runtime surface', () => {
+    const names = new Set(allTools.map((tool) => tool.name));
+    for (const name of [
+      'get_file_outline', 'find_files_by_name', 'patch_file_lines',
+      'parse_tscn_as_json', 'duplicate_node', 'reorder_node', 'map_scenes',
+      'godot_class_doc', 'capture_editor_screenshot', 'runtime_inspect',
+      'runtime_find_instances', 'runtime_call', 'diagnose_ui', 'get_profiler_stats',
+    ]) {
+      expect(names.has(name), `${name} should be advertised`).toBe(true);
+    }
+  });
+
   it('toolExists returns true for known tools', () => {
     const firstTool = allTools[0].name;
     expect(toolExists(firstTool)).toBe(true);

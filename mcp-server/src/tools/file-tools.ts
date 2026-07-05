@@ -16,8 +16,7 @@ export const fileTools: ToolDefinition[] = [
           type: 'string',
           description: 'Starting path like res://addons/ai_assistant or res://'
         }
-      },
-      required: ['root']
+      }
     }
   },
   {
@@ -37,10 +36,30 @@ export const fileTools: ToolDefinition[] = [
         end_line: {
           type: 'number',
           description: 'Inclusive end line; 0 or missing means to end of file (optional)'
-        }
+        },
+        max_bytes: { type: 'number', description: 'Maximum bytes returned' },
+        preview: { type: 'boolean', description: 'Return numbered head and tail excerpts' },
+        redact_secrets: { type: 'boolean', description: 'Redact likely credentials; defaults true' }
       },
       required: ['path']
     }
+  },
+  {
+    name: 'find_files_by_name',
+    description: 'Find files by exact filename or substring across the project.',
+    inputSchema: { type: 'object', properties: {
+      name: { type: 'string', description: 'Filename or substring' },
+      root: { type: 'string', description: 'Directory scope; defaults to res://' },
+      exact: { type: 'boolean', description: 'Require an exact filename' },
+      max_results: { type: 'number', description: 'Maximum matches' }
+    }, required: ['name'] }
+  },
+  {
+    name: 'get_file_outline',
+    description: 'Return top-level GDScript declarations and their line spans without loading the script.',
+    inputSchema: { type: 'object', properties: {
+      path: { type: 'string', description: 'res:// path to a .gd file' }
+    }, required: ['path'] }
   },
   {
     name: 'search_project',
@@ -55,7 +74,13 @@ export const fileTools: ToolDefinition[] = [
         glob: {
           type: 'string',
           description: 'Optional glob filter like **/*.gd to search only GDScript files'
-        }
+        },
+        root: { type: 'string', description: 'Directory scope; defaults to res://' },
+        regex: { type: 'boolean', description: 'Interpret query as regex' },
+        case_sensitive: { type: 'boolean', description: 'Use case-sensitive matching' },
+        whole_word: { type: 'boolean', description: 'Match whole words' },
+        max_results: { type: 'number', description: 'Maximum total matches' },
+        max_per_file: { type: 'number', description: 'Maximum matches per file' }
       },
       required: ['query']
     }

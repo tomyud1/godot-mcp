@@ -12,6 +12,10 @@ var _script_tools: Node
 var _project_tools: Node
 var _asset_tools: Node
 var _visualizer_tools: Node
+var _assistant_scene_tools: Node
+var _docs_tools: Node
+var _runtime_tools: Node
+var _capture_tools: Node
 
 # Tool name → [handler_node, method_name]
 var _tool_map: Dictionary = {}
@@ -48,12 +52,30 @@ func _init_tools() -> void:
 	_visualizer_tools.name = "VisualizerTools"
 	add_child(_visualizer_tools)
 
+	_assistant_scene_tools = preload("res://addons/godot_mcp/tools/assistant_scene_tools.gd").new()
+	_assistant_scene_tools.name = "AssistantSceneTools"
+	add_child(_assistant_scene_tools)
+
+	_docs_tools = preload("res://addons/godot_mcp/tools/docs_tools.gd").new()
+	_docs_tools.name = "DocsTools"
+	add_child(_docs_tools)
+
+	_runtime_tools = preload("res://addons/godot_mcp/tools/runtime_tools.gd").new()
+	_runtime_tools.name = "RuntimeTools"
+	add_child(_runtime_tools)
+
+	_capture_tools = preload("res://addons/godot_mcp/tools/capture_tools.gd").new()
+	_capture_tools.name = "CaptureTools"
+	add_child(_capture_tools)
+
 	# Build tool routing map
 	_tool_map = {
 		&"list_dir": [_file_tools, &"list_dir"],
 		&"read_file": [_file_tools, &"read_file"],
 		&"search_project": [_file_tools, &"search_project"],
 		&"create_script": [_file_tools, &"create_script"],
+		&"find_files_by_name": [_file_tools, &"find_files_by_name"],
+		&"get_file_outline": [_file_tools, &"get_file_outline"],
 
 		&"create_scene": [_scene_tools, &"create_scene"],
 		&"read_scene": [_scene_tools, &"read_scene"],
@@ -62,6 +84,8 @@ func _init_tools() -> void:
 		&"modify_node_property": [_scene_tools, &"modify_node_property"],
 		&"rename_node": [_scene_tools, &"rename_node"],
 		&"move_node": [_scene_tools, &"move_node"],
+		&"duplicate_node": [_scene_tools, &"duplicate_node"],
+		&"reorder_node": [_scene_tools, &"reorder_node"],
 		&"attach_script": [_scene_tools, &"attach_script"],
 		&"detach_script": [_scene_tools, &"detach_script"],
 		&"set_collision_shape": [_scene_tools, &"set_collision_shape"],
@@ -85,6 +109,14 @@ func _init_tools() -> void:
 		&"list_signal_connections": [_scene_tools, &"list_signal_connections"],
 		&"connect_signal": [_scene_tools, &"connect_signal"],
 		&"disconnect_signal": [_scene_tools, &"disconnect_signal"],
+		&"get_node_property": [_assistant_scene_tools, &"get_node_property"],
+		&"parse_tscn_as_json": [_assistant_scene_tools, &"parse_tscn_as_json"],
+		&"write_tscn_from_json": [_assistant_scene_tools, &"write_tscn_from_json"],
+		&"apply_tscn_json_patch": [_assistant_scene_tools, &"apply_tscn_json_patch"],
+		&"list_nodes_in_scene": [_assistant_scene_tools, &"list_nodes_in_scene"],
+		&"find_scene_by_name": [_assistant_scene_tools, &"find_scene_by_name"],
+		&"instantiate_packed_scene": [_assistant_scene_tools, &"instantiate_packed_scene"],
+		&"list_signals": [_assistant_scene_tools, &"list_signals"],
 
 		&"edit_script": [_script_tools, &"edit_script"],
 		&"validate_script": [_script_tools, &"validate_script"],
@@ -92,6 +124,10 @@ func _init_tools() -> void:
 		&"create_folder": [_script_tools, &"create_folder"],
 		&"delete_file": [_script_tools, &"delete_file"],
 		&"rename_file": [_script_tools, &"rename_file"],
+		&"patch_file_lines": [_script_tools, &"patch_file_lines"],
+		&"spaces_to_tabs": [_script_tools, &"spaces_to_tabs"],
+		&"move_file_with_references": [_script_tools, &"move_file_with_references"],
+		&"rename_file_with_references": [_script_tools, &"rename_file_with_references"],
 
 		&"get_project_settings": [_project_tools, &"get_project_settings"],
 		&"list_settings": [_project_tools, &"list_settings"],
@@ -113,6 +149,11 @@ func _init_tools() -> void:
 		&"is_playing": [_project_tools, &"is_playing"],
 		&"get_runtime_status": [_project_tools, &"get_runtime_status"],
 		&"wait": [_project_tools, &"wait"],
+
+		&"godot_class_doc": [_docs_tools, &"godot_class_doc"],
+		&"search_godot_docs": [_docs_tools, &"search_godot_docs"],
+		&"execute_gdscript": [_runtime_tools, &"execute_gdscript"],
+		&"capture_editor_screenshot": [_capture_tools, &"capture_editor_screenshot"],
 
 		&"generate_2d_asset": [_asset_tools, &"generate_2d_asset"],
 
@@ -136,6 +177,8 @@ func set_editor_plugin(plugin: EditorPlugin) -> void:
 		_visualizer_tools.set_editor_plugin(plugin)
 		# Pass scene_tools reference for visualizer internal scene functions
 		_visualizer_tools.set_scene_tools_ref(_scene_tools)
+	if _assistant_scene_tools: _assistant_scene_tools.set_editor_plugin(plugin)
+	if _capture_tools: _capture_tools.set_editor_plugin(plugin)
 
 func set_mcp_client(client: Object) -> void:
 	_mcp_client = client
@@ -148,6 +191,9 @@ func set_mcp_client(client: Object) -> void:
 ## GDScript 4 (see godotengine/godot#50894, #103887). Keep this set small.
 const _COROUTINE_TOOLS := {
 	"wait": true,
+	"godot_class_doc": true,
+	"search_godot_docs": true,
+	"capture_editor_screenshot": true,
 }
 
 func execute_tool(tool_name: String, args: Dictionary) -> Dictionary:
@@ -186,6 +232,12 @@ func execute_tool(tool_name: String, args: Dictionary) -> Dictionary:
 		match tool_name:
 			"wait":
 				result = await node.wait(args)
+			"godot_class_doc":
+				result = await node.godot_class_doc(args)
+			"search_godot_docs":
+				result = await node.search_godot_docs(args)
+			"capture_editor_screenshot":
+				result = await node.capture_editor_screenshot(args)
 			_:
 				push_error("[MCP] Coroutine tool '%s' has no direct dispatch case." % tool_name)
 				result = {&"ok": false, &"error": "Coroutine tool '%s' missing dispatch case" % tool_name}

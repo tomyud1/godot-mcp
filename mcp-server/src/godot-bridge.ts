@@ -31,6 +31,11 @@ export const RUNTIME_ONLY_TOOLS = new Set<string>([
   'send_input',
   'query_runtime_node',
   'get_runtime_log',
+  'get_profiler_stats',
+  'runtime_inspect',
+  'runtime_find_instances',
+  'runtime_call',
+  'diagnose_ui',
 ]);
 
 interface PendingRequest {

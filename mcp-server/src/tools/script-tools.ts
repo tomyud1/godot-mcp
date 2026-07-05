@@ -8,17 +8,34 @@ import type { ToolDefinition } from '../types.js';
 export const scriptTools: ToolDefinition[] = [
   {
     name: 'edit_script',
-    description: 'Apply a SMALL, SURGICAL code edit (1-10 lines) to GDScript files. Auto-applies changes. For large changes, call multiple times. ONLY for .gd files - NEVER for .tscn scene files. Use classdb_query to verify unfamiliar Godot class methods. After making changes, consider using run_scene to test and get_errors to check for issues.',
+    description: 'Replace a script file and return parse validation. For small edits prefer patch_file_lines.',
     inputSchema: {
       type: 'object',
       properties: {
-        edit: {
-          type: 'object',
-          description: 'Edit spec: {type: "snippet_replace", file: "res://path.gd", old_snippet: "old code", new_snippet: "new code", context_before: "line above", context_after: "line below"}. Keep old_snippet SMALL (1-10 lines).'
-        }
+        path: { type: 'string', description: 'Existing res:// script path' },
+        content: { type: 'string', description: 'Complete replacement contents' }
       },
-      required: ['edit']
+      required: ['path', 'content']
     }
+  },
+  {
+    name: 'patch_file_lines',
+    description: 'Apply exact line insert, replace, or delete edits and return numbered context.',
+    inputSchema: { type: 'object', properties: {
+      path: { type: 'string' },
+      edits: { type: 'array', items: { type: 'object', properties: {
+        start_line: { type: 'number' }, end_line: { type: 'number' }, content: { type: 'string' },
+        mode: { type: 'string', enum: ['replace', 'insert', 'delete'] }
+      }, required: ['start_line', 'end_line', 'content'] } },
+      context_lines: { type: 'number' }
+    }, required: ['path', 'edits'] }
+  },
+  {
+    name: 'spaces_to_tabs',
+    description: 'Convert leading indentation spaces to tabs in a text file.',
+    inputSchema: { type: 'object', properties: {
+      path: { type: 'string' }, spaces_per_tab: { type: 'number' }
+    }, required: ['path'] }
   },
   {
     name: 'validate_script',
@@ -103,5 +120,15 @@ export const scriptTools: ToolDefinition[] = [
       type: 'object',
       properties: {}
     }
+  },
+  {
+    name: 'rename_file_with_references',
+    description: 'Rename a file and repair text references in project resources.',
+    inputSchema: { type: 'object', properties: { path: { type: 'string' }, new_path: { type: 'string' } }, required: ['path', 'new_path'] }
+  },
+  {
+    name: 'move_file_with_references',
+    description: 'Move a file and repair text references in project resources.',
+    inputSchema: { type: 'object', properties: { path: { type: 'string' }, new_path: { type: 'string' } }, required: ['path', 'new_path'] }
   }
 ];
