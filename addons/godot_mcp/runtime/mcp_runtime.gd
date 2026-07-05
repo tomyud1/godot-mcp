@@ -95,7 +95,7 @@ func _handle_message(json_string: String) -> void:
 				"type": "tool_result",
 				"id": rid,
 				"success": success,
-				"result": result if success else null,
+				"result": result,
 				"error": str(result.get("error", "")) if not success else "",
 			})
 		_:
@@ -114,6 +114,16 @@ func _dispatch(tool_name: String, args: Dictionary) -> Dictionary:
 			return _get_runtime_log(args)
 		"list_signal_connections":
 			return _list_signal_connections(args)
+		"get_profiler_stats":
+			return _get_profiler_stats(args)
+		"runtime_inspect":
+			return _runtime_inspect(args)
+		"runtime_find_instances":
+			return _runtime_find_instances(args)
+		"runtime_call":
+			return _runtime_call(args)
+		"diagnose_ui":
+			return _diagnose_ui(args)
 		_:
 			return {"ok": false, "error": "Unknown runtime tool: %s" % tool_name}
 
@@ -299,12 +309,138 @@ func _serialize(v: Variant) -> Variant:
 		TYPE_VECTOR2: return {"type": "Vector2", "x": v.x, "y": v.y}
 		TYPE_VECTOR3: return {"type": "Vector3", "x": v.x, "y": v.y, "z": v.z}
 		TYPE_COLOR: return {"type": "Color", "r": v.r, "g": v.g, "b": v.b, "a": v.a}
+		TYPE_ARRAY:
+			var items: Array = []
+			for item in v:
+				items.append(_serialize(item))
+			return items
+		TYPE_DICTIONARY:
+			var mapped := {}
+			for key in v:
+				mapped[str(key)] = _serialize(v[key])
+			return mapped
 		TYPE_OBJECT:
 			if v == null:
 				return null
 			return "<%s>" % v.get_class() if v.has_method("get_class") else "<Object>"
 		_: return v
 
+# =============================================================================
+# Rich runtime inspection adapted from the Godot AI Assistant runtime bridge.
+# =============================================================================
+func _resolve_runtime_node(node_path: String) -> Node:
+	if node_path.is_empty() or get_tree() == null:
+		return null
+	if node_path.begins_with("/"):
+		return get_tree().root.get_node_or_null(NodePath(node_path))
+	if get_tree().current_scene:
+		var relative := get_tree().current_scene.get_node_or_null(NodePath(node_path))
+		if relative:
+			return relative
+	return get_tree().root.get_node_or_null(NodePath(node_path))
+
+func _runtime_inspect(args: Dictionary) -> Dictionary:
+	var node_path := str(args.get("node_path", "")).strip_edges()
+	var node := _resolve_runtime_node(node_path)
+	if node == null:
+		return {"ok": false, "error": "Node not found: %s" % node_path}
+	var requested: Array = args.get("properties", [])
+	var properties := {}
+	if requested.is_empty():
+		for descriptor in node.get_property_list():
+			if properties.size() >= 32:
+				break
+			if int(descriptor.get("usage", 0)) & PROPERTY_USAGE_EDITOR == 0:
+				continue
+			var property_name := str(descriptor.get("name", ""))
+			if not property_name.is_empty():
+				properties[property_name] = _serialize(node.get(property_name))
+	else:
+		for property_name_v in requested:
+			var property_name := str(property_name_v)
+			properties[property_name] = _serialize(node.get(property_name))
+	var result := {"ok": true, "node_path": str(node.get_path()), "name": str(node.name), "class": node.get_class(), "groups": node.get_groups(), "properties": properties}
+	if bool(args.get("include_tree", true)):
+		result["tree"] = _runtime_tree(node, clampi(int(args.get("tree_depth", 3)), 0, 8))
+	return result
+
+func _runtime_tree(root: Node, max_depth: int) -> Array:
+	var result: Array = []
+	var queue: Array = [{"node": root, "depth": 0}]
+	while not queue.is_empty():
+		var entry: Dictionary = queue.pop_front()
+		var current: Node = entry["node"]
+		var depth: int = entry["depth"]
+		result.append({"path": str(current.get_path()), "name": str(current.name), "class": current.get_class(), "depth": depth})
+		if depth < max_depth:
+			for child in current.get_children():
+				queue.append({"node": child, "depth": depth + 1})
+	return result
+
+func _runtime_find_instances(args: Dictionary) -> Dictionary:
+	var pattern := str(args.get("pattern", "")).strip_edges()
+	if pattern.is_empty():
+		return {"ok": false, "error": "Missing 'pattern'"}
+	var max_results := clampi(int(args.get("max_results", 10)), 1, 200)
+	var instances: Array = []
+	var stack: Array = [get_tree().root]
+	var is_script_path := pattern.contains(".gd") or pattern.contains(".cs")
+	while not stack.is_empty() and instances.size() < max_results:
+		var current: Node = stack.pop_back()
+		var script := current.get_script()
+		var matches := script != null and str(script.resource_path).ends_with(pattern) if is_script_path else current.is_class(pattern)
+		if not matches and not is_script_path and script != null and script.has_method("get_global_name"):
+			matches = str(script.get_global_name()) == pattern
+		if matches:
+			var item := {"path": str(current.get_path()), "class": current.get_class(), "name": str(current.name)}
+			for property_name in ["visible", "position", "global_position"]:
+				if property_name in current:
+					item[property_name] = _serialize(current.get(property_name))
+			instances.append(item)
+		for child_index in range(current.get_child_count() - 1, -1, -1):
+			stack.append(current.get_child(child_index))
+	return {"ok": true, "pattern": pattern, "instances": instances, "found_count": instances.size(), "truncated": instances.size() >= max_results}
+
+func _runtime_call(args: Dictionary) -> Dictionary:
+	var node_path := str(args.get("node_path", "")).strip_edges()
+	var method := str(args.get("method", "")).strip_edges()
+	var node := _resolve_runtime_node(node_path)
+	if node == null:
+		return {"ok": false, "error": "Node not found: %s" % node_path}
+	if method.is_empty() or not node.has_method(method):
+		return {"ok": false, "error": "Node '%s' has no method '%s'" % [node_path, method]}
+	var value := node.callv(method, args.get("args", []))
+	return {"ok": true, "node_path": str(node.get_path()), "method": method, "result": _serialize(value), "result_type": type_string(typeof(value))}
+
+func _get_profiler_stats(_args: Dictionary) -> Dictionary:
+	return {"ok": true, "frame": Engine.get_process_frames(), "stats": {
+		"fps": Performance.get_monitor(Performance.TIME_FPS), "process_ms": Performance.get_monitor(Performance.TIME_PROCESS),
+		"physics_process_ms": Performance.get_monitor(Performance.TIME_PHYSICS_PROCESS), "memory_static": Performance.get_monitor(Performance.MEMORY_STATIC),
+		"objects": Performance.get_monitor(Performance.OBJECT_COUNT), "nodes": Performance.get_monitor(Performance.OBJECT_NODE_COUNT),
+		"orphan_nodes": Performance.get_monitor(Performance.OBJECT_ORPHAN_NODE_COUNT), "draw_calls": Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME),
+		"render_objects": Performance.get_monitor(Performance.RENDER_TOTAL_OBJECTS_IN_FRAME),
+	}}
+
+func _diagnose_ui(args: Dictionary) -> Dictionary:
+	var node_path := str(args.get("node_path", "")).strip_edges()
+	var node := _resolve_runtime_node(node_path)
+	if node == null:
+		return {"ok": false, "error": "Node not found: %s" % node_path}
+	if not node is Control:
+		return {"ok": false, "error": "Node is %s, not Control" % node.get_class()}
+	var control := node as Control
+	var ancestors: Array = []
+	var parent := control.get_parent()
+	while parent != null and ancestors.size() < 12:
+		if parent is CanvasItem:
+			ancestors.append({"path": str(parent.get_path()), "class": parent.get_class(), "visible": (parent as CanvasItem).visible, "visible_in_tree": (parent as CanvasItem).is_visible_in_tree()})
+		parent = parent.get_parent()
+	var viewport := control.get_viewport()
+	return {"ok": true, "node_path": str(control.get_path()), "visible": control.visible, "visible_in_tree": control.is_visible_in_tree(),
+		"position": _serialize(control.position), "global_position": _serialize(control.global_position), "size": _serialize(control.size),
+		"anchors": [control.anchor_left, control.anchor_top, control.anchor_right, control.anchor_bottom], "mouse_filter": control.mouse_filter,
+		"focus_mode": control.focus_mode, "has_focus": control.has_focus(), "clip_contents": control.clip_contents,
+		"viewport_visible_rect": _serialize(viewport.get_visible_rect()) if viewport else null, "ancestors": ancestors}
 
 # =============================================================================
 # get_runtime_log — recent runtime log lines pushed via push_runtime_log()

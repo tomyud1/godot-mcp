@@ -14,7 +14,10 @@ import http from 'node:http';
 const MAX_BODY_SIZE = 1024 * 1024; // 1 MB
 
 export interface ToolCallResult {
-  content: Array<{ type: string; text: string }>;
+  content: Array<
+    | { type: 'text'; text: string }
+    | { type: 'image'; data: string; mimeType: string }
+  >;
   isError?: boolean;
 }
 
