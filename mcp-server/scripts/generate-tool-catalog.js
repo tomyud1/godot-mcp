@@ -20,6 +20,7 @@ const toolModules = [
   { title: 'Project Tools', file: 'project-tools.js' },
   { title: 'Asset Tools', file: 'asset-tools.js' },
   { title: 'Visualizer Tools', file: 'visualizer-tools.js' },
+  { title: 'Runtime Tools', file: 'runtime-tools.js' },
 ];
 
 function propertyType(schema) {

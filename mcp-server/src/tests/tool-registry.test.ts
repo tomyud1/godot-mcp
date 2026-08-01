@@ -20,7 +20,7 @@ function getRuntimeToolNames(): Set<string> {
   const testDir = path.dirname(fileURLToPath(import.meta.url));
   const runtimePath = path.resolve(testDir, '../../../addons/godot_mcp/runtime/mcp_runtime.gd');
   const source = readFileSync(runtimePath, 'utf8');
-  const toolNames = [...source.matchAll(/"([a-z_]+)":\s*\n\s*return _[a-z_]+\(/g)]
+  const toolNames = [...source.matchAll(/"([a-z_]+)":\s*\n\s*return (?:await )?_[a-z_]+\(/g)]
     .map(match => match[1]);
   return new Set(toolNames);
 }
@@ -74,6 +74,13 @@ describe('Tool registry', () => {
 
   it('includes live editor scene-tree method tooling in the advertised MCP registry', () => {
     expect(toolExists('call_node_method')).toBe(true);
+  });
+
+  it('includes live runtime control tooling in the advertised MCP registry', () => {
+    expect(toolExists('runtime_eval')).toBe(true);
+    expect(toolExists('runtime_wait')).toBe(true);
+    expect(toolExists('runtime_await_signal')).toBe(true);
+    expect(toolExists('runtime_call_method')).toBe(true);
   });
 
   it('includes scene layout analysis tooling in the advertised MCP registry', () => {
