@@ -31,6 +31,10 @@ export const RUNTIME_ONLY_TOOLS = new Set<string>([
   'send_input',
   'query_runtime_node',
   'get_runtime_log',
+  'runtime_eval',
+  'runtime_wait',
+  'runtime_await_signal',
+  'runtime_call_method',
 ]);
 
 interface PendingRequest {

@@ -322,6 +322,23 @@ canvas.dragging { cursor: grabbing; }
 #zoom-indicator:hover { background: var(--bg-hover); border-color: var(--border-light); }
 #zoom-indicator.faded { opacity: 0.4; }
 #zoom-indicator.faded:hover { opacity: 1; }
+#zoom-indicator .view-btn {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-light);
+  color: var(--text-secondary);
+  border-radius: 6px;
+  padding: 4px 9px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+  font-family: inherit;
+}
+#zoom-indicator .view-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  border-color: var(--accent-dim);
+}
 #zoom-indicator svg { flex-shrink: 0; cursor: pointer; }
 #zoom-indicator svg:hover { stroke: var(--text-primary); }
 #zoom-indicator .zoom-input {

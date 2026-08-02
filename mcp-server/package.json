@@ -17,7 +17,7 @@
     "scripts"
   ],
   "scripts": {
-    "build": "tsc && node scripts/build-visualizer.js",
+    "build": "tsc && node scripts/build-visualizer.js && node scripts/generate-tool-catalog.js",
     "build:visualizer": "node scripts/build-visualizer.js",
     "prepare": "npm run build",
     "start": "node dist/index.js",

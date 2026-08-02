@@ -8,6 +8,12 @@ var _mcp_client: Object = null
 
 var _file_tools: Node
 var _scene_tools: Node
+var _editor_scene_tools: Node
+var _editor_view_tools: Node
+var _layout_tools: Node
+var _lighting_tools: Node
+var _navigation_tools: Node
+var _signal_tools: Node
 var _script_tools: Node
 var _project_tools: Node
 var _asset_tools: Node
@@ -31,6 +37,30 @@ func _init_tools() -> void:
 	_scene_tools = preload("res://addons/godot_mcp/tools/scene_tools.gd").new()
 	_scene_tools.name = "SceneTools"
 	add_child(_scene_tools)
+
+	_editor_scene_tools = preload("res://addons/godot_mcp/tools/editor_scene_tools.gd").new()
+	_editor_scene_tools.name = "EditorSceneTools"
+	add_child(_editor_scene_tools)
+
+	_editor_view_tools = preload("res://addons/godot_mcp/tools/editor_view_tools.gd").new()
+	_editor_view_tools.name = "EditorViewTools"
+	add_child(_editor_view_tools)
+
+	_layout_tools = preload("res://addons/godot_mcp/tools/layout_tools.gd").new()
+	_layout_tools.name = "LayoutTools"
+	add_child(_layout_tools)
+
+	_lighting_tools = preload("res://addons/godot_mcp/tools/lighting_tools.gd").new()
+	_lighting_tools.name = "LightingTools"
+	add_child(_lighting_tools)
+
+	_navigation_tools = preload("res://addons/godot_mcp/tools/navigation_tools.gd").new()
+	_navigation_tools.name = "NavigationTools"
+	add_child(_navigation_tools)
+
+	_signal_tools = preload("res://addons/godot_mcp/tools/signal_tools.gd").new()
+	_signal_tools.name = "SignalTools"
+	add_child(_signal_tools)
 
 	_script_tools = preload("res://addons/godot_mcp/tools/script_tools.gd").new()
 	_script_tools.name = "ScriptTools"
@@ -58,6 +88,7 @@ func _init_tools() -> void:
 		&"create_scene": [_scene_tools, &"create_scene"],
 		&"read_scene": [_scene_tools, &"read_scene"],
 		&"add_node": [_scene_tools, &"add_node"],
+		&"instance_scene": [_scene_tools, &"instance_scene"],
 		&"remove_node": [_scene_tools, &"remove_node"],
 		&"modify_node_property": [_scene_tools, &"modify_node_property"],
 		&"rename_node": [_scene_tools, &"rename_node"],
@@ -66,12 +97,13 @@ func _init_tools() -> void:
 		&"detach_script": [_scene_tools, &"detach_script"],
 		&"set_collision_shape": [_scene_tools, &"set_collision_shape"],
 		&"set_sprite_texture": [_scene_tools, &"set_sprite_texture"],
-		&"instance_scene": [_scene_tools, &"instance_scene"],
 		&"set_mesh": [_scene_tools, &"set_mesh"],
 		&"set_material": [_scene_tools, &"set_material"],
 		&"get_node_spatial_info": [_scene_tools, &"get_node_spatial_info"],
 		&"measure_node_distance": [_scene_tools, &"measure_node_distance"],
 		&"snap_node_to_grid": [_scene_tools, &"snap_node_to_grid"],
+		&"snap_node_to_ground": [_scene_tools, &"snap_node_to_ground"],
+		&"place_node_relative": [_scene_tools, &"place_node_relative"],
 		&"get_scene_hierarchy": [_scene_tools, &"get_scene_hierarchy"],
 		&"get_scene_node_properties": [_scene_tools, &"get_scene_node_properties"],
 		&"set_scene_node_property": [_scene_tools, &"set_scene_node_property"],
@@ -85,6 +117,22 @@ func _init_tools() -> void:
 		&"list_signal_connections": [_scene_tools, &"list_signal_connections"],
 		&"connect_signal": [_scene_tools, &"connect_signal"],
 		&"disconnect_signal": [_scene_tools, &"disconnect_signal"],
+
+		&"call_node_method": [_editor_scene_tools, &"call_node_method"],
+
+		&"take_editor_viewport_screenshot": [_editor_view_tools, &"take_editor_viewport_screenshot"],
+		&"summarize_scene_layout": [_layout_tools, &"summarize_scene_layout"],
+
+		&"get_light_info": [_lighting_tools, &"get_light_info"],
+		&"set_sun_light": [_lighting_tools, &"set_sun_light"],
+		&"validate_scene_lighting": [_lighting_tools, &"validate_scene_lighting"],
+
+		&"set_navigation_mesh": [_navigation_tools, &"set_navigation_mesh"],
+		&"get_navigation_mesh_info": [_navigation_tools, &"get_navigation_mesh_info"],
+		&"bake_navigation_mesh": [_navigation_tools, &"bake_navigation_mesh"],
+
+		&"map_scene_signals": [_signal_tools, &"map_scene_signals"],
+		&"update_scene_signal_connections": [_signal_tools, &"update_scene_signal_connections"],
 
 		&"edit_script": [_script_tools, &"edit_script"],
 		&"validate_script": [_script_tools, &"validate_script"],
@@ -129,6 +177,22 @@ func set_editor_plugin(plugin: EditorPlugin) -> void:
 	# Pass editor plugin reference to all tool handlers
 	if _file_tools: _file_tools.set_editor_plugin(plugin)
 	if _scene_tools: _scene_tools.set_editor_plugin(plugin)
+	if _editor_scene_tools:
+		_editor_scene_tools.set_editor_plugin(plugin)
+		_editor_scene_tools.set_scene_tools_ref(_scene_tools)
+	if _editor_view_tools: _editor_view_tools.set_editor_plugin(plugin)
+	if _layout_tools:
+		_layout_tools.set_editor_plugin(plugin)
+		_layout_tools.set_scene_tools_ref(_scene_tools)
+	if _lighting_tools:
+		_lighting_tools.set_editor_plugin(plugin)
+		_lighting_tools.set_scene_tools_ref(_scene_tools)
+	if _navigation_tools:
+		_navigation_tools.set_editor_plugin(plugin)
+		_navigation_tools.set_scene_tools_ref(_scene_tools)
+	if _signal_tools:
+		_signal_tools.set_editor_plugin(plugin)
+		_signal_tools.set_scene_tools_ref(_scene_tools)
 	if _script_tools: _script_tools.set_editor_plugin(plugin)
 	if _project_tools: _project_tools.set_editor_plugin(plugin)
 	if _asset_tools: _asset_tools.set_editor_plugin(plugin)

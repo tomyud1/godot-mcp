@@ -4,7 +4,7 @@
 
 Build games faster with Claude, Cursor, or any MCP-compatible AI — no copy-pasting, no context switching. The AI reads, writes, and manipulates your scenes, scripts, nodes, and project settings directly inside the running Godot editor.
 
-> Godot 4.x · 32 tools · Interactive project visualizer · MIT license
+> Godot 4.x · Scene, script, and project tools · Interactive project visualizer · MIT license
 
 ---
 
@@ -58,16 +58,18 @@ Restart your Godot project. Check the **top-right corner** of the editor — you
 
 ## What Can It Do?
 
-### 32 Tools Across 6 Categories
+### Tool Registry
 
 | Category | Tools | Examples |
 |---|---|---|
-| **File Operations** | 4 | Browse directories, read files, search project, create scripts |
-| **Scene Operations** | 11 | Create scenes, add/remove/move nodes, set properties, attach scripts, assign collision shapes and textures |
-| **Script Operations** | 6 | Apply code edits, validate syntax, rename/move files with reference updates |
-| **Project Tools** | 9 | Read project settings, input map, collision layers, console errors, scene tree dumps |
-| **Asset Generation** | 1 | Generate 2D sprites from SVG |
-| **Visualization** | 1 | Interactive browser-based project map |
+| **File Operations** | Registry-defined | Browse directories, read files, search project, create scripts |
+| **Scene Operations** | Registry-defined | Create scenes, add/remove/move nodes, set properties, assign meshes/materials, spatial placement, grounding |
+| **Editor View + Layout** | Registry-defined | Capture editor viewport screenshots, summarize collision-based room layouts, detect openings |
+| **Lighting + Navigation** | Registry-defined | Configure sunlight, inspect light diagnostics, bake navmeshes |
+| **Script + Project** | Registry-defined | Edit scripts, validate syntax, run scenes, inspect errors, manage settings/input |
+| **Visualization + Assets** | Registry-defined | Project graph visualizer, scene graph explorer, generate 2D sprites |
+
+For the exact current tool list and input schemas in the repo, see `docs/tool-catalog.md` at the project root.
 
 ### Interactive Visualizer
 
@@ -90,7 +92,7 @@ Run `map_project` and get a browser-based project explorer at `localhost:6510`:
 │  AI Client   │◄────────────────►│  MCP Server  │◄─────────────►│ Godot Editor │
 │  (Claude,    │                  │  (Node.js)   │   port 6505   │  (Plugin)    │
 │   Cursor)    │                  │              │               │              │
-└─────────────┘                  │  Visualizer  │               │  32 tool     │
+└─────────────┘                  │  Visualizer  │               │  MCP tools   │
                                  │  HTTP :6510  │               │  handlers    │
                                  └──────┬───────┘               └──────────────┘
                                         │
@@ -123,6 +125,7 @@ npm run build
 ```
 
 Then point your AI client at `mcp-server/dist/index.js` instead of using `npx`.
+If you add or rename tools, update both the TypeScript registry and the Godot plugin executor wiring, then rerun `npm run build` and restart the MCP client so the new tool list is exposed.
 
 ---
 

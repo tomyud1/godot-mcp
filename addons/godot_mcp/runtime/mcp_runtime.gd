@@ -13,6 +13,7 @@ extends Node
 const SERVER_URL := "ws://127.0.0.1:6505"
 const CACHE_SCREENSHOT_DIR := "res://addons/godot_mcp/cache/screenshots/"
 const LOG_RING_CAPACITY := 500
+const VariantCodec := preload("res://addons/godot_mcp/utils/variant_codec.gd")
 
 var _socket: WebSocketPeer = WebSocketPeer.new()
 var _connected := false
@@ -88,16 +89,7 @@ func _handle_message(json_string: String) -> void:
 			var args = msg.get("args", {})
 			if not args is Dictionary:
 				args = {}
-			var result := _dispatch(tool_name, args)
-			var success: bool = bool(result.get("ok", false))
-			result.erase("ok")
-			_send({
-				"type": "tool_result",
-				"id": rid,
-				"success": success,
-				"result": result if success else null,
-				"error": str(result.get("error", "")) if not success else "",
-			})
+			Callable(self, "_run_dispatch").call(rid, tool_name, args)
 		_:
 			pass
 
@@ -114,8 +106,33 @@ func _dispatch(tool_name: String, args: Dictionary) -> Dictionary:
 			return _get_runtime_log(args)
 		"list_signal_connections":
 			return _list_signal_connections(args)
+		"runtime_call_method":
+			return _runtime_call_method(args)
+		"runtime_eval":
+			return await _runtime_eval(args)
+		"runtime_wait":
+			return await _runtime_wait(args)
+		"runtime_await_signal":
+			return await _runtime_await_signal(args)
 		_:
 			return {"ok": false, "error": "Unknown runtime tool: %s" % tool_name}
+
+
+func _run_dispatch(rid: String, tool_name: String, args: Dictionary) -> void:
+	var result: Dictionary = await _dispatch(tool_name, args)
+	_send_result(rid, result)
+
+
+func _send_result(rid: String, result: Dictionary) -> void:
+	var success: bool = bool(result.get("ok", false))
+	result.erase("ok")
+	_send({
+		"type": "tool_result",
+		"id": rid,
+		"success": success,
+		"result": result if success else null,
+		"error": str(result.get("error", "")) if not success else "",
+	})
 
 
 # =============================================================================
@@ -383,6 +400,189 @@ func _list_signal_connections(args: Dictionary) -> Dictionary:
 		"outgoing": outgoing,
 		"outgoing_count": outgoing.size(),
 	}
+
+
+# =============================================================================
+# runtime_eval — execute arbitrary GDScript in the running game
+# =============================================================================
+func _runtime_eval(args: Dictionary) -> Dictionary:
+	var code: String = str(args.get("code", "")).strip_edges()
+	if code.is_empty():
+		return {"ok": false, "error": "Missing 'code' (GDScript to evaluate in the running game)."}
+
+	var built := _build_eval_node(code)
+	if not built[0]:
+		return {"ok": false, "error": "Failed to compile GDScript: %s" % built[1]}
+
+	var temp_node: Node = built[1]
+	var result: Variant = null
+	if temp_node.has_method("execute"):
+		result = await temp_node.execute()
+	temp_node.queue_free()
+
+	return {"ok": true, "result": VariantCodec.serialize_value(result)}
+
+
+func _build_eval_node(code: String) -> Array:
+	var script := _compile_eval_script(_prepare_eval_code(code))
+	if script == null:
+		script = _compile_eval_script(code)
+	if script == null:
+		return [false, "Check syntax. Use explicit 'return expr' for a value, or 'return await ...' for coroutine results."]
+
+	var temp_node := Node.new()
+	temp_node.set_script(script)
+	temp_node.process_mode = Node.PROCESS_MODE_ALWAYS
+	add_child(temp_node)
+	return [true, temp_node]
+
+
+func _compile_eval_script(body: String) -> GDScript:
+	var source := """extends Node
+
+func execute():
+	var __result = null
+	__result = await _run()
+	return __result
+
+func _run():
+%s
+""" % _indent_code(body)
+	var script := GDScript.new()
+	script.source_code = source
+	if script.reload() != OK:
+		return null
+	return script
+
+
+func _prepare_eval_code(code: String) -> String:
+	var trimmed := code.strip_edges()
+	if trimmed.is_empty():
+		return ""
+	var lines := trimmed.split("\n")
+	var idx := lines.size() - 1
+	while idx >= 0 and lines[idx].strip_edges().is_empty():
+		idx -= 1
+	if idx < 0:
+		return trimmed
+	var last := lines[idx].strip_edges()
+	if last.begins_with("return ") or _is_statement_start(last):
+		return trimmed
+	return "%s\nreturn (%s)" % [trimmed, last]
+
+
+func _is_statement_start(line: String) -> bool:
+	var l := line.strip_edges()
+	for kw in ["var ", "const ", "if ", "elif ", "else", "for ", "while ", "match ", "func ", "class ", "extends ", "break", "continue", "pass", "assert"]:
+		if l.begins_with(kw):
+			return true
+	return l.ends_with(":")
+
+
+func _indent_code(code: String) -> String:
+	var out := ""
+	for line in code.split("\n"):
+		out += "\t" + line + "\n"
+	return out
+
+
+# =============================================================================
+# runtime_wait — await N game frames so the engine actually ticks
+# =============================================================================
+func _runtime_wait(args: Dictionary) -> Dictionary:
+	var frames: int = clampi(int(args.get("frames", 1)), 0, 3000)
+	var use_physics: bool = str(args.get("frame_type", "render")).to_lower() == "physics"
+	var tree := get_tree()
+	if tree == null:
+		return {"ok": false, "error": "SceneTree unavailable"}
+	for i in frames:
+		if use_physics:
+			await tree.physics_frame
+		else:
+			await tree.process_frame
+	return {"ok": true, "waited_frames": frames, "frame_type": "physics" if use_physics else "render"}
+
+
+# =============================================================================
+# runtime_await_signal — block until a signal fires on a live node or timeout
+# =============================================================================
+func _runtime_await_signal(args: Dictionary) -> Dictionary:
+	var node_path: String = str(args.get("node_path", "")).strip_edges()
+	var signal_name: String = str(args.get("signal_name", "")).strip_edges()
+	if node_path.is_empty():
+		return {"ok": false, "error": "Missing 'node_path'"}
+	if signal_name.is_empty():
+		return {"ok": false, "error": "Missing 'signal_name'"}
+
+	var timeout: float = clampf(float(args.get("timeout", 10.0)), 0.1, 25.0)
+	var tree := get_tree()
+	if tree == null:
+		return {"ok": false, "error": "SceneTree unavailable"}
+
+	var node := _find_node(tree, node_path)
+	if node == null:
+		return {"ok": false, "error": "Node not found: %s" % node_path}
+	if not node.has_signal(signal_name):
+		return {"ok": false, "error": "Signal not found: %s on %s" % [signal_name, node_path]}
+
+	var timer: SceneTreeTimer = tree.create_timer(timeout)
+	var state: Array = [false]
+	var cb := func():
+		state[0] = true
+	node.connect(signal_name, cb, CONNECT_ONE_SHOT)
+	while not state[0] and timer.time_left > 0:
+		await tree.process_frame
+	if node.is_connected(signal_name, cb):
+		node.disconnect(signal_name, cb)
+	return {
+		"ok": true,
+		"node_path": node_path,
+		"signal_name": signal_name,
+		"received": state[0],
+		"timeout": not state[0],
+	}
+
+
+# =============================================================================
+# runtime_call_method — call a method on a live node in the running scene tree
+# =============================================================================
+func _runtime_call_method(args: Dictionary) -> Dictionary:
+	var node_path: String = str(args.get("node_path", "")).strip_edges()
+	var method_name: String = str(args.get("method_name", "")).strip_edges()
+	if node_path.is_empty():
+		return {"ok": false, "error": "Missing 'node_path'"}
+	if method_name.is_empty():
+		return {"ok": false, "error": "Missing 'method_name'"}
+	var raw_args: Variant = args.get("args", [])
+	if not raw_args is Array:
+		return {"ok": false, "error": "'args' must be an array if provided"}
+
+	var tree := get_tree()
+	if tree == null:
+		return {"ok": false, "error": "SceneTree unavailable"}
+	var node := _find_node(tree, node_path)
+	if node == null:
+		return {"ok": false, "error": "Node not found: %s" % node_path}
+	if not node.has_method(method_name):
+		return {"ok": false, "error": "Method not found: %s on %s" % [method_name, node_path]}
+
+	var result: Variant = node.callv(method_name, raw_args)
+	return {
+		"ok": true,
+		"node_path": node_path,
+		"method_name": method_name,
+		"result": VariantCodec.serialize_value(result),
+	}
+
+
+func _find_node(tree: SceneTree, node_path: String) -> Node:
+	if node_path.begins_with("/"):
+		return tree.root.get_node_or_null(NodePath(node_path))
+	if tree.current_scene != null:
+		var node := tree.current_scene.get_node_or_null(NodePath(node_path))
+		if node != null:
+			return node
+	return tree.root.get_node_or_null(NodePath(node_path))
 
 
 # =============================================================================
