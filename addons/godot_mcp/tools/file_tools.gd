@@ -248,8 +248,18 @@ func create_script(args: Dictionary) -> Dictionary:
 	if not path.begins_with("res://"):
 		path = "res://" + path
 
-	# Add .gd extension if missing
-	if not "." in path.get_file():
+	# Enforce GDScript-only. An explicit non-.gd extension is rejected with a
+	# pointer at write_file, which handles arbitrary text. A missing extension
+	# is treated as a forgotten ".gd" and auto-completed (legacy convenience).
+	var filename := path.get_file()
+	if "." in filename:
+		if not filename.to_lower().ends_with(".gd"):
+			return {
+				&"ok": false,
+				&"error": "create_script only writes GDScript (.gd) files. For other text formats (.gdignore, .json, .md, configs, etc.), use write_file instead. Got: %s" % path,
+				&"wrong_extension": true,
+			}
+	else:
 		path += ".gd"
 
 	# Check if file already exists

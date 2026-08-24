@@ -26,3 +26,10 @@ dist/
 
 # Cursor
 .cursor/
+
+# Internal design docs (not published)
+ROADMAP.md
+undo-system-explainer.html
+
+# Plugin scratch space (undo snapshots, screenshots)
+addons/godot_mcp/cache/

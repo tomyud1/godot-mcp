@@ -31,6 +31,7 @@ export const RUNTIME_ONLY_TOOLS = new Set<string>([
   'send_input',
   'query_runtime_node',
   'get_runtime_log',
+  'get_performance_monitors',
 ]);
 
 interface PendingRequest {
@@ -134,6 +135,10 @@ export class GodotBridge {
   routeIsRuntime(toolName: string, args: Record<string, unknown> | undefined): boolean {
     if (RUNTIME_ONLY_TOOLS.has(toolName)) return true;
     if (toolName === 'list_signal_connections' && args && (args as Record<string, unknown>).source === 'runtime') return true;
+    // call_method has both editor and runtime modes — runtime: true sends
+    // the call to the in-game MCPRuntime helper; otherwise it goes to the
+    // editor where the .tscn is loaded, mutated, and saved.
+    if (toolName === 'call_method' && args && (args as Record<string, unknown>).runtime === true) return true;
     return false;
   }
 

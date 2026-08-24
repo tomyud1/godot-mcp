@@ -62,7 +62,7 @@ export const fileTools: ToolDefinition[] = [
   },
   {
     name: 'create_script',
-    description: 'Create a NEW GDScript file (.gd) that does not exist yet. Use this for creating new scripts, NOT for editing existing files (use edit_script for edits). Use classdb_query to verify unfamiliar Godot class methods. After creating a script, consider using run_scene to test and get_errors to check for issues.',
+    description: 'Create a NEW GDScript file (.gd) that does not exist yet. STRICTLY for .gd files — non-.gd extensions (.json, .gdignore, .md, etc.) are rejected with a pointer at write_file. A missing extension is auto-completed to .gd. Use edit_script for changes to an existing file. Use classdb_query to verify unfamiliar Godot class methods. After creating a script, consider run_scene and get_errors to verify it parses and behaves.',
     inputSchema: {
       type: 'object',
       properties: {

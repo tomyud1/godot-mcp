@@ -131,6 +131,18 @@ func _on_client_count_changed(count: int) -> void:
 		_status_label.text = "MCP: No Agent"
 		_status_label.add_theme_color_override("font_color", Color(1.0, 0.6, 0.0))  # orange
 
+## Tools whose internal `ok` is a SEMANTIC signal, not a transport-level
+## failure. Their `ok: false` responses still represent a successful round-trip
+## that the agent should read in full (structured failure list, partial
+## results, etc.). Route them through the success path so the MCP layer
+## doesn't wrap them in an error envelope.
+const _ALWAYS_TRANSPORT_SUCCESS := {
+	"batch_execute": true,
+	"mcp_undo": true,
+	"mcp_redo": true,
+	"mcp_undo_history": true,
+}
+
 func _on_tool_requested(request_id: String, tool_name: String, args: Dictionary) -> void:
 	"""Handle incoming tool request from MCP server.
 
@@ -143,12 +155,15 @@ func _on_tool_requested(request_id: String, tool_name: String, args: Dictionary)
 	var result: Dictionary = await _tool_executor.execute_tool(tool_name, args)
 
 	var success: bool = result.get(&"ok", false)
-	# We keep the full dict and ship it as `result` regardless of success so
-	# structured failure details (open_in_editor, where, clamped, …) survive
-	# the round-trip to the agent. The top-level `error` string is kept on
-	# failure for clients that only read that field.
-	if success:
-		result.erase(&"ok")
+	# Keep the full dict (including the top-level `ok` field) so callers can
+	# distinguish success from soft failure consistently. The structured
+	# failure details (open_in_editor, where, clamped, …) survive the
+	# round-trip regardless of success.
+	if _ALWAYS_TRANSPORT_SUCCESS.has(tool_name):
+		# Composite / built-in tools: `ok` is semantic. Always route as a
+		# successful transport so the agent reads the full structured body.
+		_mcp_client.send_tool_result(request_id, true, result)
+	elif success:
 		_mcp_client.send_tool_result(request_id, true, result)
 	else:
 		var error: String = result.get(&"error", "Unknown error")

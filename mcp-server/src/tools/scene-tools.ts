@@ -8,7 +8,7 @@ import type { ToolDefinition } from '../types.js';
 export const sceneTools: ToolDefinition[] = [
   {
     name: 'create_scene',
-    description: 'Create a new Godot scene (.tscn) file with nodes. Use this to create player scenes, UI screens, game objects, etc.',
+    description: 'Create a new Godot scene (.tscn) file with nodes. Use this to create player scenes, UI screens, game objects, etc.\n\n**Atomic pre-validation:** the entire spec (root, attach_script, every entry of `nodes`, and recursively their `children` / `properties` / `script`) is walked and validated BEFORE the scene file is created. If any node_type isn\'t a known class, any property name doesn\'t exist on its target class (plus the attached script\'s @export\'d properties when present), or any script path is missing / isn\'t a Script — the call returns `ok: false` with a `validation_errors` array of path-pointed messages (`nodes[1].children[2].properties.text: property does not exist on Sprite2D`) and ZERO filesystem mutation. Fix all listed issues in one shot.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -39,7 +39,7 @@ export const sceneTools: ToolDefinition[] = [
   },
   {
     name: 'read_scene',
-    description: 'Read and parse a scene file to get its full node structure and properties. Use this to understand a scene before editing.',
+    description: 'Read and parse a scene file to get its full node structure and properties. Use this to understand a scene before editing. NOTE: `include_properties: true` returns a hand-picked subset (position, rotation, scale, size, offset, visible, modulate, z_index, text, collision_layer, collision_mask, mass) optimized for quick scene overviews. To see ALL properties on a specific node — including @export\'d script vars — use `get_scene_node_properties`.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -49,7 +49,25 @@ export const sceneTools: ToolDefinition[] = [
         },
         include_properties: {
           type: 'boolean',
-          description: 'Include node properties in the output (default: false)'
+          description: 'Include the curated property subset above on each node (default: false). For a full per-node property dump use get_scene_node_properties.'
+        }
+      },
+      required: ['scene_path']
+    }
+  },
+  {
+    name: 'get_scene_node_properties',
+    description: 'Return the FULL property list of a single node in a .tscn file, including @export\'d script vars and inherited properties — with current values, declared variant types, hint metadata, and a category grouping. Complements `read_scene` (which uses a curated subset of common properties for quick tree overviews) and `get_node_properties` (which returns class-level metadata, not a specific node\'s current values). Use this to verify a property was actually set after `add_node` / `set_node_properties` (especially for script @export vars), or to discover the exact name of a property you can\'t remember (handy when AI suggestions like "color" turn out to be "modulate"). Returns `{ok, scene_path, node_path, node_type, node_name, inheritance_chain, property_count, properties, categories}`.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        scene_path: {
+          type: 'string',
+          description: 'Path to the scene file (res://path/to/scene.tscn)'
+        },
+        node_path: {
+          type: 'string',
+          description: 'Path to the node within the scene (. for root, or relative path like "UI/HUD/Label"). Defaults to "." (scene root).'
         }
       },
       required: ['scene_path']
@@ -57,7 +75,7 @@ export const sceneTools: ToolDefinition[] = [
   },
   {
     name: 'add_node',
-    description: 'Add a node to an existing scene file. Supports an optional script attachment, group memberships, and a tree of children created in the same call (1 tool call instead of N). Children format: {name|node_name, type|node_type, properties?, script?, groups?, children?}. Both key styles are accepted so children can reuse the same keys you use at the top level (node_name, node_type) or the shorter form (name, type). Unknown child keys are rejected with a clear error.',
+    description: 'Add a node to an existing scene file. Supports an optional script attachment, group memberships, and a tree of children created in the same call (1 tool call instead of N). Children format: {name|node_name, type|node_type, properties?, script?, groups?, children?}. Both key styles are accepted so children can reuse the same keys you use at the top level (node_name, node_type) or the shorter form (name, type). Unknown child keys are rejected with a clear error.\n\n**Atomic pre-validation:** the entire spec (top-level node + every descendant in `children`, recursively) is walked and validated BEFORE the .tscn is loaded from disk. Property names are checked against ClassDB + the attached script\'s @export\'d properties; `script` paths are checked for existence and Script-ness; node_types are checked against ClassDB. If anything fails, returns `ok: false` with `validation_errors: [...]` listing every issue with path-pointed prefixes (e.g. `children[2].properties.text: property does not exist on Sprite2D`), and ZERO mutation. Previously a typo like `properties: {color: ...}` on a Sprite2D would be silently swallowed; now it surfaces immediately.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -457,7 +475,7 @@ export const sceneTools: ToolDefinition[] = [
   },
   {
     name: 'set_node_properties',
-    description: 'Set MULTIPLE properties on a node in a single tool call. Non-atomic: each property is applied independently; the response separates "applied" from "failed" so partial success surfaces clearly. Saves the scene once at the end. Resource-typed properties must use set_resource_property / set_sprite_texture / etc.',
+    description: 'Set MULTIPLE properties on a node in a single tool call. **Atomic pre-validation** — every entry is checked (name exists on the node\'s class plus its attached script\'s @export\'d properties; Resource-typed properties must use the dedicated resource tools) BEFORE anything is written. If ANY entry fails, the response is `ok: false` with a `validation_errors` array (e.g. `properties.color: property does not exist on Sprite2D`) and ZERO mutation occurs — no scene save, no half-applied state. On success, returns the `applied` list with old/new values per property. Resource-typed properties must use set_resource_property / set_sprite_texture / set_mesh / set_material / set_collision_shape.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -502,15 +520,18 @@ export const sceneTools: ToolDefinition[] = [
     }
   },
   {
-    name: 'find_nodes_in_group',
-    description: 'Find every node in a .tscn that belongs to a given group. Returns paths, names, and types. Useful for verifying that level.gd will actually pick up the right nodes via get_tree().get_nodes_in_group().',
+    name: 'find_nodes',
+    description: 'Search a .tscn file for nodes matching one or more filters. Filters AND together; pass any subset. Scene-scoped — for project-wide text search use search_project instead. Returns one entry per match with path (relative to scene root, "." = root), name, type (Godot class), and groups.\n\nFilters:\n  \u2022 name_pattern: case-insensitive. If it contains "*" or "?" it is treated as a glob (matchn); otherwise as a substring (findn).\n  \u2022 type: Godot class name (e.g. "Node2D", "CharacterBody3D", "Button"). Matches the node\'s class AND any subclass (so "Node2D" matches "Sprite2D"). Also matches custom script class_names registered globally via "class_name". Unknown types return an error (not silent zero matches).\n  \u2022 in_group: exact group name; matches nodes where is_in_group() returns true.\n  \u2022 recursive (default true): when false, only the scene root and its direct children are checked.\n\nIf scene_path is omitted, defaults to the currently edited scene in the editor (must be saved at least once). Loads from disk like all other scene tools, so unsaved in-editor edits are not seen.\n\nNo filters at all returns every node in the scene — handy as a structured alternative to scene_tree_dump.',
     inputSchema: {
       type: 'object',
       properties: {
-        scene_path: { type: 'string' },
-        group: { type: 'string', description: 'Group name to search for' }
+        scene_path: { type: 'string', description: 'Path to the .tscn scene file (res://...). Optional; defaults to the editor\'s current edited scene.' },
+        name_pattern: { type: 'string', description: 'Case-insensitive match against node names. Glob (contains "*"/"?") or substring otherwise.' },
+        type: { type: 'string', description: 'Godot class name or globally registered script class_name. Matches class AND subclasses (is_a check).' },
+        in_group: { type: 'string', description: 'Group name to filter by.' },
+        recursive: { type: 'boolean', description: 'Traverse the whole subtree (default true). If false, only the scene root and its direct children are checked.' }
       },
-      required: ['scene_path', 'group']
+      required: []
     }
   },
   {
@@ -599,6 +620,58 @@ export const sceneTools: ToolDefinition[] = [
         method: { type: 'string' }
       },
       required: ['scene_path', 'from_node', 'signal', 'to_node', 'method']
+    }
+  },
+  {
+    name: 'call_method',
+    description:
+      "Invoke any method on any node, in either the editor's on-disk scene or the running game. The write counterpart to query_runtime_node (which only reads).\n\n" +
+      "**Two modes** controlled by `runtime`:\n" +
+      "  • `runtime: false` (default, editor mode) — Loads the .tscn from disk, finds the node, invokes the method, ALWAYS saves the scene back. Snapshot taken so `mcp_undo` reverts the file. Use for **engine/built-in methods that mutate persistent scene state**: `CollisionObject2D.set_collision_layer_value(layer, on)`, `Curve2D.add_point(pos)`, `Node.add_user_signal(name)`, `Node.add_to_group(name, true)` (the `true` is required to persist into the .tscn).\n" +
+      "    ⚠️ **Editor mode cannot run user-defined methods in non-@tool scripts.** Godot's editor instantiates scenes with `GEN_EDIT_STATE_MAIN`, which attaches scripts and lets `@export` vars round-trip but does NOT dispatch user method bodies for non-@tool scripts. `call_method` detects this case and refuses with `reason: \"non_tool_script_method\"` — DO NOT use editor mode to invoke `take_damage`, `respawn`, `play_intro`, or any other game-logic method on your script. Use runtime mode for that.\n" +
+      "  • `runtime: true` — Routes the call to the MCPRuntime helper inside the running game. Finds the live node in the active SceneTree, invokes the method, returns the serialized result. Use to drive the game from the AI: `Player.take_damage(50)`, `AnimationPlayer.play(\"intro\")`, `AudioStreamPlayer.play()`, `Inventory.add_item(\"sword\", 1)`. REQUIRES `run_scene` first (the game must be running) — same precondition as query_runtime_node / send_input.\n\n" +
+      "**node_path resolution:**\n" +
+      "  • editor mode — relative to scene root, e.g. \"Player\" or \"UI/HUD/HealthLabel\", or \".\" for root.\n" +
+      "  • runtime mode — absolute (\"/root/Main/Player\") OR relative to current_scene (\"Player\"). Same rules as query_runtime_node.\n\n" +
+      "**args** — array of positional arguments. Each follows the same form as `modify_node_property.value`: primitives (`1.5`, `\"hello\"`, `true`, `null`), arrays, or `{type:\"Vector2\",x,y}` / `{type:\"Color\",r,g,b,a}` / `{type:\"NodePath\",...}` / `{type:\"Resource\",path:\"res://...\"}` discriminated objects.\n\n" +
+      "**Method validation** — on miss, returns `closest_matches` (top similar method names) and an `available_methods_sample` so the AI can self-correct. Arity is also pre-checked against `MethodInfo` (with default-arg awareness).\n\n" +
+      "**Destructive denylist** — `queue_free`, `free`, `set_script`, `remove_child`, `replace_by`, `reparent` require `confirm: true`. In runtime mode, calls directly on `/root/<name>` (likely autoloads or the active scene root) also require confirm. Use `attach_script` / `detach_script` / `remove_node` instead of the corresponding raw method calls in editor mode.\n\n" +
+      "**Coroutines** — methods containing `await` return a `GDScriptFunctionState`. Such calls are dispatched fire-and-forget: `is_coroutine: true, awaited: false` is reported, side effects still run, but the return value is not captured. Follow up with `wait` + `query_runtime_node` to observe results.\n\n" +
+      "**Return shape (success):** `{ok:true, runtime, scene_path?, node_path, node_class, method, method_signature?, duration_ms, return_value?, return_type?, awaited, is_coroutine}`. `awaited` and `is_coroutine` are ALWAYS present (stable for parsing). `return_value` / `return_type` are omitted when `expect_return: false` or the method is a coroutine. Object/Node returns are serialized as `{type:\"Object\", class, name?, node_path?, serializable:false}` — follow up with `query_runtime_node` to inspect properties. Resource returns are `{type:\"Resource\", class, resource_path?}`.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        node_path: {
+          type: 'string',
+          description: 'Path to the target node. Editor mode: relative to scene root (e.g. "Player", "UI/HUD/Label", or "." for root). Runtime mode: absolute (/root/Main/Player) or relative to current_scene (Player).'
+        },
+        method: {
+          type: 'string',
+          description: 'Method name on the target node. Validated against node.has_method(); on miss returns closest_matches and available_methods_sample.'
+        },
+        args: {
+          type: 'array',
+          items: { description: 'Positional argument. Primitive, array, or {type:"Vector2"|"Vector3"|"Color"|"Resource"|...} discriminated object — same form as modify_node_property.value.' },
+          description: 'Positional arguments to pass. Default: []. Arity is pre-checked against the method signature (allowing for default arguments).'
+        },
+        scene_path: {
+          type: 'string',
+          description: 'Editor mode only: which .tscn to operate on. Defaults to the editor\'s currently edited scene (must be saved at least once). Ignored when runtime=true.'
+        },
+        runtime: {
+          type: 'boolean',
+          description: 'When true, call on the live node in the running game via MCPRuntime. Requires the game to be running (run_scene first). When false (default), operates on the .tscn file in the editor.'
+        },
+        expect_return: {
+          type: 'boolean',
+          description: 'Capture and serialize the return value (default: true). Set false for void / fire-and-forget calls to skip serialization in the response.'
+        },
+        confirm: {
+          type: 'boolean',
+          description: 'Required for methods on the destructive denylist (queue_free, free, set_script, remove_child, replace_by, reparent) and, in runtime mode, for direct calls on /root/<name> (autoload/scene root territory). Defaults false.'
+        }
+      },
+      required: ['node_path', 'method']
     }
   }
 ];

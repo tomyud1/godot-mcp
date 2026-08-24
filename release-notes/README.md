@@ -6,6 +6,7 @@ These are narrative, feature-first write-ups aimed at users of the project. For 
 
 ## Index
 
+- [v0.6.0](./v0.6.0.md) — Undo, batching, and validate-before-mutate (2026-08-24)
 - [v0.5.0](./v0.5.0.md) — Runtime loop, generic resource editing, and a serious crash purge (2026-04-19)
 
 ## Conventions

@@ -8,6 +8,8 @@ import { scriptTools } from './script-tools.js';
 import { projectTools } from './project-tools.js';
 import { assetTools } from './asset-tools.js';
 import { visualizerTools } from './visualizer-tools.js';
+import { undoTools } from './undo-tools.js';
+import { batchTools } from './batch-tools.js';
 import type { ToolDefinition } from '../types.js';
 
 export const allTools: ToolDefinition[] = [
@@ -17,6 +19,8 @@ export const allTools: ToolDefinition[] = [
   ...projectTools,
   ...assetTools,
   ...visualizerTools,
+  ...undoTools,
+  ...batchTools,
 ];
 
 export function toolExists(toolName: string): boolean {

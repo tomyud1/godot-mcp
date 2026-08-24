@@ -107,8 +107,8 @@ The MCP server connects to the Godot editor via WebSocket through the Godot plug
 ## Current Limitations
 
 - **Local only** — runs on localhost, no remote connections
-- **Single connection** — one Godot instance at a time
-- **No undo** — changes save directly (use version control)
+- **One Godot editor at a time** — multiple AI clients can connect concurrently, but they all share a single Godot instance
+- **Ctrl+Z does not reach AI changes** — the plugin writes to disk rather than the editor's live tree, so Godot's native undo has nothing to revert. Use the `mcp_undo` tool instead (ask the agent to undo).
 - **AI has limited Godot knowledge** — it can help debug, write scripts, and build scenes, but can't create a complete game without guidance
 
 ---

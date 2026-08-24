@@ -8,13 +8,13 @@ import type { ToolDefinition } from '../types.js';
 export const scriptTools: ToolDefinition[] = [
   {
     name: 'edit_script',
-    description: 'Apply a SMALL, SURGICAL code edit (1-10 lines) to GDScript files. Auto-applies changes. For large changes, call multiple times. ONLY for .gd files - NEVER for .tscn scene files. Use classdb_query to verify unfamiliar Godot class methods. After making changes, consider using run_scene to test and get_errors to check for issues.',
+    description: "Edit an existing GDScript (.gd) file in place by replacing one snippet with another, and save. Snippets can be any size — a single line, a function, or the whole file for a full rewrite. If old_snippet matches more than once, pass context_before/context_after to disambiguate; if it can't be found, read_file the relevant range and retry with an exact match. ONLY for .gd files; not for .tscn scene files (use the scene/node tools). After editing, consider validate_script and run_scene + get_errors.",
     inputSchema: {
       type: 'object',
       properties: {
         edit: {
           type: 'object',
-          description: 'Edit spec: {type: "snippet_replace", file: "res://path.gd", old_snippet: "old code", new_snippet: "new code", context_before: "line above", context_after: "line below"}. Keep old_snippet SMALL (1-10 lines).'
+          description: "Edit spec: {type: 'snippet_replace', file: 'res://path.gd', old_snippet: 'text to replace (must match file contents exactly, including whitespace)', new_snippet: 'replacement text', context_before?: 'unique text immediately before old_snippet', context_after?: 'unique text immediately after'}. Snippets can be any size; for a full rewrite, pass the whole file as old_snippet."
         }
       },
       required: ['edit']
@@ -22,7 +22,7 @@ export const scriptTools: ToolDefinition[] = [
   },
   {
     name: 'validate_script',
-    description: 'Validate a GDScript file for syntax errors using Godot\'s built-in parser. Call after creating or modifying scripts to ensure they are error-free.',
+    description: 'Validate a GDScript file for syntax errors using Godot\'s built-in parser. Good for ordinary project scripts after editing. For @tool/editor-plugin addon scripts this isolated parser path may return valid:false with diagnostics_available:false because dependencies and editor context are not fully loaded; in that case, use get_errors/get_console_log after enabling or reloading the addon for actionable details.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -75,8 +75,72 @@ export const scriptTools: ToolDefinition[] = [
     }
   },
   {
+    name: 'delete_folder',
+    description: 'Recursively delete a directory and ALL of its contents from the project. REQUIRES confirm=true. For a non-empty folder you must ALSO pass recursive=true — otherwise the call refuses and reports the file/sub-folder count. The whole deletion lands as a SINGLE undo entry: one mcp_undo restores every file (empty sub-directories are not restored — only files are tracked). Three safety guards each REFUSE rather than half-delete: (1) refuses if any file inside is open in an editor tab — close the tabs or pass force=true (deleting an open scene can crash Godot); (2) refuses if any external file contains a literal "res://..." string pointing into this folder (preload, ext_resource, FileAccess.open targets, autoload entries — see below) — repoint them or pass force_orphan=true (leaves broken references); (3) refuses if the contents are too large to snapshot for undo without evicting existing undo history — pass allow_no_undo=true to delete without an undo entry. Refuses to touch res:// root or the godot_mcp addon. For a single file use delete_file instead. Returns {ok, path, deleted_files, deleted_count, removed_dirs, total_bytes, undo_available, message} and, on partial failure, partial:true with delete_errors.\n\nREFERENCE-SCAN BEHAVIOR (important): The external-reference guard does a literal substring search for "res://" path strings across .tscn / .tres / .gd / .cs / .gdshader / project.godot. It is intentionally conservative — any literal path-string match counts, including runtime FileAccess.open() targets that you may consider safe to delete (the script will just re-create the file on its next run). The scanner cannot statically distinguish load-bearing references from benign strings. If the referenced list looks like runtime/regenerable targets, pass force_orphan=true rather than trying to fight the scan.\n\nFRESHLY-CREATED FILES: If you are deleting a folder containing files you just wrote in this session (via create_script etc.), Godot may not have written the auto-generated .uid sidecars yet, and they would be missed by the undo snapshot. Call rescan_filesystem before delete_folder when full undo fidelity matters.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: {
+          type: 'string',
+          description: 'Folder to delete (e.g. res://enemies/old). res:// is prepended if missing.'
+        },
+        confirm: {
+          type: 'boolean',
+          description: 'REQUIRED. Must be explicitly true — safety gate against accidental deletes. Calls without confirm=true fail with an error.'
+        },
+        recursive: {
+          type: 'boolean',
+          description: 'REQUIRED for a non-empty folder. Must be true to delete a folder that contains any files or sub-folders. Default false.'
+        },
+        force: {
+          type: 'boolean',
+          description: 'If true, bypass the "file open in editor" guard. Deleting an open scene/script can crash the editor — prefer closing the tabs. Default false.'
+        },
+        force_orphan: {
+          type: 'boolean',
+          description: 'If true, delete even when files inside are still referenced from outside the folder. This WILL leave broken references. Default false.'
+        },
+        allow_no_undo: {
+          type: 'boolean',
+          description: 'If true, delete a folder too large to snapshot without recording an undo entry. The deletion then cannot be reverted with mcp_undo. Default false.'
+        }
+      },
+      required: ['path', 'confirm']
+    }
+  },
+  {
+    name: 'write_file',
+    description: 'Write UTF-8 text content to any file in the project. Creates the file if missing; REFUSES to clobber an existing file unless overwrite=true. Parent directories are auto-created (override with create_dirs=false). Refuses to write to plugin source (anywhere under res://addons/godot_mcp/ except res://addons/godot_mcp/cache/) unless force=true. Refuses paths containing ".." or "." traversal segments (would escape the project tree).\n\nUse this for non-GDScript text: .gdignore, .gitignore, README.md, .json configs, .gdshader files, custom .tres data, fixture files for tests, any plain-text content. For GDScript with boilerplate (class_name / extends), prefer create_script which adds those automatically and validates the path is .gd.\n\nThe write is captured by the undo system: a single mcp_undo restores the prior content (when overwriting) or deletes the file (when creating new). Binary content is NOT supported — for binary files write a GDScript helper that produces the file and run it via run_scene, or copy/move via rename_file.\n\nEditor sync after write: the call replaces the ResourceLoader cache entry for .tscn/.tres/.gdshader/.scn so the next load() sees the new content (sets cache_evicted:true on success), force-reloads any Script resource for .gd writes (sets script_reloaded:true), and reloads an open scene tab whose .tscn was just written (sets scene_reloaded:true). The refresh runs unconditionally for the recognized extensions — flags reflect whether each step succeeded, not whether a stale cache happened to exist beforehand, because Godot keeps resources alive in places ResourceLoader.has_cached() cannot see (open tabs, EditorFileSystem index). The script editor\'s in-memory tab buffer is NOT swapped (Godot exposes no public API for that) — if you wrote to a .gd that is currently open in the editor, the user may need to refocus the tab to see the new source. When any refresh action ran successfully, an editor_refresh:{cache_evicted, scene_reloaded, script_reloaded} field is included in the response.\n\nReturns {ok, path, existed, bytes_written, message} (plus editor_refresh when applicable).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: {
+          type: 'string',
+          description: 'File path (res://... — res:// is prepended if missing).'
+        },
+        content: {
+          type: 'string',
+          description: 'Text content to write. Encoded as UTF-8. Pass an empty string to create a zero-byte file.'
+        },
+        overwrite: {
+          type: 'boolean',
+          description: 'REQUIRED to replace an existing file. Default false — calls against an existing path without overwrite=true return file_exists:true and refuse.'
+        },
+        create_dirs: {
+          type: 'boolean',
+          description: 'If true (default), missing parent directories are auto-created. If false, missing parent dirs return an error.'
+        },
+        force: {
+          type: 'boolean',
+          description: 'Bypass the plugin-source-protection guard. Required to overwrite anything under res://addons/godot_mcp/ except res://addons/godot_mcp/cache/. Default false.'
+        }
+      },
+      required: ['path', 'content']
+    }
+  },
+  {
     name: 'rename_file',
-    description: 'Rename or move a file, optionally updating references in other files.',
+    description: 'Rename or move a project file. By default also rewrites every literal reference to the old path in other text-format project files (.tscn, .tres, .gd, .cs, .gdshader, project.godot) and updates any matching `autoload/*` entry in ProjectSettings, so scenes and preloads keep working. When Godot exposes a reliable scene-dirty API, clean open scene tabs that referenced the renamed file are reloaded (close + reopen), while dirty tabs are preserved and returned in scenes_skipped_dirty. On Godot versions without that API, open scene reload is skipped with scene_reload_warnings to avoid discarding unsaved changes; the files are still correct on disk, but the user may need to manually reopen the tab to clear stale editor paths. Pass update_references:false to skip both reference rewrite and reload. Returns references_updated:[{file, replacements}], scenes_reloaded:[paths], and optionally scenes_skipped_dirty or scene_reload_warnings.',
     inputSchema: {
       type: 'object',
       properties: {

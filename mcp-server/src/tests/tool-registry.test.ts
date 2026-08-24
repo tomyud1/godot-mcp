@@ -9,11 +9,27 @@ function getExecutorToolNames(): Set<string> {
   const testDir = path.dirname(fileURLToPath(import.meta.url));
   const executorPath = path.resolve(testDir, '../../../addons/godot_mcp/tool_executor.gd');
   const source = readFileSync(executorPath, 'utf8');
-  const toolNames = [...source.matchAll(/&"([^"]+)": \[_[a-z_]+, &"[^"]+"\]/g)]
+
+  // Tools dispatched via the per-tool map: `&"name": [_handler, &"method"]`.
+  const mapNames = [...source.matchAll(/&"([^"]+)": \[_[a-z_]+, &"[^"]+"\]/g)]
     .map(match => match[1])
     .filter(name => !name.startsWith('visualizer._internal_'));
 
-  return new Set(toolNames);
+  // Built-in tools handled directly inside `execute_tool` via the
+  // `match tool_name:` block (mcp_undo, mcp_redo, mcp_undo_history,
+  // batch_execute, ...). Scope the regex to the block between
+  // `match tool_name:` and the next top-level statement.
+  const builtinNames: string[] = [];
+  const matchBlock = source.match(
+    /match tool_name:\s*\n([\s\S]*?)\n\s*if not _tool_map\.has/,
+  );
+  if (matchBlock) {
+    builtinNames.push(
+      ...[...matchBlock[1].matchAll(/^\s+"([a-z_]+)":\s*$/gm)].map(m => m[1]),
+    );
+  }
+
+  return new Set([...mapNames, ...builtinNames]);
 }
 
 function getRuntimeToolNames(): Set<string> {

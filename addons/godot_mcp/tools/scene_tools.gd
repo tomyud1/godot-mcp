@@ -104,6 +104,141 @@ func _set_node_properties(node: Node, properties: Dictionary) -> void:
 		var prop_value = _parse_value(properties[prop_name])
 		node.set(prop_name, prop_value)
 
+
+# =============================================================================
+# Pre-validation walker (roadmap #7) — validate-then-mutate for compound tools.
+# =============================================================================
+## Validate a node spec dict (the args of add_node, OR a `children`/`nodes`
+## entry of add_node/create_scene) WITHOUT mutating anything. Walks the entire
+## tree recursively and returns an Array of path-pointed error strings, e.g.
+##   "children[2].properties.text: property does not exist on Sprite2D"
+## Empty array == valid; caller can proceed.
+##
+## `path_prefix` is the JSON-path-like prefix for errors:
+##   ""              top-level (add_node)
+##   "nodes[1]"      top-level (create_scene)
+##   "children[2]"   a recursed child
+## `require_name` is true only when the spec is the top-level add_node call
+## (where node_name is required); false for children and create_scene's nodes
+## entries (Godot will auto-name those if omitted).
+##
+## What we check (cheap, no scene load required):
+##   - node_type present and ClassDB.class_exists()
+##   - script (if provided): FileAccess.file_exists() AND is a Script resource
+##   - every key in `properties`: exists on node_type (or on the attached
+##     script's @export list). Property TYPE compatibility is NOT checked
+##     here — runtime catches type errors with clear messages.
+##   - children is an Array, every entry is a Dictionary, recurse.
+##
+## What we don't check (intentionally):
+##   - Property VALUE types (variant codec handles JSON→variant coercion).
+##   - res:// paths inside property values (would need per-property variant
+##     parsing; too complex for the marginal benefit).
+##   - groups membership (any non-empty string is a valid group name).
+func _validate_node_spec(spec: Dictionary, path_prefix: String, require_name: bool) -> Array:
+	var errors: Array = []
+	var prefix: String = path_prefix + "." if not path_prefix.is_empty() else ""
+
+	# node_name (only required for the top-level add_node call).
+	var name_str: String = str(spec.get(&"node_name", spec.get(&"name", "")))
+	if require_name and name_str.strip_edges().is_empty():
+		errors.append("%snode_name: required (non-empty string)" % prefix)
+
+	# node_type — must exist in ClassDB. Without a valid type we can't validate
+	# properties either, so short-circuit.
+	var type_str: String = str(spec.get(&"node_type", spec.get(&"type", "")))
+	if type_str.strip_edges().is_empty():
+		errors.append("%snode_type: required (a Godot class name like Node2D, Sprite2D, CharacterBody2D, …)" % prefix)
+		# Still walk children so the agent sees ALL issues in one shot.
+		_validate_children(spec, prefix, errors)
+		return errors
+	if not ClassDB.class_exists(type_str):
+		errors.append("%snode_type: '%s' is not a known Godot class (use classdb_query to discover valid types)" % [prefix, type_str])
+		_validate_children(spec, prefix, errors)
+		return errors
+
+	# script (optional): file must exist AND be a Script.
+	var script_path: String = str(spec.get(&"script", "")).strip_edges()
+	var script_res: Script = null
+	if not script_path.is_empty():
+		if not script_path.begins_with("res://") and not script_path.begins_with("user://"):
+			errors.append("%sscript: path must start with res:// or user:// (got '%s')" % [prefix, script_path])
+		elif not FileAccess.file_exists(script_path):
+			errors.append("%sscript: file does not exist: '%s'" % [prefix, script_path])
+		else:
+			var loaded: Resource = load(script_path)
+			if loaded == null:
+				errors.append("%sscript: failed to load '%s' (corrupt or parse error — check get_errors)" % [prefix, script_path])
+			elif not (loaded is Script):
+				errors.append("%sscript: '%s' is not a Script (got %s)" % [prefix, script_path, loaded.get_class()])
+			else:
+				script_res = loaded
+
+	# properties: each key must exist on node_type (plus @export'd properties
+	# from the attached script, if any).
+	var props_v: Variant = spec.get(&"properties", {})
+	if props_v is Dictionary and not (props_v as Dictionary).is_empty():
+		var valid_props: Dictionary = _collect_property_names(type_str, script_res)
+		# If we couldn't gather any names (shouldn't happen — every Object has
+		# basic properties), skip name validation rather than false-positive.
+		if not valid_props.is_empty():
+			for prop_name_v in (props_v as Dictionary).keys():
+				var prop_name := str(prop_name_v)
+				if not valid_props.has(prop_name):
+					errors.append("%sproperties.%s: property does not exist on %s%s" % [
+						prefix, prop_name, type_str,
+						(" (or its attached script)" if script_res != null else ""),
+					])
+	elif not (props_v is Dictionary):
+		errors.append("%sproperties: must be a Dictionary, got %s" % [prefix, type_string(typeof(props_v))])
+
+	# groups: shape only — must be an Array (any string element is acceptable).
+	var groups_v: Variant = spec.get(&"groups", [])
+	if not (groups_v is Array or groups_v is PackedStringArray):
+		errors.append("%sgroups: must be an Array of strings, got %s" % [prefix, type_string(typeof(groups_v))])
+
+	# children: recurse.
+	_validate_children(spec, prefix, errors)
+	return errors
+
+
+## Walk children recursively, appending into `errors`. Extracted so we can
+## still visit children even when the parent's node_type is invalid (so the
+## agent sees every issue at once, not just the first).
+func _validate_children(spec: Dictionary, prefix: String, errors: Array) -> void:
+	var children_v: Variant = spec.get(&"children", [])
+	if children_v == null:
+		return
+	if not (children_v is Array):
+		errors.append("%schildren: must be an Array, got %s" % [prefix, type_string(typeof(children_v))])
+		return
+	var children: Array = children_v
+	for i in range(children.size()):
+		var child_data: Variant = children[i]
+		# Drop the trailing dot from prefix when concatenating an index segment.
+		var raw_prefix: String = prefix.trim_suffix(".")
+		var child_path: String = (raw_prefix + "." if not raw_prefix.is_empty() else "") + ("children[%d]" % i)
+		# children[i] handled WITHOUT trailing dot so the recursion can decide.
+		var child_path_no_dot: String = child_path
+		if typeof(child_data) != TYPE_DICTIONARY:
+			errors.append("%s: must be a Dictionary, got %s" % [child_path_no_dot, type_string(typeof(child_data))])
+			continue
+		errors.append_array(_validate_node_spec(child_data, child_path_no_dot, false))
+
+
+## Collect the set of valid property names for a given node type, optionally
+## including @export'd properties from an attached script. Returns a
+## Dictionary keyed by property name (values are unused).
+func _collect_property_names(type_str: String, script: Script) -> Dictionary:
+	var out: Dictionary = {}
+	if ClassDB.class_exists(type_str):
+		for p in ClassDB.class_get_property_list(type_str, false):
+			out[str(p.get(&"name", ""))] = true
+	if script != null:
+		for p in script.get_script_property_list():
+			out[str(p.get(&"name", ""))] = true
+	return out
+
 func _serialize_value(value: Variant) -> Variant:
 	return VariantCodec.serialize_value(value)
 
@@ -114,7 +249,9 @@ func create_scene(args: Dictionary) -> Dictionary:
 	var scene_path: String = _ensure_res_path(str(args.get(&"scene_path", "")))
 	var root_node_name: String = str(args.get(&"root_node_name", "Node"))
 	var root_node_type: String = str(args.get(&"root_node_type", ""))
-	var nodes: Array = args.get(&"nodes", [])
+	# Variant load so a non-Array `nodes` arg becomes a clean validation
+	# error rather than a typed-assignment crash (matches add_node).
+	var nodes_v: Variant = args.get(&"nodes", [])
 	var attach_script_path: String = str(args.get(&"attach_script", ""))
 
 	if scene_path.strip_edges() == "res://":
@@ -127,6 +264,41 @@ func create_scene(args: Dictionary) -> Dictionary:
 		return {&"ok": false, &"error": "Scene already exists: " + scene_path}
 	if not ClassDB.class_exists(root_node_type):
 		return {&"ok": false, &"error": "Invalid root node type: " + root_node_type}
+
+	# Pre-validation (roadmap #7): the root is validated above; here we walk
+	# the entire `nodes` array (which may contain nested subtrees via
+	# `children`) BEFORE touching the filesystem. Path-pointed errors so a
+	# malformed nodes[1].children[2].properties.text fails fast and clearly.
+	# Also validate the optional `attach_script` for the root.
+	var validation_errors: Array = []
+	if not (nodes_v is Array):
+		validation_errors.append("nodes: must be an Array, got %s" % type_string(typeof(nodes_v)))
+	if not attach_script_path.is_empty():
+		if not attach_script_path.begins_with("res://") and not attach_script_path.begins_with("user://"):
+			validation_errors.append("attach_script: path must start with res:// or user:// (got '%s')" % attach_script_path)
+		elif not FileAccess.file_exists(attach_script_path):
+			validation_errors.append("attach_script: file does not exist: '%s'" % attach_script_path)
+		else:
+			var loaded_root_script: Resource = load(attach_script_path)
+			if loaded_root_script == null:
+				validation_errors.append("attach_script: failed to load '%s' (corrupt or parse error)" % attach_script_path)
+			elif not (loaded_root_script is Script):
+				validation_errors.append("attach_script: '%s' is not a Script (got %s)" % [attach_script_path, loaded_root_script.get_class()])
+	if nodes_v is Array:
+		for i in range((nodes_v as Array).size()):
+			var node_data: Variant = (nodes_v as Array)[i]
+			var entry_path: String = "nodes[%d]" % i
+			if typeof(node_data) != TYPE_DICTIONARY:
+				validation_errors.append("%s: must be a Dictionary, got %s" % [entry_path, type_string(typeof(node_data))])
+				continue
+			validation_errors.append_array(_validate_node_spec(node_data, entry_path, false))
+	if not validation_errors.is_empty():
+		return {
+			&"ok": false,
+			&"error": "create_scene: pre-validation failed with %d issue(s); no scene file created." % validation_errors.size(),
+			&"validation_errors": validation_errors,
+			&"hint": "Property names are validated against ClassDB + any @export'd properties on attached scripts. Fix all listed paths and retry.",
+		}
 
 	# Ensure parent directory
 	var dir_path := scene_path.get_base_dir()
@@ -143,6 +315,8 @@ func create_scene(args: Dictionary) -> Dictionary:
 		if script_res:
 			root.set_script(script_res)
 
+	# Validation passed → narrow back to typed Array for the build loop.
+	var nodes: Array = nodes_v if nodes_v is Array else []
 	var node_count := 0
 	for node_data: Variant in nodes:
 		if typeof(node_data) != TYPE_DICTIONARY:
@@ -199,8 +373,11 @@ func _create_node_recursive(data: Dictionary, parent: Node, owner: Node) -> Arra
 
 	if not n_name.is_empty():
 		node.name = n_name
-	_set_node_properties(node, props)
 
+	# Script-before-properties: same ordering rule as add_node. Without
+	# attaching the script first, any @export'd property in `props` would
+	# be silently dropped by node.set() (the var doesn't exist on the bare
+	# node yet). Pre-validation guarantees the script loads at this point.
 	if not n_script.is_empty():
 		var s = load(n_script)
 		if s:
@@ -208,6 +385,8 @@ func _create_node_recursive(data: Dictionary, parent: Node, owner: Node) -> Arra
 		else:
 			node.free()
 			return [null, "Failed to load script for child '%s': %s" % [n_name, n_script]]
+
+	_set_node_properties(node, props)
 
 	for g in groups:
 		var gname := str(g)
@@ -283,17 +462,47 @@ func add_node(args: Dictionary) -> Dictionary:
 	var node_name: String = str(args.get(&"node_name", ""))
 	var node_type: String = str(args.get(&"node_type", "Node"))
 	var parent_path: String = str(args.get(&"parent_path", "."))
-	var properties: Dictionary = args.get(&"properties", {})
+	# CRITICAL: do NOT declare these as typed `Dictionary`/`Array` locals —
+	# GDScript 4's typed assignment crashes the function before the
+	# pre-validator runs if the agent passes the wrong shape (e.g.
+	# `children: "not an array"`). Keep them Variant; the validator emits
+	# a proper path-pointed type error and we narrow after validation.
+	var properties_v: Variant = args.get(&"properties", {})
 	var script_path: String = str(args.get(&"script", ""))
-	var children: Array = args.get(&"children", [])
-	var groups: Array = args.get(&"groups", [])
+	var children_v: Variant = args.get(&"children", [])
+	var groups_v: Variant = args.get(&"groups", [])
 
 	if scene_path.strip_edges() == "res://":
 		return {&"ok": false, &"error": "Missing 'scene_path'"}
-	if node_name.strip_edges().is_empty():
-		return {&"ok": false, &"error": "Missing 'node_name'"}
-	if not ClassDB.class_exists(node_type):
-		return {&"ok": false, &"error": "Invalid node type: " + node_type}
+
+	# Pre-validation (roadmap #7): walk the entire spec — top node, every
+	# property name, the script, plus every descendant in `children` — and
+	# return ALL issues at once, with path-pointed errors, BEFORE loading
+	# the scene from disk. Cheap exit on bad input; the agent gets a single
+	# round-trip with the full failure list instead of fixing them one at a
+	# time. Zero mutation occurs when validation fails.
+	var spec_for_validation: Dictionary = {
+		&"node_name": node_name,
+		&"node_type": node_type,
+		&"script": script_path,
+		&"properties": properties_v,
+		&"children": children_v,
+		&"groups": groups_v,
+	}
+	var validation_errors: Array = _validate_node_spec(spec_for_validation, "", true)
+	if not validation_errors.is_empty():
+		return {
+			&"ok": false,
+			&"error": "add_node: pre-validation failed with %d issue(s); no mutation occurred." % validation_errors.size(),
+			&"validation_errors": validation_errors,
+			&"hint": "Property names are validated against ClassDB + any @export'd properties on the attached script. Fix all listed paths and retry. Use classdb_query or get_scene_node_properties to discover valid property names.",
+		}
+
+	# Validation passed → narrow back to the typed shapes the rest of the
+	# function expects. Safe because the validator rejected anything else.
+	var properties: Dictionary = properties_v
+	var children: Array = children_v
+	var groups: Array = groups_v
 
 	var result := _load_scene(scene_path)
 	if not result[1].is_empty():
@@ -311,8 +520,13 @@ func add_node(args: Dictionary) -> Dictionary:
 		return {&"ok": false, &"error": "Failed to create node of type: " + node_type}
 
 	new_node.name = node_name
-	_set_node_properties(new_node, properties)
 
+	# ATTACH SCRIPT FIRST, THEN SET PROPERTIES. Setting an @export'd script
+	# var on a bare node (before set_script) silently fails because the var
+	# doesn't exist on the unscripted node yet. The pre-validator accepts
+	# script @exports as valid property names, so this ordering bug caused
+	# the validator to report success while the .tscn never actually
+	# recorded the value. Pre-validation already proved the script loads.
 	if not script_path.is_empty():
 		var s := load(script_path)
 		if s:
@@ -320,6 +534,8 @@ func add_node(args: Dictionary) -> Dictionary:
 		else:
 			root.queue_free()
 			return {&"ok": false, &"error": "Failed to load script: " + script_path}
+
+	_set_node_properties(new_node, properties)
 
 	for g in groups:
 		var gname := str(g)
@@ -1583,11 +1799,19 @@ func _parse_typed_value(value, type_hint: int):
 	return VariantCodec.parse_typed_value(value, type_hint)
 
 # =============================================================================
-# set_node_properties (bulk)
+# set_node_properties (bulk, atomic)
 # =============================================================================
 ## Apply multiple properties to a node in a single load/save cycle.
-## Non-atomic: properties that exist and validate are applied; the rest are
-## reported as failures. The scene is only saved if at least one applied.
+## ATOMIC (roadmap #7): every property is pre-validated (name exists on the
+## node's class + script, and Resource compatibility is satisfied) BEFORE any
+## mutation. If ANY entry fails validation, the call returns `ok: false`
+## with a `validation_errors` list and ZERO mutation occurs — no scene save,
+## no half-applied state. This is the explicit policy change from the old
+## per-property tolerance; the agent now gets one round-trip with the full
+## issue list instead of having to inspect a mixed `applied`/`failed` shape.
+##
+## Use modify_node_property for a single property; this is for batch writes.
+## Resource-typed properties must use set_resource_property / specialized tools.
 func set_node_properties(args: Dictionary) -> Dictionary:
 	var scene_path: String = _ensure_res_path(str(args.get(&"scene_path", "")))
 	var node_path: String = str(args.get(&"node_path", "."))
@@ -1608,43 +1832,81 @@ func set_node_properties(args: Dictionary) -> Dictionary:
 		root.queue_free()
 		return {&"ok": false, &"error": "Node not found: " + node_path}
 
-	# Build the set of valid property names once.
-	var valid_props: Dictionary = {}
+	# Build per-property metadata from the LIVE target's property list. This
+	# already includes @export'd properties from any attached script. We need
+	# more than just the name set — the declared variant type tells us
+	# whether the property expects a Resource/Object even when its current
+	# value happens to be null (which is the common case for fresh Sprite2Ds
+	# with no texture, etc.). Checking just `old_value is Resource` misses
+	# that case and lets `texture: 1` slip through silently.
+	var prop_meta: Dictionary = {}
 	for prop in target.get_property_list():
-		valid_props[str(prop[&"name"])] = true
+		var pname: String = str(prop.get(&"name", ""))
+		prop_meta[pname] = {
+			&"type": int(prop.get(&"type", TYPE_NIL)),
+			&"class_name": str(prop.get(&"class_name", "")),
+		}
 
-	var applied: Array = []
-	var failed: Array = []
-
+	# Pre-validate every entry. Collect ALL issues so the agent gets the full
+	# picture in one shot, not just the first failure.
+	var validation_errors: Array = []
+	var planned: Array = [] # parallel list of {prop_name, parsed, old_value} for the apply phase
 	for prop_name_v in properties.keys():
 		var prop_name := str(prop_name_v)
 		var raw_value = properties[prop_name_v]
 
-		if not valid_props.has(prop_name):
-			failed.append({&"property": prop_name, &"reason": "no such property on " + target.get_class()})
+		if not prop_meta.has(prop_name):
+			validation_errors.append("properties.%s: property does not exist on %s" % [prop_name, target.get_class()])
 			continue
 
+		var meta: Dictionary = prop_meta[prop_name]
+		var declared_type: int = int(meta.get(&"type", TYPE_NIL))
+		var declared_class: String = str(meta.get(&"class_name", ""))
 		var old_value = target.get(prop_name)
 		var parsed = _parse_value(raw_value)
 
-		if old_value is Resource and not (parsed is Resource):
-			failed.append({&"property": prop_name, &"reason": "expects a Resource (use set_resource_property or specialized tool)"})
+		# Reject Resource-typed properties that received a non-Object. Accepts
+		# null (clearing the property) and any Object/Resource instance the
+		# variant codec produced. The declared-type check catches the
+		# `texture: 1` case where the current value is null — the older
+		# `old_value is Resource` heuristic missed it.
+		if declared_type == TYPE_OBJECT and parsed != null and not (parsed is Object):
+			var expected: String = declared_class if not declared_class.is_empty() else "Resource"
+			validation_errors.append("properties.%s: expects %s (use set_resource_property / set_sprite_texture / set_mesh / set_material / set_collision_shape instead — passing a primitive here would be silently dropped)" % [prop_name, expected])
 			continue
 
-		target.set(prop_name, parsed)
-		applied.append({
-			&"property": prop_name,
-			&"old": _serialize_value(old_value),
-			&"new": _serialize_value(parsed),
+		# Belt-and-suspenders: the original heuristic still fires for the
+		# already-has-a-Resource case (e.g. someone clearing a texture by
+		# passing 0 instead of null — still a misuse worth flagging).
+		if old_value is Resource and parsed != null and not (parsed is Resource):
+			validation_errors.append("properties.%s: expects a Resource (use set_resource_property / set_sprite_texture / set_mesh / set_material / set_collision_shape instead)" % prop_name)
+			continue
+
+		planned.append({
+			&"prop_name": prop_name,
+			&"parsed": parsed,
+			&"old_value": old_value,
 		})
 
-	if applied.is_empty():
+	if not validation_errors.is_empty():
 		root.queue_free()
 		return {
 			&"ok": false,
-			&"error": "No properties applied. See 'failed' for per-property reasons.",
-			&"failed": failed,
+			&"error": "set_node_properties: pre-validation failed with %d issue(s); no mutation occurred." % validation_errors.size(),
+			&"validation_errors": validation_errors,
+			&"node_path": node_path,
+			&"hint": "All property names + Resource-type compatibility are validated before anything is written. Fix every listed issue and retry. Use get_scene_node_properties to read this node's current properties (including @export'd script vars), or classdb_query for the full class API.",
 		}
+
+	# Validation passed — apply every property and save.
+	var applied: Array = []
+	for entry: Dictionary in planned:
+		target.set(entry[&"prop_name"], entry[&"parsed"])
+		applied.append({
+			&"property": entry[&"prop_name"],
+			&"old": _serialize_value(entry[&"old_value"]),
+			&"new": _serialize_value(entry[&"parsed"]),
+		})
 
 	var err := _save_scene(root, scene_path)
 	if not err.is_empty():
@@ -1655,10 +1917,9 @@ func set_node_properties(args: Dictionary) -> Dictionary:
 		&"scene_path": scene_path,
 		&"node_path": node_path,
 		&"applied": applied,
-		&"failed": failed,
-		&"message": "Applied %d/%d propert%s on %s" % [
-			applied.size(), applied.size() + failed.size(),
-			"y" if (applied.size() + failed.size()) == 1 else "ies",
+		&"message": "Applied %d propert%s on %s" % [
+			applied.size(),
+			"y" if applied.size() == 1 else "ies",
 			node_path,
 		],
 	}
@@ -1762,38 +2023,167 @@ func get_node_groups(args: Dictionary) -> Dictionary:
 		&"groups": groups,
 	}
 
-func find_nodes_in_group(args: Dictionary) -> Dictionary:
-	var scene_path: String = _ensure_res_path(str(args.get(&"scene_path", "")))
-	var group_name: String = str(args.get(&"group", ""))
+# =============================================================================
+# find_nodes — general node search
+# =============================================================================
+## Search a scene for nodes matching one or more filters (name, type, group).
+## Scene-scoped; defaults to the currently edited scene when scene_path is
+## omitted. Filters AND together. Returns {path, name, type, groups} per match.
+func find_nodes(args: Dictionary) -> Dictionary:
+	var scene_path_in: String = str(args.get(&"scene_path", "")).strip_edges()
+	var name_pattern: String = str(args.get(&"name_pattern", ""))
+	var type_filter: String = str(args.get(&"type", "")).strip_edges()
+	var in_group: String = str(args.get(&"in_group", "")).strip_edges()
+	var recursive: bool = bool(args.get(&"recursive", true))
 
-	if scene_path.strip_edges() == "res://":
-		return {&"ok": false, &"error": "Missing 'scene_path'"}
-	if group_name.strip_edges().is_empty():
-		return {&"ok": false, &"error": "Missing 'group'"}
+	# Resolve scene_path. If omitted/empty, fall back to the editor's current
+	# edited scene. We still load the on-disk version (consistent with the rest
+	# of scene_tools), so unsaved edits are not visible.
+	var scene_path: String = ""
+	if scene_path_in.is_empty():
+		if _editor_plugin == null:
+			return {
+				&"ok": false,
+				&"error": "find_nodes: no scene_path provided and no editor plugin available to detect the active scene",
+			}
+		var ei := _editor_plugin.get_editor_interface()
+		var edited: Node = ei.get_edited_scene_root() if ei else null
+		if edited == null or str(edited.scene_file_path).is_empty():
+			return {
+				&"ok": false,
+				&"error": "find_nodes: no scene_path provided and no saved scene is currently open in the editor",
+			}
+		scene_path = str(edited.scene_file_path)
+	else:
+		scene_path = _ensure_res_path(scene_path_in)
+		if scene_path.strip_edges() == "res://":
+			return {&"ok": false, &"error": "find_nodes: invalid scene_path"}
+
+	# Validate the `type` filter up-front: must be a known ClassDB class OR a
+	# known script global class name. Otherwise the AI gets silent zero matches
+	# from a typo, which is the most confusing failure mode.
+	var script_class_target: String = ""
+	if not type_filter.is_empty():
+		if ClassDB.class_exists(type_filter):
+			pass
+		else:
+			# Try to resolve as a script global_class_name (custom class_name).
+			var found := false
+			for entry in ProjectSettings.get_global_class_list():
+				if str(entry.get("class", "")) == type_filter:
+					script_class_target = type_filter
+					found = true
+					break
+			if not found:
+				return {
+					&"ok": false,
+					&"error": "find_nodes: type '%s' is not a known ClassDB class or global script class_name" % type_filter,
+				}
 
 	var result := _load_scene(scene_path)
 	if not result[1].is_empty():
 		return result[1]
-
 	var root: Node = result[0]
+
 	var matches: Array = []
-	_collect_nodes_in_group(root, group_name, ".", matches)
+	_collect_find_matches(
+		root,
+		".",
+		name_pattern,
+		type_filter,
+		script_class_target,
+		in_group,
+		recursive,
+		matches,
+	)
 	root.queue_free()
+
+	var filters_echo: Dictionary = {&"recursive": recursive}
+	if not name_pattern.is_empty():
+		filters_echo[&"name_pattern"] = name_pattern
+	if not type_filter.is_empty():
+		filters_echo[&"type"] = type_filter
+	if not in_group.is_empty():
+		filters_echo[&"in_group"] = in_group
 
 	return {
 		&"ok": true,
 		&"scene_path": scene_path,
-		&"group": group_name,
+		&"filters": filters_echo,
 		&"matches": matches,
 		&"count": matches.size(),
 	}
 
-func _collect_nodes_in_group(node: Node, group_name: String, path: String, matches: Array) -> void:
-	if node.is_in_group(group_name):
-		matches.append({&"path": path, &"name": str(node.name), &"type": node.get_class()})
+func _collect_find_matches(
+	node: Node,
+	path: String,
+	name_pattern: String,
+	type_filter: String,
+	script_class_target: String,
+	in_group: String,
+	recursive: bool,
+	matches: Array,
+) -> void:
+	if _node_matches_filters(node, name_pattern, type_filter, script_class_target, in_group):
+		matches.append({
+			&"path": path,
+			&"name": str(node.name),
+			&"type": node.get_class(),
+			&"groups": node.get_groups(),
+		})
+
+	if not recursive and path != ".":
+		# Non-recursive: only the root and its direct children get visited.
+		return
+
 	for child in node.get_children():
-		var child_path = child.name if path == "." else path + "/" + child.name
-		_collect_nodes_in_group(child, group_name, child_path, matches)
+		var child_path: String = str(child.name) if path == "." else path + "/" + str(child.name)
+		_collect_find_matches(
+			child,
+			child_path,
+			name_pattern,
+			type_filter,
+			script_class_target,
+			in_group,
+			recursive,
+			matches,
+		)
+
+func _node_matches_filters(
+	node: Node,
+	name_pattern: String,
+	type_filter: String,
+	script_class_target: String,
+	in_group: String,
+) -> bool:
+	if not name_pattern.is_empty():
+		var n: String = str(node.name)
+		var has_glob: bool = name_pattern.contains("*") or name_pattern.contains("?")
+		if has_glob:
+			if not n.matchn(name_pattern):
+				return false
+		else:
+			if n.findn(name_pattern) == -1:
+				return false
+
+	if not type_filter.is_empty():
+		var class_ok: bool = node.is_class(type_filter)
+		if not class_ok and not script_class_target.is_empty():
+			# Walk the script inheritance chain looking for a matching class_name.
+			var script: Script = node.get_script() as Script
+			while script != null:
+				if str(script.get_global_name()) == script_class_target:
+					class_ok = true
+					break
+				script = script.get_base_script()
+		if not class_ok:
+			return false
+
+	if not in_group.is_empty():
+		if not node.is_in_group(in_group):
+			return false
+
+	return true
 
 # =============================================================================
 # Generic resource property tools
@@ -2291,3 +2681,280 @@ func disconnect_signal(args: Dictionary) -> Dictionary:
 		&"ok": true,
 		&"message": "Disconnected %s.%s -> %s.%s" % [from_node, signal_name, to_node, method],
 	}
+
+# =============================================================================
+# call_method — editor-side: invoke any method on any node in a .tscn
+# =============================================================================
+## Methods that require `confirm: true` because they trivially destroy state
+## or bypass other tools' invariants. Applied in BOTH editor and runtime modes
+## (the runtime side imports the same list).
+const _CALL_METHOD_DENYLIST: Dictionary = {
+	"queue_free": true,
+	"free": true,
+	"set_script": true,        # use attach_script — handles editor sync
+	"remove_child": true,
+	"replace_by": true,
+	"reparent": true,
+}
+
+## Editor-side call_method. Loads the scene from disk, finds the node, invokes
+## the method with parsed args, captures the (serialized) return value, and
+## ALWAYS saves the scene back — even for methods that didn't visibly mutate,
+## so the snapshot/undo machinery has a consistent file to compare against.
+func call_method(args: Dictionary) -> Dictionary:
+	var scene_path_in: String = str(args.get(&"scene_path", "")).strip_edges()
+	var node_path: String = str(args.get(&"node_path", ".")).strip_edges()
+	var method: String = str(args.get(&"method", "")).strip_edges()
+	var raw_args: Variant = args.get(&"args", [])
+	var confirm: bool = bool(args.get(&"confirm", false))
+	var expect_return: bool = bool(args.get(&"expect_return", true))
+
+	if method.is_empty():
+		return {&"ok": false, &"error": "Missing 'method'"}
+	if not (raw_args is Array):
+		return {&"ok": false, &"error": "'args' must be an array (got %s)" % type_string(typeof(raw_args))}
+
+	if _CALL_METHOD_DENYLIST.has(method) and not confirm:
+		return {
+			&"ok": false,
+			&"error": "Method '%s' is on the destructive denylist. Pass confirm=true to allow it. (Editor mode: prefer remove_node / detach_script / attach_script for those concerns.)" % method,
+			&"denylisted": true,
+			&"denylist": _CALL_METHOD_DENYLIST.keys(),
+		}
+
+	# Resolve scene_path: fall back to the editor's edited scene if missing.
+	var scene_path: String = ""
+	if scene_path_in.is_empty():
+		if _editor_plugin == null:
+			return {&"ok": false, &"error": "call_method: no scene_path provided and no editor plugin available to detect the active scene"}
+		var ei := _editor_plugin.get_editor_interface()
+		var edited: Node = ei.get_edited_scene_root() if ei else null
+		if edited == null or str(edited.scene_file_path).is_empty():
+			return {&"ok": false, &"error": "call_method: no scene_path provided and no saved scene is currently open in the editor"}
+		scene_path = str(edited.scene_file_path)
+	else:
+		scene_path = _ensure_res_path(scene_path_in)
+		if scene_path.strip_edges() == "res://":
+			return {&"ok": false, &"error": "call_method: invalid scene_path"}
+
+	var load_result := _load_scene(scene_path)
+	if not load_result[1].is_empty():
+		return load_result[1]
+	var root: Node = load_result[0]
+
+	var target := _find_node(root, node_path)
+	if target == null:
+		root.queue_free()
+		return {&"ok": false, &"error": "Node not found: %s" % node_path}
+
+	# Method existence — with closest-match suggestions on miss.
+	if not target.has_method(method):
+		var available: Array = _collect_method_names(target)
+		var suggestions: Array = _closest_method_matches(method, available, 5)
+		root.queue_free()
+		return {
+			&"ok": false,
+			&"error": "Node %s (%s) has no method '%s'.%s" % [
+				node_path, target.get_class(), method,
+				(" Closest matches: " + ", ".join(suggestions)) if not suggestions.is_empty() else "",
+			],
+			&"available_methods_sample": available.slice(0, mini(50, available.size())),
+			&"closest_matches": suggestions,
+		}
+
+	# Godot reality check: editor-side scenes are instantiated with
+	# GEN_EDIT_STATE_MAIN. Scripts ARE attached and @export'd vars are
+	# editable, but for non-@tool scripts the engine does NOT dispatch
+	# user-defined method bodies — `callv("heal", [])` silently returns null
+	# instead of running the script. This is a Godot limitation, not ours.
+	#
+	# Detect the case and refuse with a clear pointer to runtime mode rather
+	# than letting the AI think its method ran but returned nothing.
+	# Built-in / C++ class methods (set_modulate, add_to_group, …) still work
+	# fine — they don't go through script dispatch.
+	var script: Script = target.get_script()
+	if script != null and not script.is_tool():
+		var script_method_names: Array = []
+		for m in script.get_script_method_list():
+			script_method_names.append(str(m.get("name", "")))
+		if method in script_method_names:
+			root.queue_free()
+			return {
+				&"ok": false,
+				&"error": "Method '%s' is user-defined in a non-@tool script (%s). Editor-mode call_method cannot execute non-@tool script methods — Godot does NOT dispatch them when the scene is instantiated in the editor context, so the call would silently return null. Fix: either add `@tool` as the first line of the script (advanced — runs the script in the editor too), or use runtime mode: run_scene then call_method with runtime: true." % [method, script.resource_path],
+				&"reason": "non_tool_script_method",
+				&"script_path": str(script.resource_path),
+				&"is_tool_script": false,
+				&"hint": "For most game-logic methods (take_damage, respawn, play_intro, …) runtime mode is the right answer. Editor mode is for engine/built-in methods (set_modulate, add_to_group, add_user_signal, Curve2D.add_point, etc.) that mutate persistent scene state.",
+			}
+
+	# Parse args through VariantCodec for {type:"Vector2",...} discriminated form.
+	var parsed_args: Array = []
+	for v in (raw_args as Array):
+		parsed_args.append(_parse_value(v))
+
+	# Arity check using MethodInfo. Skip if we can't find a signature (some
+	# C++ overloads expose multiple entries; we just don't fail-fast in that
+	# case — Godot's own call() will raise a clearer error than we could).
+	var sig_info: Dictionary = _find_method_info(target, method)
+	if not sig_info.is_empty():
+		var declared_args: Array = sig_info.get("args", [])
+		var defaults: Array = sig_info.get("default_args", [])
+		var max_arity: int = declared_args.size()
+		var min_arity: int = max_arity - defaults.size()
+		var passed: int = parsed_args.size()
+		if passed < min_arity or passed > max_arity:
+			root.queue_free()
+			return {
+				&"ok": false,
+				&"error": "Arity mismatch for %s.%s: expected %d..%d args, got %d. Signature: %s" % [
+					target.get_class(), method, min_arity, max_arity, passed,
+					_format_method_signature(sig_info),
+				],
+				&"method_signature": _format_method_signature(sig_info),
+			}
+
+	var t0: int = Time.get_ticks_msec()
+	var ret = target.callv(method, parsed_args)
+	var duration_ms: int = Time.get_ticks_msec() - t0
+
+	# Coroutine fire-and-forget: callv on a function that contains `await`
+	# returns a GDScriptFunctionState. We don't capture its eventual return;
+	# the side effects still run.
+	var is_coroutine: bool = ret != null and typeof(ret) == TYPE_OBJECT and str(ret.get_class()) == "GDScriptFunctionState"
+
+	# Always save (per design): keeps the .tscn round-trippable and the
+	# snapshot/undo machinery consistent. Even apparently read-only methods
+	# may mutate hidden state we can't introspect.
+	var save_err := _save_scene(root, scene_path)
+	if not save_err.is_empty():
+		return save_err
+
+	var response: Dictionary = {
+		&"ok": true,
+		&"scene_path": scene_path,
+		&"node_path": node_path,
+		&"node_class": target.get_class() if is_instance_valid(target) else "<freed>",
+		&"method": method,
+		&"duration_ms": duration_ms,
+		&"awaited": false,
+		&"is_coroutine": is_coroutine,
+		&"runtime": false,
+	}
+	if not sig_info.is_empty():
+		response[&"method_signature"] = _format_method_signature(sig_info)
+
+	if expect_return and not is_coroutine:
+		response[&"return_value"] = _serialize_call_method_return(ret)
+		response[&"return_type"] = _type_name_for(ret)
+	elif is_coroutine:
+		response[&"hint"] = "Method is a coroutine (contains `await`). Dispatched fire-and-forget; the return value is a GDScriptFunctionState and is not captured. Use query_runtime_node / follow-up call_method to observe side effects after waiting."
+	return response
+
+func _collect_method_names(node: Node) -> Array:
+	var names: Array = []
+	for m in node.get_method_list():
+		var n: String = str(m.get("name", ""))
+		if n.is_empty():
+			continue
+		# Skip private engine methods (_notification, _physics_process, etc.)
+		# from the suggestions surface — they're rarely what the AI meant.
+		if n.begins_with("_") and not n.begins_with("__"):
+			continue
+		names.append(n)
+	return names
+
+func _closest_method_matches(query: String, available: Array, limit: int) -> Array:
+	if query.is_empty() or available.is_empty():
+		return []
+	var scored: Array = []
+	for n in available:
+		var s: float = query.similarity(str(n))
+		if s > 0.4:
+			scored.append({"name": n, "score": s})
+	scored.sort_custom(func(a, b): return float(a["score"]) > float(b["score"]))
+	var out: Array = []
+	for i in range(mini(limit, scored.size())):
+		out.append(scored[i]["name"])
+	return out
+
+func _find_method_info(node: Node, method: String) -> Dictionary:
+	for m in node.get_method_list():
+		if str(m.get("name", "")) == method:
+			return m
+	return {}
+
+func _format_method_signature(info: Dictionary) -> String:
+	var name: String = str(info.get("name", ""))
+	var declared_args: Array = info.get("args", [])
+	var defaults: Array = info.get("default_args", [])
+	var min_arity: int = declared_args.size() - defaults.size()
+	var parts: Array = []
+	for i in range(declared_args.size()):
+		var a: Dictionary = declared_args[i]
+		var aname: String = str(a.get("name", "arg%d" % i))
+		var atype: int = int(a.get("type", TYPE_NIL))
+		var atype_str: String = type_string(atype) if atype != TYPE_NIL else "Variant"
+		if i >= min_arity:
+			parts.append("%s: %s = <default>" % [aname, atype_str])
+		else:
+			parts.append("%s: %s" % [aname, atype_str])
+	var ret_info: Dictionary = info.get("return", {})
+	var ret_type: int = int(ret_info.get("type", TYPE_NIL))
+	var ret_str: String = type_string(ret_type) if ret_type != TYPE_NIL else "void"
+	return "%s(%s) -> %s" % [name, ", ".join(parts), ret_str]
+
+## Serialize a call_method return value. Reuses VariantCodec for primitives
+## and standard variant types; adds richer Object/Node/Resource handling so
+## the AI can follow up via query_runtime_node / get_resource_info.
+func _serialize_call_method_return(v: Variant) -> Variant:
+	if v == null:
+		return null
+	match typeof(v):
+		TYPE_OBJECT:
+			if v is Node:
+				var path_str: String = ""
+				if (v as Node).is_inside_tree():
+					path_str = str((v as Node).get_path())
+				return {
+					&"type": &"Object",
+					&"class": (v as Node).get_class(),
+					&"name": str((v as Node).name),
+					&"node_path": path_str,
+					&"serializable": false,
+				}
+			if v is Resource:
+				var rp: String = str((v as Resource).resource_path)
+				var d: Dictionary = {
+					&"type": &"Resource",
+					&"class": (v as Resource).get_class(),
+					&"serializable": false,
+				}
+				if not rp.is_empty():
+					d[&"resource_path"] = rp
+				return d
+			return {
+				&"type": &"Object",
+				&"class": v.get_class() if v.has_method("get_class") else "Object",
+				&"serializable": false,
+			}
+		TYPE_ARRAY:
+			var out: Array = []
+			for item in (v as Array):
+				out.append(_serialize_call_method_return(item))
+			return out
+		TYPE_DICTIONARY:
+			var od: Dictionary = {}
+			for k in (v as Dictionary):
+				od[k] = _serialize_call_method_return((v as Dictionary)[k])
+			return od
+		_:
+			return VariantCodec.serialize_value(v)
+
+func _type_name_for(v: Variant) -> String:
+	if v == null:
+		return "null"
+	var t: int = typeof(v)
+	if t == TYPE_OBJECT:
+		return v.get_class() if v != null and v.has_method("get_class") else "Object"
+	return type_string(t)

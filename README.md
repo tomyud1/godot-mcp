@@ -4,7 +4,7 @@
 
 Build games faster with Claude, Cursor, or any MCP-compatible AI — no copy-pasting, no context switching. AI reads, writes, and manipulates your scenes, scripts, nodes, and project settings directly.
 
-> Godot 4.x · 42 tools · Interactive project visualizer · MIT license
+> Godot 4.x · 75 tools · Undo/redo · Interactive project visualizer · MIT license
 
 ---
 
@@ -142,8 +142,8 @@ AI cannot create 100% of a game by itself — it struggles with complex UI layou
 ## Current Limitations
 
 - **Local only** — runs on localhost, no remote connections
-- **Single connection** — one Godot instance at a time
-- **No undo** — changes save directly (use version control)
+- **One Godot editor at a time** — multiple AI clients can connect concurrently, but they all share a single Godot instance
+- **Ctrl+Z does not reach AI changes** — the plugin writes to disk rather than the editor's live tree, so Godot's native undo has nothing to revert. Use the `mcp_undo` tool instead (ask the agent to undo).
 - **AI is still limited in Godot knowledge** — it can't create 100% of the game alone, but it can help debug, write scripts, and tag along for the journey
 
 ---
@@ -164,13 +164,25 @@ Then point your AI client at `mcp-server/dist/index.js` instead of using `npx`.
 
 ## Release notes
 
-Narrative write-ups of each release live in [`release-notes/`](./release-notes/) (starting with [v0.5.0](./release-notes/v0.5.0.md)). For the full change history, see [`CHANGELOG.md`](./CHANGELOG.md).
+Narrative write-ups of each release live in [`release-notes/`](./release-notes/) (latest: [v0.6.0](./release-notes/v0.6.0.md)). For the full change history, see [`CHANGELOG.md`](./CHANGELOG.md).
 
 ---
 
 ## License
 
 MIT
+
+---
+
+## Star History
+
+<a href="https://www.star-history.com/?repos=tomyud1%2Fgodot-mcp&type=date&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=tomyud1/godot-mcp&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=tomyud1/godot-mcp&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=tomyud1/godot-mcp&type=date&legend=top-left" />
+ </picture>
+</a>
 
 ---
 

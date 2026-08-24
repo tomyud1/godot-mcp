@@ -60,20 +60,24 @@ export const projectTools: ToolDefinition[] = [
   },
   {
     name: 'get_console_log',
-    description: 'Return the latest lines from the Godot editor output log.',
+    description: 'Return the latest lines from the Godot editor Output panel (editor-side messages plus prints from the running game). NOTE: this does NOT include the Debugger > Errors tab — runtime push_error / script errors during play often surface only there. After run_scene, always call get_errors (not just this) to check for errors. When this tool finds error-prefixed lines it returns errors_detected=true and a hint pointing to get_errors. The tool also reads the Output panel\'s Info/Warning/Error filter buttons; if Info is OFF and prints appear missing, the response includes output_panel_filters and a hint asking the user to toggle Info back on (the panel filters its RichTextLabel, so missing-print symptoms are usually a UI toggle, not a tool bug). Pass debug:true to also include editor_log_rtl_path, editor_log_candidates (every EditorLog widget found, with sample tails), and output_panel_filters even when nothing looks suspicious.',
     inputSchema: {
       type: 'object',
       properties: {
         max_lines: {
           type: 'number',
           description: 'Maximum number of lines to include (default: 50)'
+        },
+        debug: {
+          type: 'boolean',
+          description: 'When true, include editor_log_rtl_path and editor_log_candidates (each EditorLog widget found, with text length and a 200-char tail sample). Use this to diagnose cases where running-game prints do not appear in the default Output panel scrape.'
         }
       }
     }
   },
   {
     name: 'get_errors',
-    description: 'Get errors and warnings from both the Godot Output panel and the Debugger > Errors tab. Returns file paths, line numbers, severity, stack traces, and which source each error came from. If errors mention a missing method or property, use classdb_query to verify the correct API before fixing.',
+    description: 'Get errors and warnings from both the Godot Output panel and the Debugger > Errors tab. Returns file paths, line numbers, severity, stack traces, and which source each error came from. Debugger rows can appear a few frames after run_scene returns; pass wait_ms:300 when checking immediately after launch. If errors mention a missing method or property, use classdb_query to verify the correct API before fixing.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -84,6 +88,10 @@ export const projectTools: ToolDefinition[] = [
         include_warnings: {
           type: 'boolean',
           description: 'Include warnings in addition to errors (default: true)'
+        },
+        wait_ms: {
+          type: 'number',
+          description: 'Optional short wait before reading Output/Debugger errors, capped at 1000ms. Use ~300ms immediately after run_scene to avoid false "0 errors" results while the Debugger > Errors tab catches up.'
         }
       }
     }
@@ -116,10 +124,75 @@ export const projectTools: ToolDefinition[] = [
   },
   {
     name: 'scene_tree_dump',
-    description: 'Dump the scene tree of the scene currently open in the Godot editor (node names, types, and attached scripts).',
+    description: 'Dump the scene tree of the scene currently open in the Godot editor (node names, types, and attached scripts) as an indented text block. Reflects unsaved edits (uses the live editor tree, not the .tscn on disk).\n\nAll args are optional; with no args the entire tree is returned (existing behavior).\n\nOpt-in scoping / pagination (use these on large scenes to keep responses small):\n  • subtree_root — start at a node path relative to the scene root (e.g. "UI/HUD"). Empty or "." means the scene root. Depth resets to 0 at this node.\n  • max_depth — stop traversal at depth N from the (subtree_)root. 0 = only the root itself. Omit or pass a negative value for unlimited.\n  • offset / limit — paginate by flat DFS preorder index. offset skips the first N nodes; limit caps how many are emitted.\n\nResponse fields:\n  • tree — the indented text (only nodes inside the window are rendered).\n  • scene_path — the editor scene file.\n  • total_node_count — total nodes inside the (subtree_root + max_depth) scope. Always returned.\n  • truncated — true ONLY when offset/limit clipped output. max_depth is intentional scoping, not truncation.\n  • next_offset — set to offset + emitted when truncated; call again with this offset to continue.\n  • subtree_root — echoed when you passed one.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        subtree_root: {
+          type: 'string',
+          description: 'Scene-relative node path to start the dump at (e.g. "UI/HUD"). Empty or "." = scene root. Errors if the node is not found.'
+        },
+        max_depth: {
+          type: 'number',
+          description: 'Stop traversal at depth N from the (subtree_)root. 0 = only that root node. Omit or pass a negative value for unlimited depth.'
+        },
+        offset: {
+          type: 'number',
+          description: 'Skip the first N nodes in DFS preorder (used for pagination). Default 0.'
+        },
+        limit: {
+          type: 'number',
+          description: 'Maximum number of nodes to render after offset. Omit for unlimited.'
+        }
+      }
+    }
+  },
+  {
+    name: 'get_editor_selection',
+    description: 'Return the node path(s) the user has currently selected in the Godot editor (Scene dock). **Call this FIRST whenever the user refers to a node without naming a path** — phrases like "this node", "fix this", "change the color here", "delete that", "make this red", "the selected one", "what I have selected", etc. Returns an empty `selection` array if nothing is selected; that\'s informational, not an error. Selection is editor UI state (not stored in the .tscn) and is scoped to the currently edited scene tab — instances from a non-active tab will not appear.\n\nResponse shape: `{ok, scene_path, selection: [{path, name, type}], count, reason, message?}`. `reason` is a stable machine-readable enum — `"ok"` (something is selected), `"none_selected"` (scene open but no nodes selected), or `"no_scene_open"` (no scene tab open at all) — so the agent can branch without string-matching the human-readable `message`. Paths are scene-relative ("." = scene root, "UI/HUD/Label" for nested) and match the format produced by `find_nodes` and `scene_tree_dump`, so they can be passed directly to `modify_node_property`, `set_node_properties`, `attach_script`, `remove_node`, etc. See the `selection-workflow` guide for end-to-end patterns.',
     inputSchema: {
       type: 'object',
       properties: {}
+    }
+  },
+  {
+    name: 'set_editor_selection',
+    description: 'Replace or extend the editor\'s Scene-dock selection. Two main uses: (1) after `add_node`, focus the user\'s gizmo on the freshly-created node so they can see/manipulate it immediately, and (2) draw the user\'s attention to a node the AI just modified or discovered ("here is the offending node — selected for you in the Scene dock"). Pre-validates every path against the live edited scene tree before mutating — if any path is unresolved, no selection change happens and `not_found` is returned.\n\nArgs: `node_paths` (string OR array of strings; scene-relative, "." = scene root, "UI/HUD/Label" for nested), `mode` ("replace" default = clear existing then select; "add" = append to existing). Returns `{ok, scene_path, selected:[{path,name,type}], not_found:[], mode, count}`.\n\nUse `get_editor_selection` afterwards (or `scene_tree_dump`) to verify.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        node_paths: {
+          oneOf: [
+            { type: 'string' },
+            { type: 'array', items: { type: 'string' } }
+          ],
+          description: 'Scene-relative path(s) to select. "." = scene root, "UI/HUD/Label" for nested. Accepts a single string OR an array of strings; both forms behave identically.'
+        },
+        mode: {
+          type: 'string',
+          description: '"replace" (default) clears the existing selection first; "add" appends to it.'
+        }
+      },
+      required: ['node_paths']
+    }
+  },
+  {
+    name: 'close_editor_tabs',
+    description: 'Close open editor tabs (scenes and/or scripts). Files on disk are NOT touched — this only changes the editor UI state. Default behavior with no args closes EVERY open tab (both scenes and scripts).\n\nPrimary use case: test automation — reset the editor to a known state between test runs without restarting Godot. Also useful before calling delete_file / delete_folder, which refuse by default when the target is open in an editor tab.\n\nFilter by kind ("scene", "script", "any") and/or by specific paths. Paths can be given with or without "res://".\n\nSCENES: built on EditorInterface.close_scene() (Godot 4.5+). Unsaved changes are DISCARDED silently (matches Godot\'s native close-tab behavior); save first via the editor or save_resource_to_file if you need to preserve pending edits.\n\nSCRIPTS: Godot does not currently expose a public API to close script tabs from script. Requested script paths are returned in `scripts_closed_not_supported` with the reason rather than silently skipped. Workarounds: close manually via the X on the tab, or use `force=true` on the next file mutation to bypass the editor-open guard.\n\nResponse: {ok, scenes_closed, scripts_closed_not_supported, not_open, remaining_scenes, remaining_scripts, message}. `scenes_failed` appears with per-path Godot error codes when any close fails.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        kind: {
+          type: 'string',
+          enum: ['scene', 'script', 'any'],
+          description: 'Which tab kind to target. "any" (default) closes both scenes and scripts. "scene" or "script" restricts to that side.'
+        },
+        paths: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Optional list of paths to close (with or without "res://"). Omit, pass an empty array, or pass null to close ALL open tabs of the chosen kind. Paths not currently open are returned in `not_open` rather than causing an error.'
+        }
+      }
     }
   },
   {
@@ -178,7 +251,7 @@ export const projectTools: ToolDefinition[] = [
   },
   {
     name: 'run_scene',
-    description: 'Launch a scene in the Godot editor. By default the call BLOCKS until the editor flips to playing state (so the next get_errors / take_screenshot / send_input call sees a real game). The response includes started, runtime_connected, wait_for_started_ms, wait_for_runtime_ms, scene_path, and runtime_root. Use runtime_root (e.g. "/root/Main") as the prefix for query_runtime_node node_path arguments \u2014 it is computed from the actual root node name in the .tscn, NOT from the file name. Set wait_for_runtime=true to additionally wait for the in-game MCPRuntime helper to connect (required before take_screenshot / send_input will work). Recommended testing loop: run_scene({wait_for_runtime:true}) \u2192 query_runtime_node / send_input / take_screenshot \u2192 get_errors \u2192 stop_scene.',
+    description: 'Launch a scene in the Godot editor. By default the call BLOCKS until the editor flips to playing state (so the next get_errors / take_screenshot / send_input call sees a real game). The response includes started, runtime_connected, wait_for_started_ms, wait_for_runtime_ms, scene_path, and runtime_root. Use runtime_root (e.g. "/root/Main") as the prefix for query_runtime_node node_path arguments \u2014 it is computed from the actual root node name in the .tscn, NOT from the file name. Set wait_for_runtime=true to additionally wait for the in-game MCPRuntime helper to connect (required before take_screenshot / send_input will work). By default this watermarks the log surfaces so the subsequent get_console_log / get_errors only show THIS run\'s output \u2014 no more mistaking stale errors from a previous run for fresh ones (set clear_output:false to keep reading the full history). Recommended testing loop: run_scene({wait_for_runtime:true}) \u2192 query_runtime_node / send_input / take_screenshot \u2192 get_errors \u2192 stop_scene.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -196,7 +269,11 @@ export const projectTools: ToolDefinition[] = [
         },
         startup_timeout_ms: {
           type: 'number',
-          description: 'Max time in ms to wait for the above signals. Default: 10000. Bump to 15000\u201320000 on slower machines or autoload-heavy projects.'
+          description: 'Max time in ms to wait for the above signals. Default: 10000. Bump to 15000\u201320000 on slower machines or autoload-heavy projects. Values above 25000 are clamped (response would otherwise miss the transport timeout); the response signals this via `startup_timeout_clamped: true` plus `requested_startup_timeout_ms` and `effective_startup_timeout_ms`.'
+        },
+        clear_output: {
+          type: 'boolean',
+          description: 'Watermark the Output panel and Debugger > Errors tab at launch so get_console_log / get_errors only return entries from THIS run, preventing stale output from a previous run being read as current errors (default: true). Read-side only \u2014 the human\'s Output panel scrollback is preserved. Set false to read the full accumulated history.'
         }
       }
     }
@@ -219,7 +296,7 @@ export const projectTools: ToolDefinition[] = [
   },
   {
     name: 'get_runtime_status',
-    description: 'Combined editor + runtime status snapshot. Returns playing, playing_scene, last_launched ("current"|"main"|res-path), uptime_ms since the most recent run_scene, and runtime_helper_connected (true once the in-game MCPRuntime autoload is talking to the MCP server).',
+    description: 'Combined editor + runtime status snapshot. Returns `playing`, `playing_scene`, `last_launched` ("current"|"main"|res-path), `uptime_ms` since the most recent run_scene, `runtime_helper_connected` (true once the in-game MCPRuntime autoload is talking to the MCP server), `godot_version` (e.g. "4.5.0.stable"), and `godot_version_info` (the full Engine.get_version_info() dict — `major`, `minor`, `patch`, `string`, `build`, `hex`, …). Useful for binding test reports to a specific Godot build without opening the About dialog.',
     inputSchema: { type: 'object', properties: {} }
   },
   {
@@ -273,8 +350,13 @@ export const projectTools: ToolDefinition[] = [
     }
   },
   {
+    name: 'get_performance_monitors',
+    description: 'Snapshot of Godot\'s Performance singleton from inside the RUNNING game: fps, frame/physics step times, static memory (current + peak), renderer draw calls / objects / primitives, and engine-wide object/node/orphan counts. REQUIRES the game to be running with the MCPRuntime autoload connected (run_scene with wait_for_runtime=true first).\n\nUse when:\n  1. After run_scene — verify the scene actually hits its target fps before reporting "done".\n  2. The user reports lag/jank — localize the bottleneck (low fps vs high draw_calls vs growing memory vs orphan_nodes leak).\n  3. Before/after an optimization change — measure both sides to confirm the change helped (the optimization claim is only credible with numbers).\n\nResponse fields:\n  • fps, frame_time_ms — overall frame budget. Target is usually 16.67ms (60fps) or 8.33ms (120fps).\n  • physics_process_time_ms — physics step time (cost per tick).\n  • physics_ticks_per_second — configured tick rate (Engine.physics_ticks_per_second). Compare against physics_process_time_ms: if step time > 1000/tick_rate, physics is over budget.\n  • static_memory_mb / _bytes, static_memory_peak_mb / _bytes — current and high-water mark.\n  • draw_calls, objects_in_frame, primitives_in_frame — render-side cost.\n  • total_objects, nodes, orphan_nodes — engine-wide instance counts. orphan_nodes > 0 means nodes were created without being added to the tree (memory leak smell).\n  • custom_monitors (only when present) — any user-registered Performance.add_custom_monitor entries.\n\nValues reflect a single frame; sample twice with a wait in between if you need to confirm a trend.',
+    inputSchema: { type: 'object', properties: {} }
+  },
+  {
     name: 'get_runtime_log',
-    description: 'Return entries from the MCPRuntime in-game ring buffer. The buffer holds the last ~500 lines pushed via MCPRuntime.push_runtime_log(level, text) from your scripts plus internal connection events. For full engine stdout (script prints, errors, warnings) use get_console_log \u2014 the editor already captures the running game\'s stdout. Returns entries with ts_ms, level, and text plus started_at_ms (when the helper started) and now_ms.',
+    description: 'Return entries from the MCPRuntime in-game ring buffer. The buffer holds the last ~500 lines pushed via MCPRuntime.push_runtime_log(level, text) from your scripts plus internal connection events. For script prints/stdout use get_console_log; for runtime push_error / script errors use get_errors (it reads the Debugger > Errors tab \u2014 runtime errors do NOT appear in get_console_log). Returns entries with ts_ms, level, and text plus started_at_ms (when the helper started) and now_ms.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -307,7 +389,7 @@ export const projectTools: ToolDefinition[] = [
   },
   {
     name: 'rescan_filesystem',
-    description: 'Trigger a full filesystem rescan in the Godot editor. Use after creating, deleting, or modifying files externally (e.g. from the terminal or another tool). The scan is asynchronous and returns immediately.',
+    description: 'Trigger a full filesystem rescan in the Godot editor. Use after creating, deleting, or modifying files externally (e.g. from the terminal or another tool). The scan is asynchronous and returns immediately. If a scan is already in progress (often happens right after a batch of mutations), the call returns ok:true with already_scanning:true — the in-flight scan will pick up your recent disk changes, no new scan is triggered. Response: {ok, already_scanning, message}.',
     inputSchema: {
       type: 'object',
       properties: {}

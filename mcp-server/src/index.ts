@@ -205,19 +205,25 @@ async function executeToolCall(
       error && typeof error === 'object' && 'details' in error
         ? (error as { details?: unknown }).details
         : undefined;
+    // NOTE: do NOT add a generic `mode` field here. Several tools use `mode`
+    // as a domain-specific arg/response field (set_editor_selection has
+    // mode: "replace" | "add"; set_node_groups has mode: "replace" | "add" |
+    // "remove"). A wrapper-level `mode: 'live'` either collides outright on
+    // those tools' error paths (when the tool doesn't echo `mode` back) or
+    // gets overwritten silently — either way it's noise. The wrapper's job
+    // is to merge the tool's structured details on top, not invent fields.
     const payload: Record<string, unknown> = {
       error: errorMessage,
       tool: name,
       args: toolArgs,
-      mode: 'live',
       hint: 'The tool call was sent to Godot but failed. Check Godot editor for details.',
     };
     if (details && typeof details === 'object') {
-      // Spread structured fields at the top level (callers already look for
-      // `open_in_editor`, `clamped`, etc. at the root). Drop `ok` since it
-      // is always false here and adds no information.
-      const { ok: _ok, error: _err, ...rest } = details as Record<string, unknown>;
-      Object.assign(payload, rest);
+      // Spread the full structured response at the top level so callers see
+      // everything the tool returned, including its own `ok: false` and
+      // detailed `error` string. Godot's error is more specific than the
+      // generic wrapper message, so let details overwrite the placeholder.
+      Object.assign(payload, details);
     }
     return {
       content: [{ type: 'text', text: JSON.stringify(payload, null, 2) }],
