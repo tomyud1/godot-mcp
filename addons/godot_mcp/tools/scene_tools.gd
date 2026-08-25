@@ -9,7 +9,7 @@ class_name SceneTools
 
 const VariantCodec = preload("res://addons/godot_mcp/utils/variant_codec.gd")
 
-const _SKIP_PROPS: Dictionary[String, bool] = {
+const _SKIP_PROPS := {
 	"script": true, "owner": true,
 	"unique_name_in_owner": true, "editor_description": true,
 }
@@ -68,10 +68,9 @@ func _instantiate_packed_scene_for_edit(packed: PackedScene, as_instance: bool =
 	if as_instance:
 		return packed.instantiate(PackedScene.GEN_EDIT_STATE_INSTANCE)
 
-	var state = packed.get_state()
-	if state and state.get_base_scene_state() != null:
-		return packed.instantiate(PackedScene.GEN_EDIT_STATE_MAIN_INHERITED)
-
+	# Godot 4.3 does not have SceneState.get_base_scene_state() (added in 4.4).
+	# GEN_EDIT_STATE_MAIN handles both plain and inherited scenes correctly, so
+	# calling it directly keeps 4.3 compatibility without the 4.4-only probe.
 	return packed.instantiate(PackedScene.GEN_EDIT_STATE_MAIN)
 
 func _save_scene(scene_root: Node, scene_path: String) -> Dictionary:
