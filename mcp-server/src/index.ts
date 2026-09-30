@@ -30,15 +30,19 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 
 import { execSync } from 'child_process';
-import { readFileSync } from 'fs';
+import { readFileSync, realpathSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, resolve as resolvePath } from 'path';
-import { allTools, toolExists } from './tools/index.js';
+import { allTools, advertisedTools, toolExists } from './tools/index.js';
+import { deriveAnnotations, builtinToolAnnotations, requiresUserInteraction } from './tools/annotations.js';
 import { GodotBridge } from './godot-bridge.js';
 import { registerResources, GUIDES } from './resources.js';
 import { serveVisualization, stopVisualizationServer, setGodotBridge } from './visualizer-server.js';
 import { PrimaryHttpServer, type ToolCallResult } from './primary-http.js';
+import type { ContentBlock } from './types.js';
+import { normalizeResult } from './result-normalize.js';
 import { probeExistingServer, proxyToolCall, registerProxyClient, unregisterProxyClient } from './proxy-client.js';
+import { getAuthToken } from './auth.js';
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -65,6 +69,9 @@ const WEBSOCKET_PORT = parseInt(process.env.GODOT_MCP_PORT || '6505', 10);
 const HTTP_PORT = parseInt(process.env.GODOT_MCP_HTTP_PORT || '6506', 10);
 const TOOL_TIMEOUT = parseInt(process.env.GODOT_MCP_TIMEOUT_MS || '30000', 10);
 const IDLE_TIMEOUT = parseInt(process.env.GODOT_MCP_IDLE_TIMEOUT_MS || '30000', 10);
+// How long to let in-flight tool calls finish before forcing an exit. Bounded
+// so a wedged Godot call can never strand a server process.
+const SHUTDOWN_DRAIN_MS = parseInt(process.env.GODOT_MCP_DRAIN_MS || '10000', 10);
 
 const args = process.argv.slice(2);
 const noForce = args.includes('--no-force');
@@ -248,7 +255,8 @@ function createMcpServer(handleTool: ToolHandler): Server {
         type: 'object' as const,
         properties: {},
         required: []
-      }
+      },
+      annotations: builtinToolAnnotations('get_godot_status')
     };
 
     const getGuideTool = {
@@ -263,17 +271,24 @@ function createMcpServer(handleTool: ToolHandler): Server {
           },
         },
         required: [] as string[],
-      }
+      },
+      annotations: builtinToolAnnotations('get_guide')
     };
 
     return {
       tools: [
         connectionStatusTool,
         getGuideTool,
-        ...allTools.map(tool => ({
+        ...advertisedTools.map(tool => ({
           name: tool.name,
           description: tool.description,
-          inputSchema: tool.inputSchema
+          inputSchema: tool.inputSchema,
+          annotations: deriveAnnotations(tool),
+          // Ask the client to stop for a human on irreversible operations,
+          // even when the user has enabled auto-approve for this server.
+          ...(requiresUserInteraction(tool.name)
+            ? { _meta: { 'anthropic/requiresUserInteraction': true } }
+            : {}),
         }))
       ]
     };
@@ -281,8 +296,24 @@ function createMcpServer(handleTool: ToolHandler): Server {
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
-    const result = await handleTool(name, (args || {}) as Record<string, unknown>);
-    return result as { content: Array<{ type: string; text: string }>; isError?: boolean; [key: string]: unknown };
+    const raw = { ...((args || {}) as Record<string, unknown>) };
+
+    // Screenshot-style tools opt into an inline image block, because only an
+    // image content block lets the model actually see the frame. Everything
+    // else drops the bytes and keeps the metadata.
+    const wantsImage = raw.return === 'image';
+    if (wantsImage && raw.return_base64 !== true) {
+      // The addon only produces base64 when asked, so ask on its behalf.
+      raw.return_base64 = true;
+    }
+
+    const result = await handleTool(name, raw);
+    return normalizeResult(result, wantsImage ? 'emit' : 'drop') as {
+      content: ContentBlock[];
+      structuredContent?: Record<string, unknown>;
+      isError?: boolean;
+      [key: string]: unknown;
+    };
   });
 
   return server;
@@ -328,6 +359,24 @@ async function killProcessOnPort(port: number): Promise<boolean> {
     // No process on port, or kill failed — proceed
   }
   return false;
+}
+
+/**
+ * Decide whether we have a usable shared token, or must refuse to start.
+ *
+ * The /tool endpoint can drive the Godot editor, so a primary with no token is
+ * an open door to any local process. This returns a decision rather than
+ * exiting, so the rule can be tested without starting a server.
+ */
+export function requireAuthToken(): { ok: true; token: string } | { ok: false; reason: string } {
+  const token = getAuthToken();
+  if (token) return { ok: true, token };
+  return {
+    ok: false,
+    reason:
+      `Could not resolve a shared auth token. Set GODOT_MCP_TOKEN, or make the home ` +
+      `directory writable. Refusing to start an unauthenticated HTTP bridge.`,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -401,7 +450,17 @@ async function startPrimary(): Promise<void> {
   }
 
   // --- Start HTTP server for proxies ---
-  const httpServer = new PrimaryHttpServer(HTTP_PORT, SERVER_VERSION, executeToolCall, allTools.length + 2);
+  // The shared token gates the /tool endpoint, which can drive the editor.
+  // Fail closed: without a token we must not expose that endpoint at all.
+  const auth = requireAuthToken();
+  if (!auth.ok) {
+    console.error(`[${SERVER_NAME}] ❌ ${auth.reason}`);
+    godotBridge.stop();
+    process.exit(1);
+  }
+  // Count what we actually advertise, so a proxy holding a stale tool list is
+  // detected and replaced rather than silently missing a tool.
+  const httpServer = new PrimaryHttpServer(HTTP_PORT, SERVER_VERSION, executeToolCall, advertisedTools.length + 2, auth.token);
   httpServer.setClientCountChangeCallback(() => notifyClientStatus());
 
   try {
@@ -433,7 +492,7 @@ async function startPrimary(): Promise<void> {
     console.error(`[${SERVER_NAME}] ⚠️  HTTP server failed to start. Proxy clients will not work.`);
   }
 
-  console.error(`[${SERVER_NAME}] Available tools: ${allTools.length + 2}`);
+  console.error(`[${SERVER_NAME}] Available tools: ${advertisedTools.length + 2} advertised, ${allTools.length} dispatchable`);
   console.error(`[${SERVER_NAME}] Waiting for Godot editor connection...`);
 
   // --- Connect stdio MCP transport ---
@@ -523,9 +582,39 @@ async function startPrimary(): Promise<void> {
 async function startProxy(): Promise<void> {
   console.error(`[${SERVER_NAME}] Starting in PROXY mode v${SERVER_VERSION} (primary on port ${HTTP_PORT})...`);
 
+  // A stdin close can arrive while a forwarded call is still in flight.
+  // Exiting immediately would truncate the response that is already on its
+  // way back, so the client would see a transport error instead of the tool
+  // result. Count in-flight calls and let them drain before exiting.
+  let inFlight = 0;
+  const idleWaiters: Array<() => void> = [];
+
+  function trackInFlight<T>(promise: Promise<T>): Promise<T> {
+    inFlight++;
+    return promise.finally(() => {
+      inFlight--;
+      if (inFlight === 0) {
+        const waiters = idleWaiters.splice(0, idleWaiters.length);
+        for (const resolve of waiters) resolve();
+      }
+    });
+  }
+
+  /** Resolves true if everything settled, false if the drain timed out. */
+  function waitForInFlight(timeoutMs: number): Promise<boolean> {
+    if (inFlight === 0) return Promise.resolve(true);
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => resolve(false), timeoutMs);
+      idleWaiters.push(() => {
+        clearTimeout(timer);
+        resolve(true);
+      });
+    });
+  }
+
   const handleTool: ToolHandler = async (name, args) => {
     try {
-      return await proxyToolCall(HTTP_PORT, name, args, TOOL_TIMEOUT);
+      return await trackInFlight(proxyToolCall(HTTP_PORT, name, args, TOOL_TIMEOUT));
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       return {
@@ -554,6 +643,14 @@ async function startProxy(): Promise<void> {
     if (isShuttingDown) return;
     isShuttingDown = true;
     console.error(`[${SERVER_NAME}] Proxy shutting down...`);
+
+    // Bounded, so a wedged call can never strand the process. The client is
+    // already gone by the time we get here, so a late result has no reader.
+    const drained = await waitForInFlight(SHUTDOWN_DRAIN_MS);
+    if (!drained) {
+      console.error(`[${SERVER_NAME}] ${inFlight} call(s) still in flight after ${SHUTDOWN_DRAIN_MS}ms; exiting anyway`);
+    }
+
     await unregisterProxyClient(HTTP_PORT);
     process.exit(0);
   }
@@ -572,7 +669,7 @@ async function main(): Promise<void> {
   const probe = await probeExistingServer(HTTP_PORT);
 
   if (probe.alive) {
-    const localToolCount = allTools.length + 2; // +1 for get_godot_status, +1 for get_guide
+    const localToolCount = advertisedTools.length + 2; // +1 for get_godot_status, +1 for get_guide
     const primaryStale = probe.version !== SERVER_VERSION
       || (probe.toolCount != null && probe.toolCount !== localToolCount);
     if (primaryStale) {
@@ -590,7 +687,25 @@ async function main(): Promise<void> {
   return startPrimary();
 }
 
-main().catch((error) => {
-  console.error(`[${SERVER_NAME}] Fatal error:`, error);
-  process.exit(1);
-});
+/**
+ * Only boot when this file is the process entry point.
+ *
+ * Without this guard, importing anything from here — which tests do — starts a
+ * real primary server, binds ports 6505/6506 and installs signal handlers.
+ */
+const isEntryPoint = (() => {
+  const invoked = process.argv[1];
+  if (!invoked) return false;
+  try {
+    return realpathSync(invoked) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+})();
+
+if (isEntryPoint) {
+  main().catch((error) => {
+    console.error(`[${SERVER_NAME}] Fatal error:`, error);
+    process.exit(1);
+  });
+}

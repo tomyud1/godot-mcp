@@ -549,6 +549,13 @@ func _autoload_add(args: Dictionary) -> Dictionary:
 
 	if not path.begins_with("res://"):
 		path = "res://" + path
+
+	# An autoload path is executed by Godot on every launch, so a traversal
+	# here would both escape the project and plant code that runs at startup.
+	var _gate := MCPPaths.check(path, false)
+	if not _gate.is_empty():
+		return _gate
+
 	if not FileAccess.file_exists(path):
 		return {&"ok": false, &"error": "File not found: " + path}
 
@@ -844,6 +851,10 @@ func open_in_godot(args: Dictionary) -> Dictionary:
 	if not path.begins_with("res://"):
 		path = "res://" + path
 
+	var _gate := MCPPaths.check(path, false)
+	if not _gate.is_empty():
+		return _gate
+
 	if not _editor_plugin:
 		return {&"ok": false, &"error": "Editor plugin not available"}
 
@@ -1097,15 +1108,55 @@ func wait(args: Dictionary) -> Dictionary:
 # =============================================================================
 # rescan_filesystem
 # =============================================================================
-
-func rescan_filesystem(_args: Dictionary) -> Dictionary:
+##
+## Rescan the project filesystem and WAIT for the editor to finish importing.
+##
+## The previous implementation returned immediately (and errored with "Wait and
+## retry" if a scan was already running). That is fire-and-forget, and the
+## error message told the agent to retry — so agents ended up calling this in a
+## tight loop before run_scene, sometimes dozens of times per session, because
+## there was no way to tell when the editor had caught up. Blocking until
+## `is_scanning()` clears makes a single call sufficient.
+##
+## This is a coroutine: callers MUST await it.
+func rescan_filesystem(args: Dictionary) -> Dictionary:
 	if not _editor_plugin:
 		return {&"ok": false, &"error": "No editor plugin available"}
+
+	var max_wait_ms: int = int(args.get(&"max_wait_ms", 10000))
+	if max_wait_ms <= 0:
+		max_wait_ms = 10000
+
 	var efs := _editor_plugin.get_editor_interface().get_resource_filesystem()
-	if efs.is_scanning():
-		return {&"ok": false, &"error": "A filesystem scan is already in progress. Wait and retry."}
+	if efs == null:
+		return {&"ok": false, &"error": "Editor filesystem unavailable"}
+
+	# If a scan is already running, wait that one out rather than erroring or
+	# queueing another.
+	var was_scanning := efs.is_scanning()
 	efs.scan()
-	return {&"ok": true, &"message": "Filesystem rescan triggered."}
+
+	var start := Time.get_ticks_msec()
+	var waited := 0
+	# Yield to the scene tree rather than blocking: a blocking wait freezes the
+	# editor main thread, which also freezes the WebSocket pump and would time
+	# out the server's request.
+	while efs.is_scanning() and waited < max_wait_ms:
+		await get_tree().process_frame
+		waited = Time.get_ticks_msec() - start
+
+	var synchronized := not efs.is_scanning()
+	return {
+		&"ok": true,
+		&"synchronized": synchronized,
+		&"was_already_scanning": was_scanning,
+		&"waited_ms": waited,
+		&"message": (
+			"Filesystem scan complete. Newly written scripts and scenes are imported and visible to run_scene — no need to call this again."
+			if synchronized
+			else "Still scanning after %d ms. A large first import can take a while; check get_errors before assuming something is wrong." % waited
+		),
+	}
 
 # =============================================================================
 # classdb_query

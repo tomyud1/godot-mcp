@@ -19,6 +19,12 @@ func _ensure_res_path(path: String) -> String:
 		return "res://" + path
 	return path
 
+## Normalize an agent-supplied path and confine it to the project.
+## Returns {ok, path, error}; `path` is only valid when ok is true.
+func _gate_path(path: String) -> Dictionary:
+	var gate := MCPPaths.confine(_ensure_res_path(path), false)
+	return {&"ok": gate.ok, &"path": gate.path, &"error": gate.error}
+
 # =============================================================================
 # edit_script - Apply a small surgical code edit to a GDScript file
 # =============================================================================
@@ -31,7 +37,10 @@ func edit_script(args: Dictionary) -> Dictionary:
 	if path.is_empty():
 		return {&"ok": false, &"error": "Missing 'file' in edit"}
 
-	path = _ensure_res_path(path)
+	var gate := _gate_path(path)
+	if not gate[&"ok"]:
+		return {&"ok": false, &"error": gate[&"error"], &"path": path}
+	path = gate[&"path"]
 
 	if not FileAccess.file_exists(path):
 		return {&"ok": false, &"error": "File not found: " + path}
@@ -113,7 +122,10 @@ func validate_script(args: Dictionary) -> Dictionary:
 	if path.strip_edges().is_empty():
 		return {&"ok": false, &"error": "Missing 'path'"}
 
-	path = _ensure_res_path(path)
+	var gate := _gate_path(path)
+	if not gate[&"ok"]:
+		return {&"ok": false, &"error": gate[&"error"], &"path": path}
+	path = gate[&"path"]
 
 	if not FileAccess.file_exists(path):
 		return {&"ok": false, &"error": "File not found: " + path}
@@ -254,7 +266,10 @@ func create_folder(args: Dictionary) -> Dictionary:
 	if path.strip_edges().is_empty():
 		return {&"ok": false, &"error": "Missing 'path'"}
 
-	path = _ensure_res_path(path)
+	var gate := _gate_path(path)
+	if not gate[&"ok"]:
+		return {&"ok": false, &"error": gate[&"error"], &"path": path}
+	path = gate[&"path"]
 
 	if DirAccess.dir_exists_absolute(path):
 		return {&"ok": true, &"path": path, &"message": "Directory already exists"}
@@ -281,7 +296,10 @@ func delete_file(args: Dictionary) -> Dictionary:
 	if not confirm:
 		return {&"ok": false, &"error": "Must set confirm=true to delete"}
 
-	path = _ensure_res_path(path)
+	var gate := _gate_path(path)
+	if not gate[&"ok"]:
+		return {&"ok": false, &"error": gate[&"error"], &"path": path}
+	path = gate[&"path"]
 
 	if not FileAccess.file_exists(path):
 		return {&"ok": false, &"error": "File not found: " + path}
@@ -363,8 +381,15 @@ func rename_file(args: Dictionary) -> Dictionary:
 	if new_path.strip_edges().is_empty():
 		return {&"ok": false, &"error": "Missing 'new_path'"}
 
-	old_path = _ensure_res_path(old_path)
-	new_path = _ensure_res_path(new_path)
+	var old_gate := _gate_path(old_path)
+	if not old_gate[&"ok"]:
+		return {&"ok": false, &"error": old_gate[&"error"], &"old_path": old_path}
+	old_path = old_gate[&"path"]
+
+	var new_gate := _gate_path(new_path)
+	if not new_gate[&"ok"]:
+		return {&"ok": false, &"error": new_gate[&"error"], &"new_path": new_path}
+	new_path = new_gate[&"path"]
 
 	if not FileAccess.file_exists(old_path):
 		return {&"ok": false, &"error": "File not found: " + old_path}

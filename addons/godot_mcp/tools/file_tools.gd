@@ -29,6 +29,12 @@ func list_dir(args: Dictionary) -> Dictionary:
 	if not root.begins_with("res://"):
 		root = "res://" + root
 
+	# Confine directory listing to the project.
+	var gate := MCPPaths.confine(root, false)
+	if not gate.ok:
+		return {&"ok": false, &"error": gate.error, &"root": root}
+	root = gate.path
+
 	var dir := DirAccess.open(root)
 	if dir == null:
 		return {&"ok": false, &"error": "Cannot open directory: " + root}
@@ -83,6 +89,12 @@ func read_file(args: Dictionary) -> Dictionary:
 
 	if not path.begins_with("res://"):
 		path = "res://" + path
+
+	# Confine reads to the project before touching the filesystem.
+	var gate := MCPPaths.confine(path, false)
+	if not gate.ok:
+		return {&"ok": false, &"error": gate.error, &"path": path}
+	path = gate.path
 
 	if not FileAccess.file_exists(path):
 		return {&"ok": false, &"error": "File not found: " + path}
@@ -248,6 +260,12 @@ func create_script(args: Dictionary) -> Dictionary:
 	if not path.begins_with("res://"):
 		path = "res://" + path
 
+	# Confine creation to the project.
+	var gate := MCPPaths.confine(path, false)
+	if not gate.ok:
+		return {&"ok": false, &"error": gate.error, &"path": path}
+	path = gate.path
+
 	# Add .gd extension if missing
 	if not "." in path.get_file():
 		path += ".gd"
@@ -282,7 +300,10 @@ func create_script(args: Dictionary) -> Dictionary:
 	}
 
 func _refresh_filesystem() -> void:
-	"""Tell Godot to rescan the filesystem."""
+	"""Tell Godot to rescan the filesystem (fire-and-forget).
+
+	Internal use only. The `rescan_filesystem` TOOL blocks until the scan
+	finishes so agents get a real acknowledgement; this helper does not."""
 	if _editor_plugin != null:
 		_editor_plugin.get_editor_interface().get_resource_filesystem().scan()
 	elif Engine.is_editor_hint():

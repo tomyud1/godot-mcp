@@ -420,6 +420,9 @@ func _apply_operation(scene_root: Node, operation_value: Variant, index: int) ->
 
 func map_scene_signals(args: Dictionary) -> Dictionary:
 	var scene_path := _ensure_res_path(str(args.get(&"scene_path", "")).strip_edges())
+	var _gate := MCPPaths.check(scene_path, false)
+	if not _gate.is_empty():
+		return _gate
 	if scene_path.is_empty():
 		return {&"ok": false, &"error": "Missing required field: scene_path"}
 
@@ -473,6 +476,9 @@ func map_scene_signals(args: Dictionary) -> Dictionary:
 
 func update_scene_signal_connections(args: Dictionary) -> Dictionary:
 	var scene_path := _ensure_res_path(str(args.get(&"scene_path", "")).strip_edges())
+	var _gate := MCPPaths.check(scene_path, false)
+	if not _gate.is_empty():
+		return _gate
 	if scene_path.is_empty():
 		return {&"ok": false, &"error": "Missing required field: scene_path"}
 

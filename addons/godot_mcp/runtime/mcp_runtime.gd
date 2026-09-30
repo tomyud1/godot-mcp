@@ -13,6 +13,12 @@ extends Node
 const SERVER_URL := "ws://127.0.0.1:6505"
 const CACHE_SCREENSHOT_DIR := "res://addons/godot_mcp/cache/screenshots/"
 const LOG_RING_CAPACITY := 500
+## Vision models clamp the long edge to roughly this, so capturing larger just
+## spends tokens on pixels that get thrown away.
+const DEFAULT_MAX_DIMENSION := 1568
+## Refuse to inline a PNG larger than this. 6 MiB of base64 is ~1.6M tokens,
+## which would evict the entire conversation.
+const DEFAULT_MAX_SCREENSHOT_BYTES := 6 * 1024 * 1024
 const VariantCodec := preload("res://addons/godot_mcp/utils/variant_codec.gd")
 
 var _socket: WebSocketPeer = WebSocketPeer.new()
@@ -102,6 +108,12 @@ func _dispatch(tool_name: String, args: Dictionary) -> Dictionary:
 			return _send_input(args)
 		"query_runtime_node":
 			return _query_runtime_node(args)
+		"probe_ui":
+			return _probe_ui(args)
+		"probe_camera":
+			return _probe_camera(args)
+		"assert_runtime":
+			return _assert_runtime(args)
 		"get_runtime_log":
 			return _get_runtime_log(args)
 		"list_signal_connections":
@@ -148,6 +160,17 @@ func _take_screenshot(args: Dictionary) -> Dictionary:
 	var img: Image = viewport.get_texture().get_image()
 	if img == null:
 		return {"ok": false, "error": "Viewport returned no image"}
+	var original_width := img.get_width()
+	var original_height := img.get_height()
+
+	# Downscale before encoding. Vision models clamp the long edge to ~1568px
+	# anyway, and Anthropic rejects anything over 8000px outright, so capturing
+	# at full resolution spends tokens on pixels nobody will look at.
+	var max_dimension: int = int(args.get("max_dimension", 0))
+	if max_dimension <= 0:
+		max_dimension = DEFAULT_MAX_DIMENSION
+	img = _fit_within(img, max_dimension)
+	var downscaled := img.get_width() != original_width or img.get_height() != original_height
 
 	var resource_path := ""
 	if save_to.is_empty():
@@ -167,16 +190,54 @@ func _take_screenshot(args: Dictionary) -> Dictionary:
 	if err != OK:
 		return {"ok": false, "error": "save_png failed: %d (%s) at %s" % [err, error_string(err), abs_path]}
 
+	# Read the encoded bytes back so we can report the real size and refuse to
+	# inline something oversized rather than blowing up the context window.
+	var encoded := FileAccess.get_file_as_bytes(abs_path)
+	var max_bytes: int = int(args.get("max_bytes", 0))
+	if max_bytes <= 0:
+		max_bytes = DEFAULT_MAX_SCREENSHOT_BYTES
+	if encoded.size() > max_bytes:
+		return {
+			"ok": false,
+			"error": "Screenshot is %d bytes, over the %d byte inline limit. The PNG is still saved at %s — pass a smaller max_dimension, or use a structured probe instead of an image." % [encoded.size(), max_bytes, resource_path],
+			"resource_path": resource_path,
+			"absolute_path": abs_path,
+			"width": img.get_width(),
+			"height": img.get_height(),
+			"bytes": encoded.size(),
+			"hint": "Non-multimodal agents should prefer query_runtime_node / get_ui_controls over screenshots.",
+		}
+
 	var out := {
 		"ok": true,
 		"resource_path": resource_path,
 		"absolute_path": abs_path,
 		"width": img.get_width(),
 		"height": img.get_height(),
+		"original_width": original_width,
+		"original_height": original_height,
+		"downscaled": downscaled,
+		"bytes": encoded.size(),
 	}
 	if return_base64:
-		out["base64_png"] = Marshalls.raw_to_base64(FileAccess.get_file_as_bytes(abs_path))
+		out["base64_png"] = Marshalls.raw_to_base64(encoded)
 	return out
+
+
+# =============================================================================
+# Screenshot helpers
+# =============================================================================
+func _fit_within(img: Image, max_dimension: int) -> Image:
+	var w := img.get_width()
+	var h := img.get_height()
+	var longest := maxi(w, h)
+	if max_dimension <= 0 or longest <= max_dimension:
+		return img
+	var scale := float(max_dimension) / float(longest)
+	var target := Vector2i(maxi(1, int(round(w * scale))), maxi(1, int(round(h * scale))))
+	# INTERPOLATE_BILINEAR keeps downscaled text readable without the cost of
+	# LANCZOS on large frames.
+	return img.duplicate().resize(target.x, target.y, Image.INTERPOLATE_BILINEAR)
 
 
 # =============================================================================
@@ -251,6 +312,320 @@ func _to_vec2(v: Variant) -> Vector2:
 	if v is Array and v.size() >= 2:
 		return Vector2(float(v[0]), float(v[1]))
 	return Vector2.ZERO
+
+
+# =============================================================================
+# Structured probes
+#
+# A screenshot is a weak witness: it cannot show whether collision worked,
+# whether the frame is the right size, or whether two Controls overlap, and a
+# single angle can mislead. These report the measurements the engine already
+# knows, which is both cheaper and more reliable — and it is the only path that
+# works at all for a non-multimodal agent.
+# =============================================================================
+func _resolve_node(raw_path: String) -> Node:
+	var tree := get_tree()
+	if tree == null:
+		return null
+	if raw_path.begins_with("/"):
+		return tree.root.get_node_or_null(NodePath(raw_path))
+	var current := tree.current_scene
+	if current:
+		var found := current.get_node_or_null(NodePath(raw_path))
+		if found:
+			return found
+	return tree.root.get_node_or_null(NodePath(raw_path))
+
+
+## Snapshot of the on-screen Control layout: rects, text, and overlap.
+## This is the "GameState" read that covers most UI questions in ~1 KB.
+func _probe_ui(args: Dictionary) -> Dictionary:
+	var tree := get_tree()
+	if tree == null:
+		return {"ok": false, "error": "SceneTree unavailable"}
+	var root: Node = tree.current_scene if tree.current_scene else tree.root
+	if root == null:
+		return {"ok": false, "error": "No current scene"}
+
+	var viewport := get_viewport()
+	var viewport_rect := Rect2(Vector2.ZERO, viewport.get_visible_rect().size) if viewport else Rect2()
+	var max_controls: int = int(args.get("max_controls", 60))
+	var include_hidden: bool = bool(args.get("include_hidden", false))
+
+	# A zero-sized viewport (headless, minimized, or before the window is
+	# realized) would make every on-screen test fail and silently hide the
+	# whole UI. Report everything and say why instead.
+	var viewport_usable := viewport_rect.size.x > 1.0 and viewport_rect.size.y > 1.0
+	var viewport_note := "Rects are in viewport pixels with the origin at the top-left, matching Control.get_global_rect()."
+	if not viewport_usable:
+		include_hidden = true
+		viewport_note = "Viewport has no measurable size (%s), so the on-screen filter was disabled. Resize the game window and re-probe for filtered results." % str(viewport_rect.size)
+
+	var controls: Array = []
+	var overlaps: Array = []
+	var _collected: Array[Rect2] = []
+	var _collected_names: Array[String] = []
+
+	_collect_controls(root, viewport_rect, include_hidden, max_controls, controls, _collected, _collected_names, overlaps)
+
+	return {
+		"ok": true,
+		"viewport": {"width": int(viewport_rect.size.x), "height": int(viewport_rect.size.y)},
+		"viewport_usable": viewport_usable,
+		"control_count": controls.size(),
+		"controls": controls,
+		"overlaps": overlaps,
+		"note": viewport_note,
+	}
+
+
+func _collect_controls(node: Node, viewport_rect: Rect2, include_hidden: bool, budget: int, out: Array, rects: Array[Rect2], names: Array[String], overlaps: Array) -> void:
+	if out.size() >= budget:
+		return
+	for child in node.get_children():
+		if out.size() >= budget:
+			return
+		if child is Control:
+			var c := child as Control
+			var visible := c.is_visible_in_tree()
+			if visible or include_hidden:
+				var r := c.get_global_rect()
+				# Only controls that actually intersect the screen are
+				# interesting; off-screen layout is what the agent asked to
+				# debug, not background geometry.
+				if r.intersects(viewport_rect) or include_hidden:
+					out.append({
+						"path": str(c.get_path()),
+						"type": c.get_class(),
+						"visible": visible,
+						"rect": {
+							"x": snappedf(r.position.x, 0.01),
+							"y": snappedf(r.position.y, 0.01),
+							"width": snappedf(r.size.x, 0.01),
+							"height": snappedf(r.size.y, 0.01),
+						},
+						"on_screen": r.intersects(viewport_rect),
+						"modulate": "#%s" % c.modulate.to_html(false),
+					})
+					# Overlap between siblings is a classic UI bug and is
+					# invisible in a low-contrast screenshot.
+					for i in rects.size():
+						var other: Rect2 = rects[i]
+						if other.intersects(r) and other.size.length() > 1.0 and r.size.length() > 1.0:
+							var ov := other.intersection(r)
+							# Ignore incidental touching of neighbours.
+							if ov.size.x * ov.size.y > 4.0:
+								overlaps.append({
+									"a": names[i], "b": str(c.get_path()),
+									"overlap_area": snappedf(ov.size.x * ov.size.y, 0.01),
+								})
+					rects.append(r)
+					names.append(str(c.get_path()))
+		_collect_controls(child, viewport_rect, include_hidden, budget, out, rects, names, overlaps)
+
+
+## Where a Node3D sits on screen, and whether the active camera can see it.
+## Answers "is my level geometry actually in shot" without decoding a frame.
+func _probe_camera(args: Dictionary) -> Dictionary:
+	var tree := get_tree()
+	if tree == null:
+		return {"ok": false, "error": "SceneTree unavailable"}
+	var viewport := get_viewport()
+	if viewport == null:
+		return {"ok": false, "error": "No viewport"}
+	var camera := viewport.get_camera_3d()
+	if camera == null:
+		return {"ok": false, "error": "No active Camera3D in the current viewport"}
+
+	var size := viewport.get_visible_rect().size
+	var cam_pos := camera.global_position
+	var results: Array = []
+	var targets: Array = args.get("node_paths", [])
+
+	for path in targets:
+		var node := _resolve_node(str(path))
+		if node == null:
+			results.append({"path": str(path), "found": false})
+			continue
+		if not (node is Node3D):
+			results.append({"path": str(node.get_path()), "found": true, "is_3d": false})
+			continue
+		var n3 := node as Node3D
+		var world := n3.global_position
+		var screen := camera.unproject_position(world)
+		var behind := camera.is_position_behind(world)
+		results.append({
+			"path": str(n3.get_path()),
+			"found": true,
+			"is_3d": true,
+			"visible": n3.is_visible_in_tree() and not behind and Rect2(Vector2.ZERO, size).has_point(screen),
+			"behind_camera": behind,
+			"screen": {"x": snappedf(screen.x, 0.01), "y": snappedf(screen.y, 0.01)},
+			"on_screen": (not behind) and Rect2(Vector2.ZERO, size).has_point(screen),
+			"distance": snappedf(cam_pos.distance_to(world), 0.01),
+		})
+
+	return {
+		"ok": true,
+		"camera": str(camera.get_path()),
+		"camera_position": {"x": snappedf(cam_pos.x, 0.01), "y": snappedf(cam_pos.y, 0.01), "z": snappedf(cam_pos.z, 0.01)},
+		"viewport": {"width": int(size.x), "height": int(size.y)},
+		"targets": results,
+	}
+
+
+# =============================================================================
+# assert_runtime — bounded checks against the running game
+#
+# Each check returns {passed, actual, expected} so a failure is evidence rather
+# than a vibe. This is how an agent verifies behaviour without pixels at all.
+# =============================================================================
+func _assert_runtime(args: Dictionary) -> Dictionary:
+	var checks: Array = args.get("checks", [])
+	if checks.is_empty():
+		return {"ok": false, "error": "Missing 'checks' — pass a list of {kind, ...} assertions."}
+	# Without a tree we cannot resolve a single node path, so say so once
+	# rather than emitting a null-reference error per check.
+	if get_tree() == null:
+		return {"ok": false, "error": "SceneTree unavailable — the runtime helper is not attached to a running game."}
+
+	var results: Array = []
+	var passed_count := 0
+	var failed_count := 0
+
+	for check in checks:
+		if typeof(check) != TYPE_DICTIONARY:
+			results.append({"passed": false, "error": "Each check must be an object"})
+			failed_count += 1
+			continue
+		var r := _run_assertion(check)
+		if bool(r.get("passed", false)):
+			passed_count += 1
+		else:
+			failed_count += 1
+		results.append(r)
+
+	return {
+		"ok": true,
+		"total": results.size(),
+		"passed": passed_count,
+		"failed": failed_count,
+		"all_passed": failed_count == 0,
+		"results": results,
+	}
+
+
+func _run_assertion(check: Dictionary) -> Dictionary:
+	var kind := str(check.get("kind", ""))
+	var node := _resolve_node(str(check.get("node_path", ""))) if not str(check.get("node_path", "")).is_empty() else null
+
+	match kind:
+		"node_exists":
+			var passed := node != null
+			return {"kind": kind, "node_path": check.get("node_path", ""), "passed": passed,
+					"actual": "present" if passed else "absent"}
+
+		"node_visible":
+			if node == null:
+				return {"kind": kind, "node_path": check.get("node_path", ""), "passed": false, "error": "Node not found"}
+			var vis: bool = node.is_visible_in_tree()
+			return {"kind": kind, "node_path": str(node.get_path()), "passed": vis == bool(check.get("visible", true)),
+					"actual": vis, "expected": check.get("visible", true)}
+
+		"node_inside_viewport":
+			if node == null:
+				return {"kind": kind, "node_path": check.get("node_path", ""), "passed": false, "error": "Node not found"}
+			var viewport := get_viewport()
+			if viewport == null:
+				return {"kind": kind, "passed": false, "error": "No viewport"}
+			if not (node is Control):
+				return {"kind": kind, "passed": false, "error": "node_inside_viewport requires a Control"}
+			var screen := Rect2(Vector2.ZERO, viewport.get_visible_rect().size)
+			var on := screen.encloses((node as Control).get_global_rect())
+			return {"kind": kind, "node_path": str(node.get_path()), "passed": on,
+					"actual": on, "rect": str((node as Control).get_global_rect())}
+
+		"rect_contains_point":
+			if node == null or not (node is Control):
+				return {"kind": kind, "passed": false, "error": "rect_contains_point requires an existing Control"}
+			var p := check.get("point", {})
+			var pt := Vector2(float(p.get("x", 0)), float(p.get("y", 0)))
+			var contains: bool = (node as Control).get_global_rect().has_point(pt)
+			return {"kind": kind, "node_path": str(node.get_path()), "passed": contains,
+					"actual": contains, "point": {"x": pt.x, "y": pt.y}}
+
+		"text_matches":
+			if node == null:
+				return {"kind": kind, "node_path": check.get("node_path", ""), "passed": false, "error": "Node not found"}
+			var actual_text := _read_text(node)
+			if actual_text == null:
+				return {"kind": kind, "node_path": str(node.get_path()), "passed": false,
+						"error": "Node has no readable text (expected Label/RichTextLabel/LineEdit/Button)"}
+			var needle := str(check.get("text", ""))
+			var found: bool = actual_text.contains(needle) if bool(check.get("contains", true)) else actual_text == needle
+			return {"kind": kind, "node_path": str(node.get_path()), "passed": found,
+					"actual": actual_text, "expected": needle}
+
+		"property_equals":
+			if node == null:
+				return {"kind": kind, "node_path": check.get("node_path", ""), "passed": false, "error": "Node not found"}
+			var prop := str(check.get("property", ""))
+			if prop.is_empty():
+				return {"kind": kind, "passed": false, "error": "Missing 'property'"}
+			var expected_val = check.get("value")
+			var actual_val = VariantCodec.serialize_value(node.get(prop))
+			var eq := _values_equal(actual_val, expected_val)
+			return {"kind": kind, "node_path": str(node.get_path()), "passed": eq,
+					"actual": actual_val, "expected": expected_val}
+
+		"group_count":
+			var tree := get_tree()
+			if tree == null:
+				return {"kind": kind, "passed": false, "error": "SceneTree unavailable"}
+			var g := str(check.get("group", ""))
+			var n := tree.get_nodes_in_group(g).size()
+			var want := int(check.get("equals", -1))
+			return {"kind": kind, "group": g, "passed": (n == want), "actual": n, "expected": want}
+
+		"no_errors":
+			# Combines with get_errors; here we only report the log ring so the
+			# check is self-contained.
+			var errs := _collect_recent_errors()
+			var max_errors := int(check.get("max", 0))
+			var ok := errs.size() <= max_errors
+			return {"kind": kind, "passed": ok, "actual": errs.size(), "expected": "<= %d" % max_errors, "errors": errs}
+
+		_:
+			return {"kind": kind, "passed": false,
+					"error": "Unknown assertion kind '%s'. Supported: node_exists, node_visible, node_inside_viewport, rect_contains_point, text_matches, property_equals, group_count, no_errors." % kind}
+
+
+func _read_text(node: Node) -> Variant:
+	if node is RichTextLabel:
+		return (node as RichTextLabel).get_parsed_text()
+	if node is Label:
+		return (node as Label).text
+	if node is LineEdit:
+		return (node as LineEdit).text
+	if node is Button:
+		return (node as Button).text
+	if node is TextEdit:
+		return (node as TextEdit).text
+	return null
+
+
+func _values_equal(a: Variant, b: Variant) -> bool:
+	if typeof(a) != typeof(b):
+		return false
+	return str(a) == str(b) and (a is String or a is bool or a is int or a is float)
+
+
+func _collect_recent_errors() -> Array:
+	var out: Array = []
+	for entry in _log_ring:
+		if str(entry.get("level", "")) == "error":
+			out.append(str(entry.get("text", "")))
+	return out
 
 
 # =============================================================================
@@ -409,6 +784,17 @@ func _runtime_eval(args: Dictionary) -> Dictionary:
 	var code: String = str(args.get("code", "")).strip_edges()
 	if code.is_empty():
 		return {"ok": false, "error": "Missing 'code' (GDScript to evaluate in the running game)."}
+
+	# This is arbitrary code execution inside the running game, with the
+	# ability to quit it or corrupt its state. Require an explicit opt-in for
+	# the same reason delete_file requires confirm=true: a single misdirected
+	# or prompt-injected call should not be able to do it silently.
+	if not bool(args.get("confirm", false)):
+		return {
+			"ok": false,
+			"error": "runtime_eval executes arbitrary GDScript in the running game. REQUIRES confirm=true.",
+			"hint": "Re-issue with confirm=true, or prefer query_runtime_node / runtime_call_method when they suffice.",
+		}
 
 	var built := _build_eval_node(code)
 	if not built[0]:

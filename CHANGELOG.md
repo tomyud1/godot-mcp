@@ -1,5 +1,37 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- **Structured probes and assertions** — `probe_ui` (on-screen Control rects, visibility, tint, and overlapping sibling pairs), `probe_camera` (where Node3D targets land on screen, whether the camera is behind them, their distance), and `assert_runtime` (bounded `node_exists` / `node_visible` / `node_inside_viewport` / `rect_contains_point` / `text_matches` / `property_equals` / `group_count` / `no_errors` checks returning `{passed, actual, expected}`). These return small JSON instead of a multi-megabyte frame, which makes layout and behaviour verifiable by agents that cannot see images at all.
+- **Tool annotations** — every tool now advertises `readOnlyHint` / `destructiveHint` / `idempotentHint` / `openWorldHint`, derived from the tool name with per-tool overrides. Irreversible tools additionally carry `_meta["anthropic/requiresUserInteraction"]`. `validate_script`, `rescan_filesystem` and `bake_navigation_mesh` are explicitly forced to not read-only, because their names would otherwise let a client auto-approve real writes.
+- **`structuredContent` on tool results** — results are now machine-readable as well as text, per the MCP tools spec.
+- **Local authentication** — the primary HTTP API requires `Authorization: Bearer <token>`, resolved from `GODOT_MCP_TOKEN` or a `0600` file at `~/.godot-mcp/auth-token`. `/health` stays open so proxies can discover the primary. The editor-bridge WebSocket rejects any handshake carrying an `Origin` header, which blocks a web page from driving the editor without requiring an addon update. The visualizer uses a per-session token in the page URL, re-checked on the WebSocket upgrade.
+- **Path confinement** — every agent-supplied path is confined to `res://` (and `user://` where legitimate) across all tools. Rejects `..` traversal, absolute paths outside the project, and null bytes. This closes `save_resource_to_file` (arbitrary `ResourceSaver.save` + recursive mkdir) and `setup_autoload` (an autoload path is executed by Godot on every launch).
+- **Response size cap** — results over 4 MiB are replaced with an explicit truncation notice rather than being silently trimmed.
+
+### Fixed
+- **`rescan_filesystem` is now synchronous** — it previously returned immediately and, if a scan was already running, returned "A filesystem scan is already in progress. Wait and retry." Agents acted on that message and looped the tool dozens of times per session before `run_scene` (it was the single most-called Godot tool, reaching 31% of all calls in one session). It now blocks until `EditorFileSystem.is_scanning()` clears and returns `{synchronized, was_already_scanning, waited_ms}`, so one call is enough.
+- **Screenshots are now actually viewable** — `take_screenshot` previously returned base64 inside a JSON string, which reached the model as a *text* block: unreadable to a vision model and enormous in context. Passing `return: "image"` now returns a proper MCP image content block. Frames are downscaled to a 1568px long edge by default (where vision models clamp anyway) and an oversized PNG is refused with its saved path rather than inlined. Nothing is inlined unless explicitly requested.
+- **Encoded payloads are no longer duplicated** — `structuredContent` no longer carries `base64_png`, which had been doubling the largest payload the server could produce.
+- **`modify_node_property` is a deprecated alias** of `set_scene_node_property`; the two were already the same function, and usage logs showed the agent choosing between them with no behavioural difference to learn. It stays callable but is no longer advertised.
+- **Malformed JSON to `/tool` returns 400**, not 500 — it is a caller error, not a server fault.
+- **Importing the server module no longer starts a server** — the entry point is guarded, so tests can import it without binding ports.
+- **Draining in-flight calls on shutdown** — a stdio close arriving while a forwarded call was in flight used to truncate the response; the proxy now waits (bounded by `GODOT_MCP_DRAIN_MS`) before exiting.
+- **The visualizer session token is no longer written to stderr.**
+
+### Security
+- The three local listeners (editor bridge 6505, proxy API 6506, visualizer 6510) are now authenticated as described above, and the server refuses to start rather than expose an unauthenticated HTTP bridge.
+
+### Fixed
+- **The `tool-index` guide advertised four tools that do not exist as MCP tools** — `duplicate_node`, `reorder_node`, `get_scene_hierarchy` and `map_scenes` are visualizer-internal commands. An agent following the guide got `Unknown tool` and burned a round trip.
+- **An empty token file yielded an empty token.** `resolveTokenFromFile` saw the file existed but its content was blank, then hit `EEXIST` on the `wx` create and re-read the same blank value — leaving no usable secret. The empty file is now replaced.
+
+### Added
+- **Continuous integration** (`.github/workflows/ci.yml`) — typecheck, build, tool-surface parity, a docs-freshness check, vitest, and the three headless GDScript suites against Godot 4.3 (the declared minimum).
+- **`npm run check:parity`** — asserts that every TS tool with no GDScript handler is deliberately listed in `RUNTIME_ONLY_TOOLS`, that the guides reference only callable tools, and that hidden aliases name their canonical replacement. This is the invariant the README previously only asked contributors to remember.
+- **`project.godot`** — a minimal harness so the headless GDScript checks are runnable from a fresh clone. Not a game; never exported.
+
 ## [0.5.0] - 2026-04-19
 
 See [`release-notes/v0.5.0.md`](./release-notes/v0.5.0.md) for the narrative write-up.

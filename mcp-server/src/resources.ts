@@ -58,6 +58,41 @@ Skip step 3 and use \`wait\` + \`query_runtime_node\` + \`take_screenshot\` to s
 - Calling \`take_screenshot\` immediately after \`run_scene\` without \`wait_for_runtime: true\` returns "Runtime helper not connected".
 - The runtime ring buffer (\`get_runtime_log\`) only contains entries pushed via \`MCPRuntime.push_runtime_log(level, text)\`. For full engine stdout use the editor's \`get_console_log\`.
 - \`send_input\` with type \`action\` requires the action to exist in the InputMap (check with \`get_input_map\`).
+- \`runtime_eval\` executes arbitrary GDScript in the running game and requires \`confirm: true\`. Reach for \`query_runtime_node\` or \`runtime_call_method\` first; they cover most cases without the blast radius.
+- \`probe_ui\` and \`assert_runtime\` need a running game too — the same \`run_scene({wait_for_runtime: true})\` applies.
+- A viewport with no measurable size (headless, minimized) makes \`probe_ui\` disable its on-screen filter and say so in \`note\`.
+- \`rescan_filesystem\` blocks until the editor has finished importing, so ONE call is enough before \`run_scene\` — it returns \`synchronized\`. It used to return immediately and tell you to retry, which is what led to agents looping it dozens of times.
+- \`modify_node_property\` is a deprecated alias of \`set_scene_node_property\` (identical behaviour, and it is no longer listed). Both still work.
+
+## Prefer measurements over screenshots
+
+A screenshot is a weak witness. It cannot show whether collision, timing, or
+performance is correct, one angle can mislead, and a full-resolution frame
+costs more context than the answer is worth. Ask for the number instead —
+these are small JSON payloads and they work even for agents that cannot see
+images at all:
+
+- \`probe_ui\` — every on-screen Control with its exact rect, visibility and
+  tint, plus any **overlapping sibling pairs**, which is a classic UI bug that
+  a low-contrast screenshot hides.
+- \`probe_camera\` — where Node3D targets land on screen, whether the camera is
+  behind them, and their distance. Answers "is my level geometry in shot?"
+- \`assert_runtime\` — bounded checks returning \`{passed, actual, expected}\`.
+  Kinds: \`node_exists\`, \`node_visible\`, \`node_inside_viewport\`,
+  \`rect_contains_point\`, \`text_matches\`, \`property_equals\`,
+  \`group_count\`, \`no_errors\`. Every check runs even when an earlier one
+  fails, so one call can verify a whole sequence.
+
+## When a screenshot is still the right call
+
+For art, colour, composition, animation, or anything you genuinely have to
+*see*. \`take_screenshot\` always saves to disk and returns the path and
+dimensions. Add \`return: "image"\` to also receive the frame as an inline
+image the model can actually look at — that is the only form a vision model
+can perceive, since base64 inside a text field is unreadable noise to it.
+Frames are downscaled to 1568px on the long edge by default, which is where
+vision models clamp anyway, and an oversized PNG is refused with its saved
+path rather than inlined.
 `,
   },
   {
@@ -182,9 +217,9 @@ This is a benign empty result, not a real failure. \`map_project\` will return a
 - List GDScripts: \`list_scripts\`
 
 ## Scenes
-- Create / read / hierarchy: \`create_scene\`, \`read_scene\`, \`get_scene_hierarchy\`, \`scene_tree_dump\`
-- Add / remove / move / rename / duplicate / reorder nodes: \`add_node\`, \`remove_node\`, \`move_node\`, \`rename_node\`, \`duplicate_node\`, \`reorder_node\`
-- Properties on a node: \`modify_node_property\` (one), \`set_node_properties\` (many), \`get_scene_node_properties\` (read all)
+- Create / read / hierarchy: \`create_scene\`, \`read_scene\`, \`scene_tree_dump\`
+- Add / remove / move / rename nodes: \`add_node\` (accepts a \`children\` subtree), \`remove_node\`, \`move_node\`, \`rename_node\`
+- Properties on a node: \`set_scene_node_property\` (one), \`set_node_properties\` (many), \`get_scene_node_properties\` (read all)
 - Class-level property metadata: \`get_node_properties\` (with \`node_type\`)
 - Groups: \`set_node_groups\`, \`get_node_groups\`, \`find_nodes_in_group\`
 - Scripts on nodes: \`attach_script\`, \`detach_script\`
@@ -214,7 +249,8 @@ This is a benign empty result, not a real failure. \`map_project\` will return a
 - SVG -> PNG: \`generate_2d_asset\` (now with \`width\`, \`height\`, \`scale\`)
 
 ## Visualizer
-- Project + scenes maps: \`map_project\`, \`map_scenes\`
+- Project map: \`map_project\` — returns a force-directed graph of scripts and
+  opens a browser explorer at a local URL.
 `,
   },
 ];

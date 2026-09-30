@@ -4,6 +4,8 @@
  */
 
 import http from 'node:http';
+import { getAuthToken } from './auth.js';
+import type { ContentBlock } from './types.js';
 
 export interface ProbeResult {
   alive: boolean;
@@ -11,8 +13,13 @@ export interface ProbeResult {
   toolCount?: number;
 }
 
+/**
+ * A tool result forwarded from the primary. Content blocks are passed through
+ * untouched, so image blocks survive the hop intact.
+ */
 export interface ProxyToolResult {
-  content: Array<{ type: string; text: string }>;
+  content: ContentBlock[];
+  structuredContent?: Record<string, unknown>;
   isError?: boolean;
 }
 
@@ -44,6 +51,16 @@ export async function registerProxyClient(port: number): Promise<void> {
   } catch {
     // Non-fatal — primary may not support this endpoint yet
   }
+}
+
+/**
+ * The primary requires a bearer token on every non-health endpoint. Proxies
+ * read the same shared secret (env var or token file) as the primary, so no
+ * out-of-band handshake is needed.
+ */
+function authHeader(): Record<string, string> {
+  const token = getAuthToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
 /**
@@ -112,6 +129,7 @@ function httpPost(url: string, body: string, timeoutMs: number): Promise<string>
       headers: {
         'Content-Type': 'application/json',
         'Content-Length': Buffer.byteLength(body),
+        ...authHeader(),
       },
     };
 

@@ -9,7 +9,11 @@ let requestId = 0;
 
 export function connectWebSocket() {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  ws = new WebSocket(`${protocol}//${window.location.host}`);
+  // The session token from the page URL authenticates the upgrade. Browsers
+  // cannot set custom headers on a WebSocket handshake, so it travels as a
+  // query parameter; the server re-checks it before accepting the socket.
+  const token = new URLSearchParams(window.location.search).get('token') || '';
+  ws = new WebSocket(`${protocol}//${window.location.host}/ws?token=${encodeURIComponent(token)}`);
 
   ws.onopen = () => {
     wsConnected = true;

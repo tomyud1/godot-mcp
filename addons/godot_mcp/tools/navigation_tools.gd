@@ -347,6 +347,9 @@ func _extract_navigation_mesh_settings(args: Dictionary) -> Variant:
 
 func set_navigation_mesh(args: Dictionary) -> Dictionary:
 	var scene_path: String = _ensure_res_path(str(args.get(&"scene_path", "")))
+	var _gate := MCPPaths.check(scene_path, false)
+	if not _gate.is_empty():
+		return _gate
 	var node_path: String = str(args.get(&"node_path", "."))
 	var create_if_missing: bool = bool(args.get(&"create_if_missing", true))
 	var duplicate_external_resource: bool = bool(args.get(&"duplicate_external_resource", true))
@@ -400,6 +403,9 @@ func set_navigation_mesh(args: Dictionary) -> Dictionary:
 
 func get_navigation_mesh_info(args: Dictionary) -> Dictionary:
 	var scene_path: String = _ensure_res_path(str(args.get(&"scene_path", "")))
+	var _gate := MCPPaths.check(scene_path, false)
+	if not _gate.is_empty():
+		return _gate
 	var node_path: String = str(args.get(&"node_path", "."))
 
 	if scene_path.strip_edges() == "res://":
@@ -426,6 +432,9 @@ func get_navigation_mesh_info(args: Dictionary) -> Dictionary:
 
 func bake_navigation_mesh(args: Dictionary) -> Dictionary:
 	var scene_path: String = _ensure_res_path(str(args.get(&"scene_path", "")))
+	var _gate := MCPPaths.check(scene_path, false)
+	if not _gate.is_empty():
+		return _gate
 	var node_path: String = str(args.get(&"node_path", "."))
 	var create_if_missing: bool = bool(args.get(&"create_if_missing", true))
 	var duplicate_external_resource: bool = bool(args.get(&"duplicate_external_resource", true))

@@ -45,6 +45,7 @@ func _ensure_res_path(path: String) -> String:
 		return "res://" + path
 	return path
 
+
 func _load_scene(scene_path: String) -> Array:
 	"""Returns [scene_root, error_dict]. If error_dict is not empty, scene_root is null."""
 	if not FileAccess.file_exists(scene_path):
@@ -359,6 +360,9 @@ func _set_node_properties(node: Node, properties: Dictionary) -> Dictionary:
 
 func _set_scene_node_property_internal(args: Dictionary) -> Dictionary:
 	var scene_path: String = _ensure_res_path(str(args.get(&"scene_path", "")))
+	var _gate := MCPPaths.check(scene_path)
+	if not _gate.is_empty():
+		return _gate
 	var node_path: String = str(args.get(&"node_path", "."))
 	var property_name: String = str(args.get(&"property_name", ""))
 	var value = args.get(&"value")
@@ -583,6 +587,9 @@ func _snap_position_to_grid(position: Vector3, grid: Vector3, axes: PackedString
 # =============================================================================
 func create_scene(args: Dictionary) -> Dictionary:
 	var scene_path: String = _ensure_res_path(str(args.get(&"scene_path", "")))
+	var _gate := MCPPaths.check(scene_path)
+	if not _gate.is_empty():
+		return _gate
 	var root_node_name: String = str(args.get(&"root_node_name", "Node"))
 	var root_node_type: String = str(args.get(&"root_node_type", ""))
 	var nodes: Array = args.get(&"nodes", [])
@@ -711,6 +718,9 @@ func _count_nodes(node: Node) -> int:
 # =============================================================================
 func read_scene(args: Dictionary) -> Dictionary:
 	var scene_path: String = _ensure_res_path(str(args.get(&"scene_path", "")))
+	var _gate := MCPPaths.check(scene_path)
+	if not _gate.is_empty():
+		return _gate
 	var include_properties: bool = args.get(&"include_properties", false)
 
 	if scene_path.strip_edges() == "res://":
@@ -755,6 +765,9 @@ func _build_node_structure(node: Node, include_props: bool, path: String = ".") 
 # =============================================================================
 func add_node(args: Dictionary) -> Dictionary:
 	var scene_path: String = _ensure_res_path(str(args.get(&"scene_path", "")))
+	var _gate := MCPPaths.check(scene_path)
+	if not _gate.is_empty():
+		return _gate
 	var node_name: String = str(args.get(&"node_name", ""))
 	var node_type: String = str(args.get(&"node_type", "Node"))
 	var parent_path: String = str(args.get(&"parent_path", "."))
@@ -833,6 +846,9 @@ func add_node(args: Dictionary) -> Dictionary:
 # =============================================================================
 func remove_node(args: Dictionary) -> Dictionary:
 	var scene_path: String = _ensure_res_path(str(args.get(&"scene_path", "")))
+	var _gate := MCPPaths.check(scene_path)
+	if not _gate.is_empty():
+		return _gate
 	var node_path: String = str(args.get(&"node_path", ""))
 
 	if scene_path.strip_edges() == "res://":
@@ -873,6 +889,9 @@ func modify_node_property(args: Dictionary) -> Dictionary:
 # =============================================================================
 func rename_node(args: Dictionary) -> Dictionary:
 	var scene_path: String = _ensure_res_path(str(args.get(&"scene_path", "")))
+	var _gate := MCPPaths.check(scene_path)
+	if not _gate.is_empty():
+		return _gate
 	var node_path: String = str(args.get(&"node_path", ""))
 	var new_name: String = str(args.get(&"new_name", ""))
 
@@ -908,6 +927,9 @@ func rename_node(args: Dictionary) -> Dictionary:
 # =============================================================================
 func move_node(args: Dictionary) -> Dictionary:
 	var scene_path: String = _ensure_res_path(str(args.get(&"scene_path", "")))
+	var _gate := MCPPaths.check(scene_path)
+	if not _gate.is_empty():
+		return _gate
 	var node_path: String = str(args.get(&"node_path", ""))
 	var new_parent_path: String = str(args.get(&"new_parent_path", "."))
 	var sibling_index: int = int(args.get(&"sibling_index", -1))
@@ -950,6 +972,9 @@ func move_node(args: Dictionary) -> Dictionary:
 # =============================================================================
 func duplicate_node(args: Dictionary) -> Dictionary:
 	var scene_path: String = _ensure_res_path(str(args.get(&"scene_path", "")))
+	var _gate := MCPPaths.check(scene_path)
+	if not _gate.is_empty():
+		return _gate
 	var node_path: String = str(args.get(&"node_path", ""))
 	var new_name: String = str(args.get(&"new_name", ""))
 
@@ -1010,6 +1035,9 @@ func _set_owner_recursive(node: Node, owner: Node) -> void:
 # =============================================================================
 func reorder_node(args: Dictionary) -> Dictionary:
 	var scene_path: String = _ensure_res_path(str(args.get(&"scene_path", "")))
+	var _gate := MCPPaths.check(scene_path)
+	if not _gate.is_empty():
+		return _gate
 	var node_path: String = str(args.get(&"node_path", ""))
 	var new_index: int = int(args.get(&"new_index", -1))
 
@@ -1056,8 +1084,15 @@ func reorder_node(args: Dictionary) -> Dictionary:
 # =============================================================================
 func attach_script(args: Dictionary) -> Dictionary:
 	var scene_path: String = _ensure_res_path(str(args.get(&"scene_path", "")))
+	var _gate := MCPPaths.check(scene_path)
+	if not _gate.is_empty():
+		return _gate
 	var node_path: String = str(args.get(&"node_path", "."))
 	var script_path: String = str(args.get(&"script_path", ""))
+	script_path = _ensure_res_path(script_path)
+	var _gate2 := MCPPaths.check(script_path)
+	if not _gate2.is_empty():
+		return _gate2
 
 	if scene_path.strip_edges() == "res://":
 		return {&"ok": false, &"error": "Missing 'scene_path'"}
@@ -1092,6 +1127,9 @@ func attach_script(args: Dictionary) -> Dictionary:
 # =============================================================================
 func detach_script(args: Dictionary) -> Dictionary:
 	var scene_path: String = _ensure_res_path(str(args.get(&"scene_path", "")))
+	var _gate := MCPPaths.check(scene_path)
+	if not _gate.is_empty():
+		return _gate
 	var node_path: String = str(args.get(&"node_path", "."))
 
 	if scene_path.strip_edges() == "res://":
@@ -1120,6 +1158,9 @@ func detach_script(args: Dictionary) -> Dictionary:
 # =============================================================================
 func set_collision_shape(args: Dictionary) -> Dictionary:
 	var scene_path: String = _ensure_res_path(str(args.get(&"scene_path", "")))
+	var _gate := MCPPaths.check(scene_path)
+	if not _gate.is_empty():
+		return _gate
 	var node_path: String = str(args.get(&"node_path", "."))
 	var shape_type: String = str(args.get(&"shape_type", ""))
 	var shape_params: Dictionary = args.get(&"shape_params", {})
@@ -1166,6 +1207,9 @@ func set_collision_shape(args: Dictionary) -> Dictionary:
 # =============================================================================
 func set_sprite_texture(args: Dictionary) -> Dictionary:
 	var scene_path: String = _ensure_res_path(str(args.get(&"scene_path", "")))
+	var _gate := MCPPaths.check(scene_path)
+	if not _gate.is_empty():
+		return _gate
 	var node_path: String = str(args.get(&"node_path", "."))
 	var texture_type: String = str(args.get(&"texture_type", ""))
 	var texture_params: Dictionary = args.get(&"texture_params", {})
@@ -1264,7 +1308,13 @@ func set_sprite_texture(args: Dictionary) -> Dictionary:
 # =============================================================================
 func instance_scene(args: Dictionary) -> Dictionary:
 	var scene_path: String = _ensure_res_path(str(args.get(&"scene_path", "")))
+	var _gate := MCPPaths.check(scene_path)
+	if not _gate.is_empty():
+		return _gate
 	var instance_path: String = _ensure_res_path(str(args.get(&"instance_path", "")))
+	var _gate := MCPPaths.check(instance_path)
+	if not _gate.is_empty():
+		return _gate
 	var node_name: String = str(args.get(&"node_name", ""))
 	var parent_path: String = str(args.get(&"parent_path", "."))
 	var properties: Dictionary = args.get(&"properties", {})
@@ -1319,6 +1369,9 @@ func instance_scene(args: Dictionary) -> Dictionary:
 # =============================================================================
 func set_mesh(args: Dictionary) -> Dictionary:
 	var scene_path: String = _ensure_res_path(str(args.get(&"scene_path", "")))
+	var _gate := MCPPaths.check(scene_path)
+	if not _gate.is_empty():
+		return _gate
 	var node_path: String = str(args.get(&"node_path", "."))
 	var mesh_type: String = str(args.get(&"mesh_type", ""))
 	var mesh_params: Dictionary = args.get(&"mesh_params", {})
@@ -1416,6 +1469,9 @@ func set_mesh(args: Dictionary) -> Dictionary:
 # =============================================================================
 func set_material(args: Dictionary) -> Dictionary:
 	var scene_path: String = _ensure_res_path(str(args.get(&"scene_path", "")))
+	var _gate := MCPPaths.check(scene_path)
+	if not _gate.is_empty():
+		return _gate
 	var node_path: String = str(args.get(&"node_path", "."))
 	var material_type: String = str(args.get(&"material_type", ""))
 	var material_params: Dictionary = args.get(&"material_params", {})
@@ -1503,6 +1559,9 @@ func set_material(args: Dictionary) -> Dictionary:
 # =============================================================================
 func get_node_spatial_info(args: Dictionary) -> Dictionary:
 	var scene_path: String = _ensure_res_path(str(args.get(&"scene_path", "")))
+	var _gate := MCPPaths.check(scene_path)
+	if not _gate.is_empty():
+		return _gate
 	var node_path: String = str(args.get(&"node_path", "."))
 	var include_bounds: bool = bool(args.get(&"include_bounds", true))
 
@@ -1569,6 +1628,9 @@ func get_node_spatial_info(args: Dictionary) -> Dictionary:
 # =============================================================================
 func measure_node_distance(args: Dictionary) -> Dictionary:
 	var scene_path: String = _ensure_res_path(str(args.get(&"scene_path", "")))
+	var _gate := MCPPaths.check(scene_path)
+	if not _gate.is_empty():
+		return _gate
 	var from_node_path: String = str(args.get(&"from_node_path", ""))
 	var to_node_path: String = str(args.get(&"to_node_path", ""))
 
@@ -1625,6 +1687,9 @@ func measure_node_distance(args: Dictionary) -> Dictionary:
 # =============================================================================
 func snap_node_to_grid(args: Dictionary) -> Dictionary:
 	var scene_path: String = _ensure_res_path(str(args.get(&"scene_path", "")))
+	var _gate := MCPPaths.check(scene_path)
+	if not _gate.is_empty():
+		return _gate
 	var node_path: String = str(args.get(&"node_path", "."))
 	var space: String = str(args.get(&"space", "global")).to_lower()
 	var axes: PackedStringArray = _normalized_axes(args.get(&"axes", ["x", "y", "z"]))
@@ -1692,6 +1757,9 @@ func snap_node_to_grid(args: Dictionary) -> Dictionary:
 # =============================================================================
 func snap_node_to_ground(args: Dictionary) -> Dictionary:
 	var scene_path: String = _ensure_res_path(str(args.get(&"scene_path", "")))
+	var _gate := MCPPaths.check(scene_path)
+	if not _gate.is_empty():
+		return _gate
 	var node_path: String = str(args.get(&"node_path", "."))
 	var ground_height: float = float(args.get(&"ground_height", 0.0))
 	var use_bounds: bool = bool(args.get(&"use_bounds", true))
@@ -1730,6 +1798,9 @@ func snap_node_to_ground(args: Dictionary) -> Dictionary:
 # =============================================================================
 func place_node_relative(args: Dictionary) -> Dictionary:
 	var scene_path: String = _ensure_res_path(str(args.get(&"scene_path", "")))
+	var _gate := MCPPaths.check(scene_path)
+	if not _gate.is_empty():
+		return _gate
 	var node_path: String = str(args.get(&"node_path", ""))
 	var target_node_path: String = str(args.get(&"target_node_path", ""))
 	var relation: String = str(args.get(&"relation", "on_top_of")).to_lower()
@@ -1883,6 +1954,9 @@ func place_node_relative(args: Dictionary) -> Dictionary:
 func get_scene_hierarchy(args: Dictionary) -> Dictionary:
 	"""Get the full scene hierarchy with node information for the visualizer."""
 	var scene_path: String = _ensure_res_path(str(args.get(&"scene_path", "")))
+	var _gate := MCPPaths.check(scene_path)
+	if not _gate.is_empty():
+		return _gate
 
 	if scene_path.strip_edges() == "res://":
 		return {&"ok": false, &"error": "Missing 'scene_path'"}
@@ -1928,6 +2002,9 @@ func _build_hierarchy_recursive(node: Node, path: String) -> Dictionary:
 func get_scene_node_properties(args: Dictionary) -> Dictionary:
 	"""Get all properties of a specific node in a scene with their current values."""
 	var scene_path: String = _ensure_res_path(str(args.get(&"scene_path", "")))
+	var _gate := MCPPaths.check(scene_path)
+	if not _gate.is_empty():
+		return _gate
 	var node_path: String = str(args.get(&"node_path", "."))
 
 	if scene_path.strip_edges() == "res://":
@@ -2015,6 +2092,9 @@ func set_scene_node_property(args: Dictionary) -> Dictionary:
 ## reported as failures. The scene is only saved if at least one applied.
 func set_node_properties(args: Dictionary) -> Dictionary:
 	var scene_path: String = _ensure_res_path(str(args.get(&"scene_path", "")))
+	var _gate := MCPPaths.check(scene_path)
+	if not _gate.is_empty():
+		return _gate
 	var node_path: String = str(args.get(&"node_path", "."))
 	var properties: Dictionary = args.get(&"properties", {})
 
@@ -2097,6 +2177,9 @@ func set_node_properties(args: Dictionary) -> Dictionary:
 ##   "remove"  — listed groups removed; others untouched
 func set_node_groups(args: Dictionary) -> Dictionary:
 	var scene_path: String = _ensure_res_path(str(args.get(&"scene_path", "")))
+	var _gate := MCPPaths.check(scene_path)
+	if not _gate.is_empty():
+		return _gate
 	var node_path: String = str(args.get(&"node_path", "."))
 	var groups_arg: Array = args.get(&"groups", [])
 	var mode: String = str(args.get(&"mode", "replace"))
@@ -2162,6 +2245,9 @@ func set_node_groups(args: Dictionary) -> Dictionary:
 
 func get_node_groups(args: Dictionary) -> Dictionary:
 	var scene_path: String = _ensure_res_path(str(args.get(&"scene_path", "")))
+	var _gate := MCPPaths.check(scene_path)
+	if not _gate.is_empty():
+		return _gate
 	var node_path: String = str(args.get(&"node_path", "."))
 
 	if scene_path.strip_edges() == "res://":
@@ -2189,6 +2275,9 @@ func get_node_groups(args: Dictionary) -> Dictionary:
 
 func find_nodes_in_group(args: Dictionary) -> Dictionary:
 	var scene_path: String = _ensure_res_path(str(args.get(&"scene_path", "")))
+	var _gate := MCPPaths.check(scene_path)
+	if not _gate.is_empty():
+		return _gate
 	var group_name: String = str(args.get(&"group", ""))
 
 	if scene_path.strip_edges() == "res://":
@@ -2232,8 +2321,15 @@ func _collect_nodes_in_group(node: Node, group_name: String, path: String, match
 ##   "material/albedo_color_texture" → texture sub-resource of the node's material
 func set_resource_property(args: Dictionary) -> Dictionary:
 	var scene_path: String = _ensure_res_path(str(args.get(&"scene_path", "")))
+	var _gate := MCPPaths.check(scene_path)
+	if not _gate.is_empty():
+		return _gate
 	var node_path: String = str(args.get(&"node_path", "."))
 	var resource_path: String = str(args.get(&"resource_path", ""))
+	resource_path = _ensure_res_path(resource_path)
+	var _gate2 := MCPPaths.check(resource_path)
+	if not _gate2.is_empty():
+		return _gate2
 	var property_name: String = str(args.get(&"property_name", ""))
 	var value = args.get(&"value")
 
@@ -2301,9 +2397,19 @@ func set_resource_property(args: Dictionary) -> Dictionary:
 ## via this tool persist to that file.
 func save_resource_to_file(args: Dictionary) -> Dictionary:
 	var scene_path: String = _ensure_res_path(str(args.get(&"scene_path", "")))
+	var _gate := MCPPaths.check(scene_path)
+	if not _gate.is_empty():
+		return _gate
 	var node_path: String = str(args.get(&"node_path", "."))
 	var resource_path: String = str(args.get(&"resource_path", ""))
+	resource_path = _ensure_res_path(resource_path)
+	var _gate2 := MCPPaths.check(resource_path)
+	if not _gate2.is_empty():
+		return _gate2
 	var save_to: String = _ensure_res_path(str(args.get(&"save_to", "")))
+	var _gate := MCPPaths.check(save_to)
+	if not _gate.is_empty():
+		return _gate
 
 	if scene_path.strip_edges() == "res://":
 		return {&"ok": false, &"error": "Missing 'scene_path'"}
@@ -2388,7 +2494,13 @@ func get_resource_info(args: Dictionary) -> Dictionary:
 	#      lives ON a node inside a scene file (no need to save it as .tres
 	#      first). Supports either or both of these arg shapes.
 	var path: String = _ensure_res_path(str(args.get(&"path", "")))
+	var _gate := MCPPaths.check(path)
+	if not _gate.is_empty():
+		return _gate
 	var scene_path: String = _ensure_res_path(str(args.get(&"scene_path", "")))
+	var _gate := MCPPaths.check(scene_path)
+	if not _gate.is_empty():
+		return _gate
 	var node_path: String = str(args.get(&"node_path", ""))
 	var resource_property: String = str(args.get(&"resource_property", ""))
 
@@ -2508,6 +2620,9 @@ func list_signal_connections(args: Dictionary) -> Dictionary:
 		return {&"ok": false, &"error": "list_signal_connections source='%s' is handled by the runtime helper. Ensure your game is running and try again." % source}
 
 	var scene_path: String = _ensure_res_path(str(args.get(&"scene_path", "")))
+	var _gate := MCPPaths.check(scene_path)
+	if not _gate.is_empty():
+		return _gate
 	var node_path: String = str(args.get(&"node_path", "."))
 	var include_outgoing: bool = bool(args.get(&"include_outgoing", true))
 	var include_incoming: bool = bool(args.get(&"include_incoming", true))
@@ -2584,6 +2699,9 @@ func _node_path_str(node: Node, root: Node) -> String:
 ## Add a signal connection between two nodes in a scene file.
 func connect_signal(args: Dictionary) -> Dictionary:
 	var scene_path: String = _ensure_res_path(str(args.get(&"scene_path", "")))
+	var _gate := MCPPaths.check(scene_path)
+	if not _gate.is_empty():
+		return _gate
 	var from_node: String = str(args.get(&"from_node", ""))
 	var signal_name: String = str(args.get(&"signal", ""))
 	var to_node: String = str(args.get(&"to_node", ""))
@@ -2679,6 +2797,9 @@ func _signal_is_persisted(scene_path: String, from_node: String, signal_name: St
 
 func disconnect_signal(args: Dictionary) -> Dictionary:
 	var scene_path: String = _ensure_res_path(str(args.get(&"scene_path", "")))
+	var _gate := MCPPaths.check(scene_path)
+	if not _gate.is_empty():
+		return _gate
 	var from_node: String = str(args.get(&"from_node", ""))
 	var signal_name: String = str(args.get(&"signal", ""))
 	var to_node: String = str(args.get(&"to_node", ""))

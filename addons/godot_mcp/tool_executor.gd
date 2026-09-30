@@ -212,6 +212,9 @@ func set_mcp_client(client: Object) -> void:
 ## GDScript 4 (see godotengine/godot#50894, #103887). Keep this set small.
 const _COROUTINE_TOOLS := {
 	"wait": true,
+	# Blocks until EditorFileSystem.is_scanning() clears, so the agent gets a
+	# real acknowledgement instead of polling.
+	"rescan_filesystem": true,
 }
 
 func execute_tool(tool_name: String, args: Dictionary) -> Dictionary:
@@ -250,6 +253,8 @@ func execute_tool(tool_name: String, args: Dictionary) -> Dictionary:
 		match tool_name:
 			"wait":
 				result = await node.wait(args)
+			"rescan_filesystem":
+				result = await node.rescan_filesystem(args)
 			_:
 				push_error("[MCP] Coroutine tool '%s' has no direct dispatch case." % tool_name)
 				result = {&"ok": false, &"error": "Coroutine tool '%s' missing dispatch case" % tool_name}

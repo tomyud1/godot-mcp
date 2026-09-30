@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Cancel superseded runs on the same ref — a pushed branch usually supersedes
+# its own earlier commits, and the Godot job is the slow one.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  server:
+    name: Server (typecheck, build, tests)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mcp-server
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: mcp-server/package-lock.json
+
+      - run: npm ci
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Build
+        run: npm run build
+
+      - name: Tool surface parity (registry vs Godot handlers vs guides)
+        run: npm run check:parity
+
+      - name: Generated docs are up to date
+        # docs/tool-catalog.md is generated from the tool definitions. If it
+        # drifts, the committed copy no longer describes the shipped tools.
+        run: |
+          if ! git diff --quiet -- ../docs/tool-catalog.md; then
+            echo "::error::docs/tool-catalog.md is stale. Run 'npm run build' in mcp-server and commit the result."
+            git --no-pager diff -- ../docs/tool-catalog.md | head -40
+            exit 1
+          fi
+
+      - name: Tests
+        run: npx vitest run
+
+  godot-addon:
+    name: Addon (headless GDScript self-tests)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # 4.3 is the version declared in project.godot, so CI verifies the
+      # minimum supported engine rather than whatever is newest locally.
+      - uses: chickensoft-games/setup-godot@v2
+        with:
+          version: 4.3.0
+          use-dotnet: false
+
+      # Import once so class_name registration and .godot/ exist; the first
+      # run of a fresh project is much slower without it.
+      - name: Import project
+        run: godot --headless --import
+
+      - name: conf() confinement rules
+        run: |
+          godot --headless --script addons/godot_mcp/utils/test_paths.gd
+      - name: Tools actually gate their paths
+        run: |
+          godot --headless --script addons/godot_mcp/utils/test_tool_paths.gd
+      - name: Structured probes and assertions
+        run: |
+          godot --headless --script addons/godot_mcp/runtime/test_probes.gd

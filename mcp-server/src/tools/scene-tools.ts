@@ -119,7 +119,12 @@ export const sceneTools: ToolDefinition[] = [
   },
   {
     name: 'modify_node_property',
-    description: 'Modify a single property on a node in a .tscn scene file. For multiple properties at once use set_node_properties. ALWAYS use a tool to modify .tscn files \u2014 NEVER edit them as text. To attach or change a script, use attach_script (NOT modify_node_property with property="script") \u2014 modify_node_property only rewrites the .tscn on disk, leaving the editor\'s in-memory node without the script, which makes connect_signal fail.',
+    // Identical implementation to set_scene_node_property (both delegate to
+    // _set_scene_node_property_internal). Usage logs showed the agent picking
+    // between the two names with no behavioural difference to learn, so the
+    // canonical name is advertised and this stays as a working alias.
+    hidden: true,
+    description: 'DEPRECATED ALIAS of set_scene_node_property — identical behaviour, kept so existing callers keep working. Prefer set_scene_node_property. For multiple properties at once use set_node_properties. ALWAYS use a tool to modify .tscn files \u2014 NEVER edit them as text. To attach or change a script, use attach_script (NOT a property named "script") \u2014 this only rewrites the .tscn on disk, leaving the editor\'s in-memory node without the script, which makes connect_signal fail.',
     inputSchema: {
       type: 'object',
       properties: {

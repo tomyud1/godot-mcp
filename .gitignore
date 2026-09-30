@@ -4,6 +4,10 @@ node_modules/
 # Build output
 dist/
 
+# Godot self-test harness (see project.godot)
+.godot/
+*.translation
+
 # OS files
 .DS_Store
 .DS_Store?

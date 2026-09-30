@@ -36,3 +36,11 @@ export const allTools: ToolDefinition[] = [
 export function toolExists(toolName: string): boolean {
   return allTools.some(t => t.name === toolName);
 }
+
+/**
+ * The tools advertised via `tools/list`.
+ *
+ * Hidden tools stay dispatchable (so nothing that used them breaks) but are
+ * omitted here, which is where the model's context cost actually comes from.
+ */
+export const advertisedTools: ToolDefinition[] = allTools.filter(t => !t.hidden);

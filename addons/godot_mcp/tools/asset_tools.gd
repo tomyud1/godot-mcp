@@ -50,6 +50,12 @@ func generate_2d_asset(args: Dictionary) -> Dictionary:
 	if not save_path.ends_with("/"):
 		save_path += "/"
 
+	# The PNG is written to disk and the directory is created recursively, so
+	# a traversing save_path would both write and mkdir outside the project.
+	var _gate := MCPPaths.check(save_path)
+	if not _gate.is_empty():
+		return _gate
+
 	if not DirAccess.dir_exists_absolute(save_path):
 		var mkerr := DirAccess.make_dir_recursive_absolute(save_path)
 		if mkerr != OK and not DirAccess.dir_exists_absolute(save_path):

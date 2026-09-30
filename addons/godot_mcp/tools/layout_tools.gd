@@ -238,6 +238,9 @@ func _detect_openings(walls: Array, line_merge_tolerance: float, min_opening_wid
 
 func summarize_scene_layout(args: Dictionary) -> Dictionary:
 	var scene_path: String = _context.ensure_res_path(str(args.get(&"scene_path", "")))
+	var _gate := MCPPaths.check(scene_path, false)
+	if not _gate.is_empty():
+		return _gate
 	var runtime: bool = bool(args.get(&"runtime", false))
 	var floor_height_threshold: float = float(args.get(&"floor_height_threshold", 0.75))
 	var wall_height_threshold: float = float(args.get(&"wall_height_threshold", 1.5))

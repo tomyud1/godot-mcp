@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach, vi } from 'vitest';
+import { describe, it, expect, afterEach, beforeAll, vi } from 'vitest';
 import { PrimaryHttpServer, type ToolExecutor } from '../primary-http.js';
 import {
   probeExistingServer,
@@ -8,6 +8,16 @@ import {
 } from '../proxy-client.js';
 
 const TEST_PORT = 16507;
+
+/**
+ * The proxy client reads the shared token from the environment (falling back
+ * to the on-disk token file). Setting it here keeps the tests off the real
+ * user's token file and makes the proxy and the server agree by construction.
+ */
+const TOKEN = 'test-token-0123456789';
+beforeAll(() => {
+  process.env.GODOT_MCP_TOKEN = TOKEN;
+});
 
 // ---------------------------------------------------------------------------
 // probeExistingServer
@@ -22,7 +32,7 @@ describe('probeExistingServer', () => {
   });
 
   it('returns alive:true when a primary server is running', async () => {
-    server = new PrimaryHttpServer(TEST_PORT, '0.4.1', noop, 0);
+    server = new PrimaryHttpServer(TEST_PORT, '0.4.1', noop, 0, TOKEN);
     await server.start();
 
     const probe = await probeExistingServer(TEST_PORT);
@@ -51,7 +61,7 @@ describe('proxyToolCall', () => {
     const executor: ToolExecutor = vi.fn(async () => ({
       content: [{ type: 'text', text: '{"ok":true}' }],
     }));
-    server = new PrimaryHttpServer(TEST_PORT, '0.4.1', executor, 0);
+    server = new PrimaryHttpServer(TEST_PORT, '0.4.1', executor, 0, TOKEN);
     await server.start();
 
     const result = await proxyToolCall(TEST_PORT, 'read_file', { path: '/x.gd' }, 5000);
@@ -77,7 +87,7 @@ describe('registerProxyClient / unregisterProxyClient', () => {
   });
 
   it('register increments and unregister decrements the count', async () => {
-    server = new PrimaryHttpServer(TEST_PORT, '0.4.1', noop, 0);
+    server = new PrimaryHttpServer(TEST_PORT, '0.4.1', noop, 0, TOKEN);
     await server.start();
 
     await registerProxyClient(TEST_PORT);

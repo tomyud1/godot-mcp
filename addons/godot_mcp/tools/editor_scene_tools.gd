@@ -47,6 +47,9 @@ func _method_return_type_name(value: Variant) -> String:
 
 func call_node_method(args: Dictionary) -> Dictionary:
 	var scene_path := _context.ensure_res_path(str(args.get(&"scene_path", "")).strip_edges())
+	var _gate := MCPPaths.check(scene_path, false)
+	if not _gate.is_empty():
+		return _gate
 	var node_path := str(args.get(&"node_path", ".")).strip_edges()
 	var method_name := str(args.get(&"method_name", "")).strip_edges()
 	var save_scene_after := bool(args.get(&"save_scene_after", true))

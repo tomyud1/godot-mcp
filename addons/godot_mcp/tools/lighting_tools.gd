@@ -452,6 +452,9 @@ func _build_light_info(root: Node, light: Light3D, scene_path: String, inspectio
 
 func get_light_info(args: Dictionary) -> Dictionary:
 	var scene_path: String = _ensure_res_path(str(args.get(&"scene_path", "")))
+	var _gate := MCPPaths.check(scene_path, false)
+	if not _gate.is_empty():
+		return _gate
 	var node_path: String = str(args.get(&"node_path", ""))
 	var runtime := bool(args.get(&"runtime", false))
 
@@ -478,6 +481,9 @@ func get_light_info(args: Dictionary) -> Dictionary:
 
 func set_sun_light(args: Dictionary) -> Dictionary:
 	var scene_path: String = _ensure_res_path(str(args.get(&"scene_path", "")))
+	var _gate := MCPPaths.check(scene_path, false)
+	if not _gate.is_empty():
+		return _gate
 	var node_path: String = str(args.get(&"node_path", ""))
 	var allow_below_horizon := bool(args.get(&"allow_below_horizon", false))
 
@@ -560,6 +566,9 @@ func set_sun_light(args: Dictionary) -> Dictionary:
 
 func validate_scene_lighting(args: Dictionary) -> Dictionary:
 	var scene_path: String = _ensure_res_path(str(args.get(&"scene_path", "")))
+	var _gate := MCPPaths.check(scene_path, false)
+	if not _gate.is_empty():
+		return _gate
 	var runtime := bool(args.get(&"runtime", false))
 
 	if scene_path.strip_edges() == "res://":

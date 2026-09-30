@@ -13,7 +13,11 @@ export const editorViewTools: ToolDefinition[] = [
         },
         output_path: {
           type: 'string',
-          description: 'Optional absolute path, res:// path, or user:// path for the PNG file. Defaults to user://mcp_screenshots/editor_viewport_<timestamp>.png'
+          description: 'Optional res:// path, user:// path, or relative path (mapped to user://) for the PNG file. Defaults to user://mcp_screenshots/editor_viewport_<timestamp>.png. Absolute paths outside the project are rejected unless allow_absolute_output=true.'
+        },
+        allow_absolute_output: {
+          type: 'boolean',
+          description: 'Permit writing the PNG to an absolute path outside the project. Off by default because the tool also creates the containing directory. Only set this when the user explicitly asked for a path outside the project.'
         },
         force_draw: {
           type: 'boolean',

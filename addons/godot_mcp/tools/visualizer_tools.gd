@@ -12,6 +12,16 @@ func set_editor_plugin(plugin: EditorPlugin) -> void:
 func set_scene_tools_ref(scene_tools: Node) -> void:
 	_scene_tools_ref = scene_tools
 
+## Normalize an agent-supplied script path and confine it to the project.
+## These commands rewrite .gd files on disk, so an unchecked path would let
+## anything steering the agent write outside the project.
+func _gate_script_path(path: String) -> Dictionary:
+	var candidate: String = path
+	if not candidate.begins_with("res://"):
+		candidate = "res://" + candidate
+	var gate := MCPPaths.confine(candidate, false)
+	return {&"ok": gate.ok, &"path": gate.path, &"error": gate.error}
+
 func map_project(args: Dictionary) -> Dictionary:
 	"""Crawl the entire project and build a structural map of all scripts."""
 	var root_path: String = str(args.get(&"root", "res://"))
@@ -505,6 +515,11 @@ func _internal_create_script_file(args: Dictionary) -> Dictionary:
 	if not script_path.begins_with("res://"):
 		script_path = "res://" + script_path
 	
+	var gate := _gate_script_path(script_path)
+	if not gate[&"ok"]:
+		return {&"ok": false, &"error": gate[&"error"], &"path": script_path}
+	script_path = gate[&"path"]
+	
 	if not script_path.ends_with(".gd"):
 		script_path += ".gd"
 	
@@ -552,6 +567,11 @@ func _internal_modify_variable(args: Dictionary) -> Dictionary:
 	
 	if script_path.is_empty():
 		return {&"ok": false, &"error": "No script path provided"}
+	
+	var gate := _gate_script_path(script_path)
+	if not gate[&"ok"]:
+		return {&"ok": false, &"error": gate[&"error"], &"path": script_path}
+	script_path = gate[&"path"]
 	
 	var file := FileAccess.open(script_path, FileAccess.READ)
 	if file == null:
@@ -616,6 +636,11 @@ func _internal_modify_signal(args: Dictionary) -> Dictionary:
 	if script_path.is_empty():
 		return {&"ok": false, &"error": "No script path provided"}
 	
+	var gate := _gate_script_path(script_path)
+	if not gate[&"ok"]:
+		return {&"ok": false, &"error": gate[&"error"], &"path": script_path}
+	script_path = gate[&"path"]
+	
 	var file := FileAccess.open(script_path, FileAccess.READ)
 	if file == null:
 		return {&"ok": false, &"error": "Cannot open file: " + script_path}
@@ -675,6 +700,11 @@ func _internal_modify_function(args: Dictionary) -> Dictionary:
 	
 	if script_path.is_empty() or func_name.is_empty():
 		return {&"ok": false, &"error": "Missing path or function name"}
+	
+	var gate := _gate_script_path(script_path)
+	if not gate[&"ok"]:
+		return {&"ok": false, &"error": gate[&"error"], &"path": script_path}
+	script_path = gate[&"path"]
 	
 	var file := FileAccess.open(script_path, FileAccess.READ)
 	if file == null:
@@ -741,6 +771,11 @@ func _internal_modify_function_delete(args: Dictionary) -> Dictionary:
 	
 	if script_path.is_empty() or func_name.is_empty():
 		return {&"ok": false, &"error": "Missing path or function name"}
+	
+	var gate := _gate_script_path(script_path)
+	if not gate[&"ok"]:
+		return {&"ok": false, &"error": gate[&"error"], &"path": script_path}
+	script_path = gate[&"path"]
 	
 	var file := FileAccess.open(script_path, FileAccess.READ)
 	if file == null:

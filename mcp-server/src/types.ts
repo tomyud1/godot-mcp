@@ -2,6 +2,67 @@
  * Type definitions for the Godot MCP Server
  */
 
+// ---------------------------------------------------------------------------
+// MCP content blocks
+// ---------------------------------------------------------------------------
+
+export interface TextContentBlock {
+  type: 'text';
+  text: string;
+  [key: string]: unknown;
+}
+
+/**
+ * An inline image. Per the MCP tools spec this is the only form a model can
+ * actually perceive — base64 inside a JSON string is just text to it.
+ */
+export interface ImageContentBlock {
+  type: 'image';
+  /** base64-encoded image bytes */
+  data: string;
+  mimeType: string;
+  [key: string]: unknown;
+}
+
+export type ContentBlock = TextContentBlock | ImageContentBlock;
+
+/** A tool result as it travels over the wire. */
+export interface ToolCallResult {
+  content: ContentBlock[];
+  /**
+   * Machine-readable form of the same result, per the MCP tools spec. Clients
+   * that understand it can consume fields without parsing the text block.
+   */
+  structuredContent?: Record<string, unknown>;
+  isError?: boolean;
+}
+
+/**
+ * Behavioural hints for clients, per the MCP tools specification.
+ *
+ * Clients use these to decide whether to auto-approve a call, warn the user,
+ * or run it without a confirmation prompt. `readOnlyHint` means the tool does
+ * not modify the project; `destructiveHint` means it may delete or overwrite
+ * in a way that is not trivially reversible; `idempotentHint` means repeating
+ * the call with identical arguments has no additional effect.
+ *
+ * These are hints, not guarantees — clients are told to treat annotations from
+ * untrusted servers as advisory. They are still worth getting right: they are
+ * the only machine-readable signal an agent has about blast radius.
+ */
+export interface ToolAnnotations {
+  /** Human-readable name for UIs that show a title alongside the tool name. */
+  title?: string;
+  readOnlyHint?: boolean;
+  destructiveHint?: boolean;
+  idempotentHint?: boolean;
+  /**
+   * True when the tool interacts with external entities beyond the project
+   * (a filesystem outside res://, the network, another process).
+   */
+  openWorldHint?: boolean;
+}
+
 // Tool definition for MCP
 export interface ToolDefinition {
   name: string;
@@ -11,6 +72,22 @@ export interface ToolDefinition {
     properties: Record<string, PropertySchema>;
     required?: string[];
   };
+  annotations?: ToolAnnotations;
+  /**
+   * Dispatchable but not advertised in `tools/list`.
+   *
+   * Used for duplicate spellings of a tool that already has a canonical name.
+   * Keeping them callable means existing agents and habits keep working, while
+   * the model no longer has to choose between two names that do exactly the
+   * same thing — and we stop paying context for the ambiguity.
+   */
+  hidden?: boolean;
+  /**
+   * Per-tool override of the derived annotation set. Used for tools whose
+   * name prefix would otherwise give the wrong answer (e.g. a `validate_`
+   * tool that writes, or a `get_` tool with side effects).
+   */
+  annotationOverrides?: Partial<ToolAnnotations>;
 }
 
 export interface PropertySchema {

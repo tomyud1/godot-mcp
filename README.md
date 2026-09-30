@@ -122,6 +122,38 @@ AI cannot create 100% of a game by itself — it struggles with complex UI layou
 
 ---
 
+## Working with it: ask for numbers, not pixels
+
+If you're driving this with an agent, the most useful habit is **measuring
+before looking**. A screenshot cannot show whether collision worked, whether
+the frame rate held, or whether two UI panels overlap — and a full-resolution
+frame is expensive in context.
+
+| Instead of a screenshot, use | To answer |
+|---|---|
+| `probe_ui` | Where every on-screen Control is, exactly, and which ones overlap |
+| `probe_camera` | Whether a Node3D is actually in shot, and how far away it is |
+| `assert_runtime` | "Did pressing jump actually move the player?" as a pass/fail with evidence |
+| `get_runtime_log` / `get_errors` | What actually happened, in words |
+
+These return small JSON, work for agents that can't see images, and give exact
+values rather than a picture you'd have to squint at.
+
+`take_screenshot` is still the right call for art, colour, composition, and
+animation. It always saves to disk and returns the path; add `return: "image"`
+to also get the frame inline as a real image the model can see. Frames are
+downscaled to 1568px on the long edge (where vision models clamp anyway) and
+oversized PNGs are refused with their path instead of being inlined.
+
+## Before you run the game
+
+`rescan_filesystem` blocks until Godot has finished importing, so **one call is
+enough** — it returns `synchronized: true` when your new files are visible to
+`run_scene`. It used to return immediately and tell you to retry, which is why
+agents used to hammer it dozens of times per session.
+
+---
+
 ## Architecture
 
 ```
@@ -147,6 +179,79 @@ AI cannot create 100% of a game by itself — it struggles with complex UI layou
 - **Single connection** — one Godot instance at a time
 - **No undo** — changes save directly (use version control)
 - **AI is still limited in Godot knowledge** — it can't create 100% of the game alone, but it can help debug, write scripts, and tag along for the journey
+
+---
+
+## Security
+
+The server listens on three local ports (6505 editor bridge, 6506 proxy API,
+6510 visualizer). Any of them can drive the editor, so each is restricted:
+
+| Surface | Protection |
+|---------|------------|
+| Editor bridge (6505) | Rejects handshakes carrying an `Origin` header. Browsers always send one; Godot's `WebSocketPeer` never does — so a web page cannot drive your editor. No addon update needed. |
+| Proxy API (6506) | Requires `Authorization: Bearer <token>`. `/health` stays open so other instances can discover the primary. |
+| Visualizer (6510) | Per-session token in the page URL, re-checked on the WebSocket upgrade. Page loads are restricted to loopback origins. |
+
+The token comes from `GODOT_MCP_TOKEN` if set, otherwise a `0600` file at
+`~/.godot-mcp/auth-token` created on first run. All instances share it, so
+multi-client setups work unchanged. If neither a token nor a writable home
+directory is available the server **refuses to start** rather than run open.
+
+Set your own token in CI or containers:
+
+```bash
+export GODOT_MCP_TOKEN="$(openssl rand -hex 32)"
+```
+
+Agent-supplied file paths are confined to `res://` (and `user://` where it
+makes sense); `..` traversal and absolute paths outside the project are
+rejected across every tool that takes a path. This is lexical — it does not
+resolve symlinks, so a symlink you placed inside the project can still point
+outside it.
+
+Screenshots (`take_editor_viewport_screenshot`) accept `res://`, `user://`, and
+relative paths by default. Absolute paths require an explicit
+`allow_absolute_output: true`, because the tool creates the output directory as
+well as writing the file.
+
+`runtime_eval` executes arbitrary GDScript in the running game and requires an
+explicit `confirm: true`, as does `delete_file`.
+
+## Tests
+
+```bash
+cd mcp-server
+npm test              # server-side: auth, result shaping, annotations, parity
+npm run check:parity  # TS registry vs Godot handler table vs guides
+npm run verify        # build + parity + tests
+```
+
+The GDScript checks run headlessly. `project.godot` in the repo root exists
+solely to give them a project to run in — it is not a game:
+
+```bash
+godot --headless --import
+godot --headless --script addons/godot_mcp/utils/test_paths.gd        # confine() rules
+godot --headless --script addons/godot_mcp/utils/test_tool_paths.gd   # tools actually gate
+godot --headless --script addons/godot_mcp/runtime/test_probes.gd     # probes and assertions
+```
+
+All of the above run in CI on every push.
+
+### A note on exit codes in the GDScript checks
+
+`godot --headless --script …` only reports failure through its **exit code**, so
+these scripts must call `quit(1)` on failure and must not let the loop quit some
+other way. Two things silently swallow it, and both have caused a green CI run
+on a red suite:
+
+- returning `true` from `_process` before `quit(code)` takes effect
+- a bare `quit()` with no argument, which resets the code to `0`
+
+If you add a check script, confirm it exits non-zero by deliberately breaking an
+assertion.
+
 
 ---
 

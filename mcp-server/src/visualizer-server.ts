@@ -10,7 +10,9 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { exec } from 'node:child_process';
 import { WebSocketServer, WebSocket } from 'ws';
+import type { IncomingMessage } from 'node:http';
 import type { GodotBridge } from './godot-bridge.js';
+import { createEphemeralToken, isAuthorized } from './auth.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -20,17 +22,47 @@ let godotBridge: GodotBridge | null = null;
 const DEFAULT_PORT = 6510;
 
 /**
+ * Per-session secret for this visualizer instance.
+ *
+ * The visualizer forwards commands that WRITE to .gd files on disk, so an
+ * unauthenticated local page must not be able to drive it. The token is
+ * minted per `serveVisualization()` call and carried in the page URL, which
+ * is also re-checked on the WebSocket upgrade (browsers cannot set headers
+ * on a WS handshake, hence the query parameter).
+ */
+let sessionToken: string | null = null;
+
+/**
  * Set the Godot bridge reference for internal commands.
  */
 export function setGodotBridge(bridge: GodotBridge): void {
   godotBridge = bridge;
 }
 
+export interface VisualizationOptions {
+  /**
+   * Override the per-session token. Defaults to a freshly minted secret.
+   * Intended for tests and for embedders that need to pre-share the token.
+   */
+  token?: string;
+  /** Set false to serve without launching a browser (tests, headless use). */
+  openBrowser?: boolean;
+  /**
+   * Override the HTML template location. Defaults to visualizer.html next to
+   * the compiled server. Tests point this at a fixture so they do not depend
+   * on a prior bundling step.
+   */
+  templatePath?: string;
+}
+
 /**
  * Serve the visualization and open the browser.
- * Returns the URL where it's hosted.
+ * Returns the base URL where it's hosted (without the session token).
  */
-export async function serveVisualization(projectData: unknown): Promise<string> {
+export async function serveVisualization(
+  projectData: unknown,
+  options: VisualizationOptions = {}
+): Promise<string> {
   // Close previous instance if running
   if (vizServer) {
     if (wss) {
@@ -42,13 +74,16 @@ export async function serveVisualization(projectData: unknown): Promise<string> 
   }
 
   // Read HTML template
-  const htmlPath = path.join(__dirname, 'visualizer.html');
+  const htmlPath = options.templatePath ?? path.join(__dirname, 'visualizer.html');
   let html: string;
   try {
     html = fs.readFileSync(htmlPath, 'utf-8');
   } catch {
     throw new Error(`Visualizer HTML template not found at ${htmlPath}`);
   }
+
+  // Mint a fresh secret for this session before the page references it.
+  sessionToken = options.token ?? createEphemeralToken();
 
   // Inject project data
   const dataJson = JSON.stringify(projectData);
@@ -59,7 +94,18 @@ export async function serveVisualization(projectData: unknown): Promise<string> 
 
   // Start server
   return new Promise((resolve, reject) => {
-    vizServer = http.createServer((_req, res) => {
+    // Only loopback origins may load the page. Combined with the session
+    // token this blocks a hostile site from reading the project map.
+    const expectedOrigin = `http://localhost:${port}`;
+
+    vizServer = http.createServer((req, res) => {
+      const origin = req.headers.origin;
+      if (typeof origin === 'string' && origin !== expectedOrigin && origin !== `http://127.0.0.1:${port}`) {
+        res.writeHead(403);
+        res.end('Forbidden');
+        return;
+      }
+
       res.writeHead(200, {
         'Content-Type': 'text/html; charset=utf-8',
         'Cache-Control': 'no-cache'
@@ -68,7 +114,14 @@ export async function serveVisualization(projectData: unknown): Promise<string> 
     });
 
     // Add WebSocket server for real-time edits
-    wss = new WebSocketServer({ server: vizServer });
+    wss = new WebSocketServer({
+      server: vizServer,
+      // The token travels as `?token=`; `path` matches on the pathname only,
+      // so the query string does not defeat routing.
+      path: '/ws',
+      verifyClient: (info: { req: IncomingMessage }) =>
+        authorizeVisualizerUpgrade(info.req.headers as Record<string, unknown>, info.req.url),
+    });
     wss.on('connection', handleVisualizerConnection);
 
     vizServer.on('error', (err) => {
@@ -76,10 +129,18 @@ export async function serveVisualization(projectData: unknown): Promise<string> 
     });
 
     vizServer.listen(port, () => {
-      const url = `http://localhost:${port}`;
-      console.error(`[visualizer] Serving at ${url}`);
-      openBrowser(url);
-      resolve(url);
+      const baseUrl = `http://localhost:${port}`;
+      const url = `${baseUrl}/?token=${sessionToken}`;
+      // Deliberately log the base URL, not `url`: stderr from an MCP server
+      // is routinely captured in client logs and transcripts, and this token
+      // authorizes writes to the project's .gd files.
+      console.error(`[visualizer] Serving at ${baseUrl}`);
+      if (options.openBrowser !== false) {
+        openBrowser(url);
+      }
+      // The URL carries the session token; the tool response should not echo
+      // it back to the agent or it lands in transcripts and logs.
+      resolve(baseUrl);
     });
   });
 }
@@ -141,6 +202,18 @@ async function handleInternalCommand(message: {
 }
 
 /**
+ * Authorization check for an incoming visualizer WebSocket upgrade.
+ *
+ * Exported so the rule can be tested directly. The token is accepted either as
+ * a query parameter (how the page carries it — browsers cannot set headers on
+ * a WebSocket handshake) or as a bearer header (handy for scripted clients).
+ */
+export function authorizeVisualizerUpgrade(headers: Record<string, unknown>, url?: string): boolean {
+  if (!sessionToken) return false;
+  return isAuthorized(headers, sessionToken, url);
+}
+
+/**
  * Stop the visualization server if running.
  */
 export function stopVisualizationServer(): void {
@@ -153,6 +226,7 @@ export function stopVisualizationServer(): void {
     vizServer = null;
     console.error('[visualizer] Server stopped');
   }
+  sessionToken = null;
 }
 
 function findPort(startPort: number): Promise<number> {

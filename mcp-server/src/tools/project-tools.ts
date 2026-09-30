@@ -235,12 +235,19 @@ export const projectTools: ToolDefinition[] = [
   },
   {
     name: 'take_screenshot',
-    description: 'Capture the current viewport of the running game and save it as a PNG. REQUIRES the game to be running with the MCPRuntime autoload connected (run_scene with wait_for_runtime=true first). Returns resource_path, absolute_path, width, height, and (optionally) base64_png. Default save location is res://addons/godot_mcp/cache/screenshots/.',
+    description: 'Capture the current viewport of the running game and save it as a PNG. REQUIRES the game to be running with the MCPRuntime autoload connected (run_scene with wait_for_runtime=true first). ALWAYS saves to disk and returns the path, dimensions and byte size. Set return="image" to additionally receive the frame as an inline image the model can actually look at — that is the only form a vision model can perceive; base64 inside a text field is unreadable. IMPORTANT: prefer query_runtime_node / get_ui_controls for anything numeric or behavioural — a still frame cannot show whether collision, timing or performance is correct, and one angle can mislead. Default save location is res://addons/godot_mcp/cache/screenshots/.',
     inputSchema: {
       type: 'object',
       properties: {
         save_to: { type: 'string', description: 'Optional res:// or user:// destination path. Defaults to res://addons/godot_mcp/cache/screenshots/screenshot_<ms>.png' },
-        return_base64: { type: 'boolean', description: 'Also include the PNG bytes inline as base64 (default: false). Useful when the agent has no filesystem access.' }
+        return: {
+          type: 'string',
+          enum: ['path', 'image'],
+          description: '"path" (default) returns only metadata and the saved location. "image" additionally returns the frame as an inline image content block so a multimodal model can see it. Costs roughly 1.5k tokens per frame, so use it to confirm a visual result, not to inspect state.'
+        },
+        return_base64: { type: 'boolean', description: 'Also include the raw base64 in the JSON body. Rarely needed — the server already converts it to a proper image block when return="image". Provided for clients that want the string itself.' },
+        max_dimension: { type: 'number', description: 'Downscale so the longest edge is at most this many pixels (default: 1568, which is where vision models clamp anyway). Set 0 to disable downscaling.' },
+        max_bytes: { type: 'number', description: 'Refuse to inline a PNG larger than this many bytes (default: 6291456 = 6 MiB). On overflow the file is still saved and the error reports its path.' }
       }
     }
   },
@@ -307,10 +314,12 @@ export const projectTools: ToolDefinition[] = [
   },
   {
     name: 'rescan_filesystem',
-    description: 'Trigger a full filesystem rescan in the Godot editor. Use after creating, deleting, or modifying files externally (e.g. from the terminal or another tool). The scan is asynchronous and returns immediately.',
+    description: 'Rescan the Godot project filesystem and WAIT until the editor has finished importing. Use after writing scripts or scenes outside the editor (terminal, another agent tool, edit_script on a brand-new file). This call is synchronous: when it returns with synchronized=true the new files are visible to run_scene, so ONE call is enough — do not repeat it in a loop. Returns {synchronized, was_already_scanning, waited_ms}. Note this does not help with direct edits to project.godot, which need an editor restart.',
     inputSchema: {
       type: 'object',
-      properties: {}
+      properties: {
+        max_wait_ms: { type: 'number', description: 'Give up waiting after this many milliseconds (default: 10000). On timeout the result has synchronized=false rather than pretending success.' }
+      }
     }
   },
   {

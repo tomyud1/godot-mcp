@@ -14,6 +14,8 @@
 
 import { WebSocketServer, WebSocket } from 'ws';
 import { randomUUID } from 'crypto';
+import type { IncomingMessage } from 'node:http';
+import { hasBrowserOrigin } from './auth.js';
 import type {
   ToolInvokeMessage,
   ToolResultMessage,
@@ -35,6 +37,9 @@ export const RUNTIME_ONLY_TOOLS = new Set<string>([
   'runtime_wait',
   'runtime_await_signal',
   'runtime_call_method',
+  'probe_ui',
+  'probe_camera',
+  'assert_runtime',
 ]);
 
 interface PendingRequest {
@@ -81,7 +86,28 @@ export class GodotBridge {
   start(): Promise<void> {
     return new Promise((resolve, reject) => {
       try {
-        this.wss = new WebSocketServer({ host: '127.0.0.1', port: this.port });
+        this.wss = new WebSocketServer({
+          host: '127.0.0.1',
+          port: this.port,
+          // Defence against cross-site WebSocket hijacking: a browser ALWAYS
+          // sends `Origin` on a handshake, while Godot's WebSocketPeer NEVER
+          // does. Rejecting browser-origin handshakes stops any web page the
+          // user visits from driving the editor through this port, without
+          // requiring a coordinated change in the (separately released)
+          // AssetLib addon.
+          verifyClient: (info: { origin: string; req: IncomingMessage }) => {
+            const headers = info.req.headers as Record<string, unknown>;
+            if (hasBrowserOrigin(headers)) {
+              this.log(
+                'warn',
+                `Rejected WebSocket handshake with browser Origin "${info.origin}" — ` +
+                  'only the Godot editor plugin may connect to this port'
+              );
+              return false;
+            }
+            return true;
+          },
+        });
 
         this.wss.on('connection', (ws) => this.handleConnection(ws));
         this.wss.on('error', (error) => {
