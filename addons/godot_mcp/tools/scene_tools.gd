@@ -11,7 +11,11 @@ class_name SceneTools
 
 const VariantCodec = preload("res://addons/godot_mcp/utils/variant_codec.gd")
 
-const _SKIP_PROPS: Dictionary[String, bool] = {
+## Typed dictionary literals (`Dictionary[K, V]`) are a Godot 4.4 feature. On
+## 4.3 the parser reads the bracket as an index expression and fails with
+## "Only arrays can specify collection element types", which took the whole
+## addon down. Untyped, so it works on every 4.x.
+const _SKIP_PROPS: Dictionary = {
 	"script": true, "owner": true,
 	"unique_name_in_owner": true, "editor_description": true,
 }
