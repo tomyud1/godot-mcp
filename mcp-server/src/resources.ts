@@ -12,6 +12,7 @@
 import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import {
   ListResourcesRequestSchema,
+  ListResourceTemplatesRequestSchema,
   ReadResourceRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 
@@ -260,6 +261,15 @@ export function registerResources(server: Server): void {
     resources: GUIDES.map(({ uri, name, description, mimeType }) => ({
       uri, name, description, mimeType,
     })),
+  }));
+
+  // Declaring the `resources` capability obliges us to answer
+  // resources/templates/list. We have no templated resources, but omitting the
+  // handler makes strict clients (Codex, for one) probe it, get
+  // -32601 Method not found, and mark the whole server unhealthy — which is how
+  // a server with 86 perfectly working tools ends up displayed as "failed".
+  server.setRequestHandler(ListResourceTemplatesRequestSchema, async () => ({
+    resourceTemplates: [],
   }));
 
   server.setRequestHandler(ReadResourceRequestSchema, async (request) => {

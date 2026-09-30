@@ -46,6 +46,8 @@ const MAX_RESULT_BYTES = parseInt(process.env.GODOT_MCP_MAX_RESULT_BYTES || Stri
  */
 export type ImageMode = 'emit' | 'drop';
 
+export const withStructuredContentForTest = normalizeResult;
+
 export function normalizeResult(
   result: ToolCallResult,
   imageMode: ImageMode = 'drop'

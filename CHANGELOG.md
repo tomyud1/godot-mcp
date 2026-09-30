@@ -20,6 +20,9 @@
 - **Draining in-flight calls on shutdown** — a stdio close arriving while a forwarded call was in flight used to truncate the response; the proxy now waits (bounded by `GODOT_MCP_DRAIN_MS`) before exiting.
 - **The visualizer session token is no longer written to stderr.**
 
+### Fixed
+- **`resources/templates/list` returned `-32601`, which made strict clients report the server as failed.** We advertise the `resources` capability, so that probe is legitimate; Codex calls it on startup, got Method not found, and displayed the server as "failed" despite all 86 tools loading. It now returns an empty template list, as a spec-compliant server with no templated resources should.
+
 ### Security
 - The three local listeners (editor bridge 6505, proxy API 6506, visualizer 6510) are now authenticated as described above, and the server refuses to start rather than expose an unauthenticated HTTP bridge.
 
