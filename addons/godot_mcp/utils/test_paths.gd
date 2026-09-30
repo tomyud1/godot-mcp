@@ -14,6 +14,16 @@ func check(label: String, actual: Variant, expected: Variant) -> void:
 		_failures += 1
 		print("FAIL  %s\n        expected: %s\n        actual:   %s" % [label, expected, actual])
 
+var _skips := 0
+
+## Some checks cannot even be expressed on every engine version — for example
+## Godot 4.3's String.chr(0) yields an empty string, so a null-byte path cannot
+## be constructed at all. Skipping is honest; failing would be a false alarm
+## about the guard rather than about the thing being guarded.
+func skip(label: String, reason: String) -> void:
+	_skips += 1
+	print("SKIP  %s — %s" % [label, reason])
+
 func _init() -> void:
 	# --- Paths that must be accepted -------------------------------------
 	var allowed := [
@@ -58,7 +68,13 @@ func _init() -> void:
 	# Empty and null-byte inputs
 	check("deny empty", MCPPaths.confine("", false).ok, false)
 	check("deny whitespace", MCPPaths.confine("   ", false).ok, false)
-	check("deny null byte", MCPPaths.confine("res://main.gd" + String.chr(0) + ".png", false).ok, false)
+	# Null bytes can truncate a path after validation. Only testable where the
+	# engine can actually represent one inside a String.
+	var nul := String.chr(0)
+	if nul.is_empty():
+		skip("deny null byte", "this engine cannot represent a NUL in a String, so the input cannot be built")
+	else:
+		check("deny null byte", MCPPaths.confine("res://main.gd" + nul + ".png", false).ok, false)
 
 	# --- Normalization must not change the destination -------------------
 	check(
@@ -82,5 +98,5 @@ func _init() -> void:
 		false
 	)
 
-	print("\n%d checks, %d failures" % [_checks, _failures])
+	print("\n%d checks, %d failures, %d skipped" % [_checks, _failures, _skips])
 	quit(1 if _failures > 0 else 0)
