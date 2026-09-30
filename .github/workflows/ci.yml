@@ -73,6 +73,20 @@ jobs:
       - name: Import project
         run: godot --headless --import
 
+      - name: Parse-check every addon script
+        # Must run first: a script that does not parse silently disables every
+        # check below it. Uses GDScript.reload() rather than load(), because
+        # load() returns a non-null object even for an unparseable script.
+        run: |
+          godot --headless --script addons/godot_mcp/utils/test_parse.gd
+
+      # The checks above run as a plain MainLoop, which never loads the
+      # EditorPlugin. This one does — it is what caught a duplicate variable in
+      # scene_tools.gd that every headless check had reported as clean.
+      - name: Editor-context self test
+        run: |
+          GODOT_MCP_SELFTEST=1 godot --headless --editor --quit-after 2500
+
       - name: conf() confinement rules
         run: |
           godot --headless --script addons/godot_mcp/utils/test_paths.gd

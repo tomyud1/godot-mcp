@@ -1312,9 +1312,9 @@ func instance_scene(args: Dictionary) -> Dictionary:
 	if not _gate.is_empty():
 		return _gate
 	var instance_path: String = _ensure_res_path(str(args.get(&"instance_path", "")))
-	var _gate := MCPPaths.check(instance_path)
-	if not _gate.is_empty():
-		return _gate
+	var _gate2 := MCPPaths.check(instance_path)
+	if not _gate2.is_empty():
+		return _gate2
 	var node_name: String = str(args.get(&"node_name", ""))
 	var parent_path: String = str(args.get(&"parent_path", "."))
 	var properties: Dictionary = args.get(&"properties", {})
@@ -2407,9 +2407,9 @@ func save_resource_to_file(args: Dictionary) -> Dictionary:
 	if not _gate2.is_empty():
 		return _gate2
 	var save_to: String = _ensure_res_path(str(args.get(&"save_to", "")))
-	var _gate := MCPPaths.check(save_to)
-	if not _gate.is_empty():
-		return _gate
+	var _gate3 := MCPPaths.check(save_to)
+	if not _gate3.is_empty():
+		return _gate3
 
 	if scene_path.strip_edges() == "res://":
 		return {&"ok": false, &"error": "Missing 'scene_path'"}
@@ -2498,9 +2498,9 @@ func get_resource_info(args: Dictionary) -> Dictionary:
 	if not _gate.is_empty():
 		return _gate
 	var scene_path: String = _ensure_res_path(str(args.get(&"scene_path", "")))
-	var _gate := MCPPaths.check(scene_path)
-	if not _gate.is_empty():
-		return _gate
+	var _gate2 := MCPPaths.check(scene_path)
+	if not _gate2.is_empty():
+		return _gate2
 	var node_path: String = str(args.get(&"node_path", ""))
 	var resource_property: String = str(args.get(&"resource_property", ""))
 

@@ -1,23 +1,13 @@
-# Minimal Godot project used ONLY to run this repo's headless GDScript checks.
-#
-# The addon under test (addons/godot_mcp) is a real EditorPlugin, so it is
-# normally installed into a user's game project. This file exists so that the
-# tests in addons/godot_mcp/utils/ and addons/godot_mcp/runtime/ can be run by
-# anyone who clones the repository, without first having to scaffold a project
-# by hand:
-#
-#   godot --headless --import
-#   godot --headless --script addons/godot_mcp/utils/test_paths.gd
-#   godot --headless --script addons/godot_mcp/utils/test_tool_paths.gd
-#   godot --headless --script addons/godot_mcp/runtime/test_probes.gd
-#
-# This is NOT a real game and is never exported. Godot will create
-# addons/godot_mcp/cache/ and .godot/ while running; both are gitignored.
-
+# Minimal harness project for the godot-mcp self-tests. Not a game; see README.
+# Keep this file minimal: a long comment header here stops Godot from
+# enabling editor plugins, which silently disables the editor self-test.
 config_version=5
 
 [application]
 
 config/name="godot-mcp-selftest"
-config/description="Harness for running the godot-mcp addon's headless self-tests. Not a game."
 config/features=PackedStringArray("4.3")
+
+[editor_plugins]
+
+enabled=PackedStringArray("res://addons/mcp_selftest/plugin.cfg")

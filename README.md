@@ -232,25 +232,47 @@ solely to give them a project to run in — it is not a game:
 
 ```bash
 godot --headless --import
+
+# plain MainLoop — no editor
+godot --headless --script addons/godot_mcp/utils/test_parse.gd        # every script parses
 godot --headless --script addons/godot_mcp/utils/test_paths.gd        # confine() rules
 godot --headless --script addons/godot_mcp/utils/test_tool_paths.gd   # tools actually gate
 godot --headless --script addons/godot_mcp/runtime/test_probes.gd     # probes and assertions
+
+# loads the plugin for real, in an editor
+GODOT_MCP_SELFTEST=1 godot --headless --editor --quit-after 2500
 ```
 
 All of the above run in CI on every push.
 
-### A note on exit codes in the GDScript checks
+### Why the editor check exists
 
-`godot --headless --script …` only reports failure through its **exit code**, so
-these scripts must call `quit(1)` on failure and must not let the loop quit some
-other way. Two things silently swallow it, and both have caused a green CI run
-on a red suite:
+The `--script` checks run as a plain `MainLoop` and never load the
+`EditorPlugin`. That misses everything only the editor provides:
+`EditorPlugin` wiring, `EditorInterface` / `EditorFileSystem`, and `@tool`
+coroutines awaiting `process_frame`.
 
-- returning `true` from `_process` before `quit(code)` takes effect
-- a bare `quit()` with no argument, which resets the code to `0`
+A duplicate `var _gate` in `scene_tools.gd` passed every headless check and
+only broke when the editor compiled the plugin — which would have shipped a
+non-loading addon. The editor self-test is what catches that class of problem.
 
-If you add a check script, confirm it exits non-zero by deliberately breaking an
-assertion.
+### Two traps that have bitten this repo
+
+**`load()` does not tell you a script failed to parse.** It returns a non-null
+`GDScript` for an unparseable file, so a check written as
+`if load(path) == null` reports success on a file that does not compile. Use
+`script.reload()` (returns `ERR_PARSE_ERROR`) or `can_instantiate()`.
+
+**Exit codes.** `godot --headless` reports failure only through its exit code,
+and two things silently swallow it — returning `true` from `_process` before
+`quit(code)` applies, and a bare `quit()` which resets the code to `0`. One of
+the check scripts also had a stale copy of its failure counter that made it
+structurally incapable of failing. If you add a check, confirm it exits
+non-zero by deliberately breaking an assertion.
+
+A long comment header in `project.godot` has been observed to stop the editor
+enabling plugins, which silently disables the editor self-test. Keep that file
+minimal.
 
 
 ---
