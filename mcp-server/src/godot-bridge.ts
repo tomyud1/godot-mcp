@@ -47,6 +47,9 @@ interface GodotInfo {
   projectPath?: string;
   connectedAt: Date;
   role: 'editor' | 'runtime';
+  /** Plugin version from plugin.cfg (sent by plugin 0.6.1+). */
+  pluginVersion?: string;
+  godotVersion?: string;
 }
 
 type ConnectionCallback = (connected: boolean, info?: GodotInfo) => void;
@@ -209,7 +212,9 @@ export class GodotBridge {
         } else {
           this.editor.info.projectPath = message.project_path;
         }
-        this.log('info', `Godot editor ready (project=${message.project_path})`);
+        this.editor.info.pluginVersion = message.plugin_version || undefined;
+        this.editor.info.godotVersion = message.godot_version || undefined;
+        this.log('info', `Godot editor ready (project=${message.project_path}, plugin=${message.plugin_version ?? 'unknown'})`);
         this.sendRuntimeStatusToEditor();
         return;
       }
@@ -377,11 +382,15 @@ export class GodotBridge {
     connectedAt?: Date;
     pendingRequests: number;
     port: number;
+    pluginVersion?: string;
+    godotVersion?: string;
   } {
     return {
       connected: this.isConnected(),
       runtimeConnected: this.isRuntimeConnected(),
       projectPath: this.editor?.info.projectPath,
+      pluginVersion: this.editor?.info.pluginVersion,
+      godotVersion: this.editor?.info.godotVersion,
       connectedAt: this.editor?.info.connectedAt,
       pendingRequests: this.pendingRequests.size,
       port: this.port,

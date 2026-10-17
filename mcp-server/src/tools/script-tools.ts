@@ -5,19 +5,70 @@
 
 import type { ToolDefinition } from '../types.js';
 
+/** edit_script's argument names before 0.6.1 (nested under `edit`). */
+const LEGACY_EDIT_KEYS: Record<string, string> = {
+  file: 'path',
+  old_snippet: 'old_text',
+  new_snippet: 'new_text',
+  context_before: 'context_before',
+  context_after: 'context_after',
+};
+
 export const scriptTools: ToolDefinition[] = [
   {
     name: 'edit_script',
-    description: "Edit an existing GDScript (.gd) file in place by replacing one snippet with another, and save. Snippets can be any size — a single line, a function, or the whole file for a full rewrite. If old_snippet matches more than once, pass context_before/context_after to disambiguate; if it can't be found, read_file the relevant range and retry with an exact match. ONLY for .gd files; not for .tscn scene files (use the scene/node tools). After editing, consider validate_script and run_scene + get_errors.",
+    description: "Edit an existing GDScript (.gd) file in place by replacing old_text with new_text, and save. The text can be any size — a single line, a function, or the whole file for a full rewrite. If old_text matches more than once, pass context_before/context_after to disambiguate; if it can't be found, read_file the relevant range and retry with an exact match. ONLY for .gd files; not for .tscn scene files (use the scene/node tools). After editing, consider validate_script and run_scene + get_errors.",
     inputSchema: {
       type: 'object',
       properties: {
-        edit: {
-          type: 'object',
-          description: "Edit spec: {type: 'snippet_replace', file: 'res://path.gd', old_snippet: 'text to replace (must match file contents exactly, including whitespace)', new_snippet: 'replacement text', context_before?: 'unique text immediately before old_snippet', context_after?: 'unique text immediately after'}. Snippets can be any size; for a full rewrite, pass the whole file as old_snippet."
+        path: {
+          type: 'string',
+          description: 'Script to edit (res://path/to/script.gd)'
+        },
+        old_text: {
+          type: 'string',
+          minLength: 1,
+          description: 'Exact text to replace, including whitespace and indentation'
+        },
+        new_text: {
+          type: 'string',
+          description: 'Replacement text (empty string deletes old_text)'
+        },
+        context_before: {
+          type: 'string',
+          description: 'Optional unique text right before old_text, when old_text appears more than once'
+        },
+        context_after: {
+          type: 'string',
+          description: 'Optional unique text right after old_text'
         }
       },
-      required: ['edit']
+      required: ['path', 'old_text', 'new_text']
+    },
+    // Before 0.6.1 the arguments were nested: {edit: {file, old_snippet, new_snippet, ...}}.
+    fromLegacy: (args) => {
+      if (!('edit' in args)) return args;
+      const { edit, ...rest } = args;
+      if (Object.keys(rest).length > 0) return "pass either the flat arguments (path, old_text, new_text) or the older 'edit' object, not both";
+      if (typeof edit !== 'object' || edit === null || Array.isArray(edit)) return "'edit' must be an object";
+      const out: Record<string, unknown> = {};
+      for (const [key, value] of Object.entries(edit as Record<string, unknown>)) {
+        if (key === 'type') {
+          if (value !== 'snippet_replace') return "edit.type must be 'snippet_replace'";
+          continue;
+        }
+        if (!(key in LEGACY_EDIT_KEYS)) return `unknown key 'edit.${key}' (use the flat arguments: path, old_text, new_text, context_before, context_after)`;
+        out[LEGACY_EDIT_KEYS[key]] = value;
+      }
+      return out;
+    },
+    // The plugin reads the nested shape; keep sending it so older plugins work.
+    toWire: (args) => {
+      const edit: Record<string, unknown> = { type: 'snippet_replace' };
+      for (const [legacy, current] of Object.entries(LEGACY_EDIT_KEYS)) {
+        if (current in args) edit[legacy] = args[current];
+      }
+      return { edit };
     }
   },
   {

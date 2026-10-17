@@ -33,7 +33,8 @@ import { execSync } from 'child_process';
 import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, resolve as resolvePath } from 'path';
-import { allTools, toolExists } from './tools/index.js';
+import { advertisedTools, callableToolCount, findTool } from './tools/index.js';
+import { prepareToolCall, didYouMean } from './validation.js';
 import { GodotBridge } from './godot-bridge.js';
 import { registerResources, GUIDES } from './resources.js';
 import { serveVisualization, stopVisualizationServer, setGodotBridge } from './visualizer-server.js';
@@ -77,8 +78,41 @@ let godotBridge: GodotBridge | null = null;
 
 async function executeToolCall(
   name: string,
-  toolArgs: Record<string, unknown>
+  rawArgs: Record<string, unknown>
 ): Promise<ToolCallResult> {
+  const tool = findTool(name);
+  if (!tool) {
+    throw new McpError(
+      ErrorCode.MethodNotFound,
+      `Unknown tool: ${name}${didYouMean(name, advertisedTools.map(t => t.name))}. Available tools: ${advertisedTools.map(t => t.name).join(', ')}`
+    );
+  }
+
+  // Every call is checked against the tool's schema before anything reaches
+  // Godot. Unknown or mistyped arguments are rejected instead of ignored.
+  const prepared = prepareToolCall(tool, rawArgs, findTool);
+  if (!prepared.ok) {
+    return {
+      content: [{
+        type: 'text',
+        text: JSON.stringify({
+          ok: false,
+          error: `Invalid arguments for ${name}: ${prepared.errors.join('; ')}`,
+          validation_errors: prepared.errors,
+          usage: prepared.usage,
+          hint: 'Nothing was sent to Godot. Fix the arguments and call again.',
+        }, null, 2),
+      }],
+      isError: true,
+    };
+  }
+  const toolArgs = prepared.args;
+  const notices = [prepared.deprecation, ...prepared.notes].filter((n): n is string => !!n);
+  const withNotices = (payload: unknown): unknown =>
+    notices.length && payload && typeof payload === 'object' && !Array.isArray(payload)
+      ? { ...(payload as Record<string, unknown>), deprecation_notice: notices.join(' ') }
+      : payload;
+
   if (name === 'get_guide') {
     const slug = typeof toolArgs.slug === 'string' ? toolArgs.slug.trim() : '';
     if (!slug) {
@@ -128,12 +162,19 @@ async function executeToolCall(
 
   if (name === 'get_godot_status') {
     const status = godotBridge!.getStatus();
+    const pluginVersion = status.pluginVersion ?? (status.connected ? 'unknown (0.6.0 or older)' : null);
+    const versionWarning = status.connected && status.pluginVersion !== SERVER_VERSION
+      ? `The Godot plugin (${pluginVersion}) and this server (${SERVER_VERSION}) are different versions. Tools keep working, but newer features need matching versions: update the plugin from the Godot Asset Store (or copy addons/godot_mcp from GitHub).`
+      : undefined;
     return {
       content: [{
         type: 'text',
         text: JSON.stringify({
           connected: status.connected,
           server_version: SERVER_VERSION,
+          plugin_version: pluginVersion,
+          godot_version: status.godotVersion ?? null,
+          ...(versionWarning ? { warning: versionWarning } : {}),
           websocket_port: status.port,
           mode: status.connected ? 'live' : 'waiting',
           project_path: status.projectPath || null,
@@ -145,13 +186,6 @@ async function executeToolCall(
         }, null, 2)
       }]
     };
-  }
-
-  if (!toolExists(name)) {
-    throw new McpError(
-      ErrorCode.MethodNotFound,
-      `Unknown tool: ${name}. Available tools: ${allTools.map(t => t.name).join(', ')}`
-    );
   }
 
   if (!godotBridge!.isConnected()) {
@@ -193,7 +227,7 @@ async function executeToolCall(
     return {
       content: [{
         type: 'text',
-        text: JSON.stringify(result, null, 2)
+        text: JSON.stringify(withNotices(result), null, 2)
       }]
     };
   } catch (error) {
@@ -215,7 +249,7 @@ async function executeToolCall(
     const payload: Record<string, unknown> = {
       error: errorMessage,
       tool: name,
-      args: toolArgs,
+      args: rawArgs,
       hint: 'The tool call was sent to Godot but failed. Check Godot editor for details.',
     };
     if (details && typeof details === 'object') {
@@ -226,7 +260,7 @@ async function executeToolCall(
       Object.assign(payload, details);
     }
     return {
-      content: [{ type: 'text', text: JSON.stringify(payload, null, 2) }],
+      content: [{ type: 'text', text: JSON.stringify(withNotices(payload), null, 2) }],
       isError: true,
     };
   }
@@ -246,44 +280,13 @@ function createMcpServer(handleTool: ToolHandler): Server {
 
   registerResources(server);
 
-  server.setRequestHandler(ListToolsRequestSchema, async () => {
-    const connectionStatusTool = {
-      name: 'get_godot_status',
-      description: 'Check if Godot editor is connected to the MCP server.',
-      inputSchema: {
-        type: 'object' as const,
-        properties: {},
-        required: []
-      }
-    };
-
-    const getGuideTool = {
-      name: 'get_guide',
-      description: `Read a short markdown guide from the server. Same content as the MCP resources/read protocol, exposed as a tool so it works in MCP clients that do not support resources (e.g. Claude Desktop, Cursor chat). Call with no args to list available guides: ${GUIDES.map((g) => g.slug).join(', ')}. Call with {slug: "..."} to get the full markdown. Useful when a workflow is non-obvious (testing a running game, choosing between scene-editing tools, troubleshooting "Runtime helper not connected", etc.).`,
-      inputSchema: {
-        type: 'object' as const,
-        properties: {
-          slug: {
-            type: 'string',
-            description: `Guide slug. Omit to list all available guides. Known slugs: ${GUIDES.map((g) => g.slug).join(', ')}.`,
-          },
-        },
-        required: [] as string[],
-      }
-    };
-
-    return {
-      tools: [
-        connectionStatusTool,
-        getGuideTool,
-        ...allTools.map(tool => ({
-          name: tool.name,
-          description: tool.description,
-          inputSchema: tool.inputSchema
-        }))
-      ]
-    };
-  });
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({
+    tools: advertisedTools.map(tool => ({
+      name: tool.name,
+      description: tool.description,
+      inputSchema: tool.inputSchema,
+    })),
+  }));
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
@@ -407,7 +410,7 @@ async function startPrimary(): Promise<void> {
   }
 
   // --- Start HTTP server for proxies ---
-  const httpServer = new PrimaryHttpServer(HTTP_PORT, SERVER_VERSION, executeToolCall, allTools.length + 2);
+  const httpServer = new PrimaryHttpServer(HTTP_PORT, SERVER_VERSION, executeToolCall, callableToolCount);
   httpServer.setClientCountChangeCallback(() => notifyClientStatus());
 
   try {
@@ -439,7 +442,7 @@ async function startPrimary(): Promise<void> {
     console.error(`[${SERVER_NAME}] ⚠️  HTTP server failed to start. Proxy clients will not work.`);
   }
 
-  console.error(`[${SERVER_NAME}] Available tools: ${allTools.length + 2}`);
+  console.error(`[${SERVER_NAME}] Available tools: ${advertisedTools.length}`);
   console.error(`[${SERVER_NAME}] Waiting for Godot editor connection...`);
 
   // --- Connect stdio MCP transport ---
@@ -578,7 +581,7 @@ async function main(): Promise<void> {
   const probe = await probeExistingServer(HTTP_PORT);
 
   if (probe.alive) {
-    const localToolCount = allTools.length + 2; // +1 for get_godot_status, +1 for get_guide
+    const localToolCount = callableToolCount;
     const primaryStale = probe.version !== SERVER_VERSION
       || (probe.toolCount != null && probe.toolCount !== localToolCount);
     if (primaryStale) {

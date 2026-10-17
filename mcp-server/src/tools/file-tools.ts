@@ -12,13 +12,18 @@ export const fileTools: ToolDefinition[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        root: {
+        path: {
           type: 'string',
-          description: 'Starting path like res://addons/ai_assistant or res://'
+          description: 'Folder to list, like res:// (default) or res://scenes'
+        },
+        include_hidden: {
+          type: 'boolean',
+          description: 'Include hidden files and folders (names starting with "."). Default: false.'
         }
       },
-      required: ['root']
-    }
+      required: []
+    },
+    renamedArgs: { root: 'path' }
   },
   {
     name: 'read_file',
@@ -37,6 +42,10 @@ export const fileTools: ToolDefinition[] = [
         end_line: {
           type: 'number',
           description: 'Inclusive end line; 0 or missing means to end of file (optional)'
+        },
+        max_bytes: {
+          type: 'number',
+          description: 'Maximum bytes to return before truncating (default: 200000)'
         }
       },
       required: ['path']
@@ -55,6 +64,14 @@ export const fileTools: ToolDefinition[] = [
         glob: {
           type: 'string',
           description: 'Optional glob filter like **/*.gd to search only GDScript files'
+        },
+        max_results: {
+          type: 'number',
+          description: 'Maximum matches to return (default: 200)'
+        },
+        case_sensitive: {
+          type: 'boolean',
+          description: 'Match case exactly (default: false)'
         }
       },
       required: ['query']

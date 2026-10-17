@@ -45,7 +45,7 @@ The MCPRuntime autoload (registered automatically when the godot_mcp plugin is e
    - Press a key: \`send_input({ event: { type: 'key', key: 'Space', pressed: true } })\`.
    - Trigger a named action: \`send_input({ event: { type: 'action', action: 'jump', pressed: true } })\`.
 4. \`wait({ ms: 200 })\` between events to let the engine process them.
-5. \`query_runtime_node({ node_path: '/root/Main/Player', properties: ['position', 'velocity', 'visible'] })\` — verify state changes.
+5. \`query_runtime_node({ node_path: '/root/Main/Player' })\` — with no \`properties\` it returns every script variable (health, score, ...) and every property that differs from its default (a Label's text, velocity, ...). Pass \`properties: ['velocity', 'material:albedo_color']\` for specific ones.
 6. \`take_screenshot({})\` — visual confirmation.
 7. \`stop_scene()\` before editing code, or \`get_errors\` again to confirm clean shutdown.
 
@@ -57,7 +57,9 @@ Skip step 3 and use \`wait\` + \`query_runtime_node\` + \`take_screenshot\` to s
 
 - Calling \`take_screenshot\` immediately after \`run_scene\` without \`wait_for_runtime: true\` returns "Runtime helper not connected".
 - The runtime ring buffer (\`get_runtime_log\`) only contains entries pushed via \`MCPRuntime.push_runtime_log(level, text)\`. For full engine stdout use the editor's \`get_console_log\`.
-- \`send_input\` with type \`action\` requires the action to exist in the InputMap (check with \`get_input_map\`).
+- \`send_input\` rejects unknown key names, unknown actions and unknown event fields, so ok:true means the event fired. Actions must exist in the InputMap (\`get_input_map\` / \`configure_input_map\`).
+- \`call_method\` with \`runtime: true\` on a node directly under \`/root\` (an autoload like \`/root/Game\`, or the scene root) needs \`confirm: true\`. Deeper nodes (\`/root/Main/Player\`) don't.
+- Methods that contain \`await\` run in the background: the response has \`is_coroutine: true\` and no return value. Follow with \`wait\` and \`query_runtime_node\` to see the result.
 - If \`run_scene({wait_for_runtime:true})\` ever reports \`started: true, runtime_connected: false\`, that's a real failure most of the time (autoload crash, plugin disabled, port collision). Sanity-check by calling \`get_runtime_status\` once before assuming the helper is dead — the editor-side flag is updated by a separate WebSocket push, so a sub-100ms race is still theoretically possible.
 
 ## Performance verification
@@ -68,43 +70,68 @@ After the scene is up and you've driven it for a moment, sample \`get_performanc
   {
     uri: 'godot-mcp://guide/scene-editing',
     slug: 'scene-editing',
-    name: 'Scene editing patterns',
-    description: 'When to use add_node vs modify_node_property vs set_node_properties vs set_resource_property vs the specialized resource tools.',
+    name: 'Scene editing and property values',
+    description: 'Which tool to use for scene changes, and how to write property values: vectors, colors, enums, resources by path or inline, and colon paths into resources.',
     mimeType: 'text/markdown',
     text: `# Scene editing in MCP
 
 ## Pick the right tool
 
-| Goal                                            | Tool                                                         |
-|-------------------------------------------------|--------------------------------------------------------------|
-| Create scene with several nodes in one shot     | \`create_scene\` with \`nodes\` tree                         |
-| Add ONE node                                    | \`add_node\` (now supports \`script\`, \`groups\`, \`children\`) |
-| Add a SUBTREE                                   | \`add_node\` with \`children\`                                |
-| Change ONE simple value (position, modulate)    | \`modify_node_property\`                                     |
-| Change MANY values on one node                  | \`set_node_properties\`                                      |
-| Change a Resource value (e.g. radius of a Shape, albedo of a Material) | \`set_resource_property\`         |
-| Replace the entire Resource (different mesh, different texture) | \`set_mesh\` / \`set_sprite_texture\` / \`set_material\` / \`set_collision_shape\` |
-| Persist a node-attached resource as a .tres     | \`save_resource_to_file\`                                    |
-| Group membership                                | \`set_node_groups\` (replace/add/remove)                     |
-| Verify which nodes belong to a group            | \`find_nodes\` with \`in_group\`                              |
-| Search a scene for nodes by name / type / group | \`find_nodes\` (filters AND together; \`type\` matches subclasses) |
-| Wire up a signal (persisted to .tscn)           | \`connect_signal\`                                           |
-| See what is wired                               | \`list_signal_connections\` (source: scene_file or runtime)  |
-| Inspect a resource on disk                      | \`get_resource_info\` (works for any Resource subclass)      |
+| Goal | Tool |
+|------|------|
+| Create a scene with a whole node tree | \`create_scene\` with \`nodes\` |
+| Add a node or a subtree to a scene | \`add_node\` (with \`children\`, \`script\`, \`groups\`, \`properties\`) |
+| Change any properties on a node, including textures, shapes, meshes, materials | \`set_node_properties\` |
+| Change a property of a resource the node holds (shape radius, material color) | \`set_node_properties\` with a colon path: \`"shape:radius"\` |
+| Edit a shared resource file (.tres) | \`set_node_properties\` with \`scene_path: "res://mat.tres"\` |
+| Save a node's resource as its own .tres file | \`save_resource_to_file\` |
+| Attach or change a script | \`attach_script\` |
+| Groups | \`set_node_groups\` (replace/add/remove) |
+| Find nodes by name / type / group | \`find_nodes\` |
+| Wire a signal (persisted to .tscn) | \`connect_signal\` |
+| Inspect a resource | \`get_resource_info\` |
 
-## Variant value formats
+Never edit .tscn files as text.
 
-For any tool that takes a typed value (\`modify_node_property.value\`, \`set_node_properties.properties\`, \`set_resource_property.value\`), pass either a primitive or a discriminated object:
+## Property values
 
-- \`{type:"Vector2", x:1, y:2}\`, \`{type:"Vector3", x, y, z}\`
-- \`{type:"Color", r, g, b, a}\`
-- \`{type:"Quaternion", x, y, z, w}\`
-- \`{type:"Basis", euler:{x, y, z}}\`
-- \`{type:"Transform3D", basis:{...}, origin:{x, y, z}}\`
-- \`{type:"AABB", position:{x,y,z}, size:{x,y,z}}\`
-- \`{type:"Rect2", x, y, width, height}\`
+Values are read according to each property's type, so the same JSON works everywhere (\`create_scene\`, \`add_node\`, \`instance_scene\`, \`set_node_properties\`, and \`call_method\` arguments).
 
-For Resource-typed properties, do not pass the value directly — use the resource-aware tools listed above.
+| Property type | Write it as |
+|---------------|-------------|
+| bool, int, float, String | plain JSON |
+| enum (int with named options) | the option name \`"Nearest"\` or \`"TEXTURE_FILTER_NEAREST"\`, or the number |
+| Vector2 / Vector3 | \`{"x": 1, "y": 2}\` or \`[1, 2]\` (all components required) |
+| Color | \`{"r": 1, "g": 0.5, "b": 0, "a": 1}\` (0..1), \`"#ff8800"\` or \`"red"\` |
+| Rect2 | \`{"x", "y", "width", "height"}\` |
+| Quaternion | \`{"x","y","z","w"}\`, \`{"euler": {...}}\` or \`{"axis": {...}, "angle": 0.5}\` |
+| Transform2D | \`{"origin": {...}, "rotation": 0, "scale": {...}}\` |
+| Basis / Transform3D / AABB | \`{"euler": {...}}\` / \`{"basis": {...}, "origin": {...}}\` / \`{"position", "size"}\` |
+| NodePath | a string like \`"../Player"\` |
+| Resource (texture, shape, mesh, material, stream, font, ...) | a file \`"res://icon.png"\`, or inline \`{"type": "CircleShape2D", "radius": 12}\` |
+| null | clears a resource property |
+
+Inline resources take the class in \`type\` and their own properties as the other keys, nested as deep as needed:
+
+\`\`\`json
+{ "material_override": { "type": "StandardMaterial3D", "albedo_color": "red", "albedo_texture": "res://bricks.png" } }
+\`\`\`
+
+## Colon paths
+
+\`"material:albedo_color"\` sets a property on the resource held in \`material\`. It works in the same call that assigns the resource:
+
+\`\`\`json
+{ "material": { "type": "CanvasItemMaterial" }, "material:blend_mode": "Add" }
+\`\`\`
+
+A resource loaded from its own file is shared; colon paths refuse to change it (the change would not be saved with the scene). Edit the file itself (\`scene_path: "res://mat.tres"\`) or give the node its own inline copy.
+
+## What the response tells you
+
+- Nothing is saved unless every value was accepted. Errors name the exact property (\`nodes[1].properties.texture: no resource at res://hero.png\`) and suggest close names.
+- \`applied\` lists old and new values. \`adjusted\` lists values Godot changed while setting them (clamped, wrapped); check those.
+- Node references (\`@export var target: Node2D\`) can't be set through MCP; use a NodePath property or wire them in code.
 `,
   },
   {
@@ -168,9 +195,21 @@ Changing \`application/config/name\` causes Godot to re-bind \`user://\` to a di
 
 This is a benign empty result, not a real failure. \`map_project\` will return an empty visualization for an empty project.
 
-## set_sprite_texture set the wrong texture class
+## "Invalid arguments for <tool>"
 
-\`texture_type: "ImageTexture"\` (deprecated alias) and \`"FromPath"\` both call \`load(path)\`, which the importer typically returns as a CompressedTexture2D. To force an actual ImageTexture in memory use \`texture_type: "NewImageTexture"\`.
+The server checks every call against the tool's arguments before anything reaches Godot. The response lists each problem (unknown argument with a suggestion, missing argument, wrong type) and a \`usage\` line. Nothing was changed; fix the arguments and call again.
+
+## "no resource at res://..." right after creating a file
+
+Godot imports new files (images from generate_2d_asset, written .tres) asynchronously. Call \`rescan_filesystem\`, then retry.
+
+## A value came back in "adjusted"
+
+Godot changed it while setting it (clamped to a range, wrapped an angle, normalized a vector). The stored value is what the game will use.
+
+## Plugin and server versions differ
+
+\`get_godot_status\` reports both. Tools keep working across versions, but newer features (resource values, colon paths) need a matching plugin: update it from the Godot Asset Store or copy \`addons/godot_mcp\` from GitHub.
 `,
   },
   {
@@ -249,7 +288,7 @@ Everything else dispatches through the normal tool path with the same validation
     { "name": "set_node_properties", "args": { "scene_path": "res://main.tscn", "node_path": "Player", "properties": { "position": { "type": "Vector2", "x": 100, "y": 200 } } } },
     { "name": "attach_script",       "args": { "scene_path": "res://main.tscn", "node_path": "Player", "script_path": "res://scripts/player.gd" } },
     { "name": "set_node_groups",     "args": { "scene_path": "res://main.tscn", "node_path": "Player", "groups": ["players"], "mode": "replace" } },
-    { "name": "connect_signal",      "args": { "scene_path": "res://main.tscn", "from_node": "Player", "signal": "health_depleted", "to_node": ".", "method": "_on_player_died" } }
+    { "name": "connect_signal",      "args": { "scene_path": "res://main.tscn", "from_node_path": "Player", "signal": "health_depleted", "to_node_path": ".", "method": "_on_player_died" } }
   ]
 }
 \`\`\`
@@ -278,7 +317,7 @@ If only \`old_b.tscn\` doesn't exist, \`a\` and \`c\` rename, the response carri
 {
   "commands": [
     { "name": "get_scene_node_properties", "args": { "scene_path": "res://hud.tscn", "node_path": "HealthBar" } },
-    { "name": "modify_node_property",      "args": { "scene_path": "res://hud.tscn", "node_path": "HealthBar", "property_name": "max_value", "value": 200 } }
+    { "name": "set_node_properties",       "args": { "scene_path": "res://hud.tscn", "node_path": "HealthBar", "properties": { "max_value": 200 } } }
   ]
 }
 \`\`\`
@@ -295,7 +334,7 @@ The first sub-command's result lives at \`results[0].result\`. Earlier results a
 ## Pitfalls
 
 - **Don't try to chain results.** \`batch_execute\` runs commands with their args as-given. If \`commands[1].args.node_path\` depends on a name returned by \`commands[0]\`, that won't work — split the call.
-- **Schema errors fail fast.** Pre-validation rejects unknown / disallowed sub-commands BEFORE any mutation. So a typo in \`commands[3].name\` will not partially apply \`commands[0..2]\`.
+- **Argument errors fail fast.** Every sub-command's arguments are checked against its tool before the batch starts, and errors point at the command (\`commands[3] (add_node): unknown argument 'parent'\`). A typo in \`commands[3]\` never partially applies \`commands[0..2]\`.
 - **Atomic rollback restores file content, not editor state.** If you had a scene open and unsaved, the rollback restores the .tscn on disk and reloads the editor tab. Any unsaved in-memory edits in the same scene at batch start are lost (this is consistent with the rest of the MCP undo system).
 `,
   },
@@ -323,7 +362,7 @@ Any time the user refers to a node without naming it. Trigger phrases:
 
 1. \`get_editor_selection({})\`
 2. If \`count == 0\`: tell the user nothing is selected and ask them to click the node first (or fall back to asking which node by name).
-3. If \`count == 1\`: that's the target node — pass its \`path\` to \`modify_node_property\` / \`set_node_properties\` / \`attach_script\` / etc.
+3. If \`count == 1\`: that's the target node — pass its \`path\` to \`set_node_properties\` / \`attach_script\` / etc.
 4. If \`count > 1\`: ask whether to apply the change to all selected nodes, or pick the first, depending on the request.
 
 \`get_editor_selection\` is cheap (no scene load, just reads the live editor state). Calling it speculatively at the start of an ambiguous request is almost always the right move.
@@ -360,14 +399,14 @@ Two common uses:
 - List GDScripts: \`list_scripts\`
 
 ## Scenes
-- Create / read / hierarchy: \`create_scene\`, \`read_scene\`, \`get_scene_hierarchy\`, \`scene_tree_dump\`
-- Add / remove / move / rename / duplicate / reorder nodes: \`add_node\`, \`remove_node\`, \`move_node\`, \`rename_node\`, \`duplicate_node\`, \`reorder_node\`
-- Properties on a node: \`modify_node_property\` (one), \`set_node_properties\` (many), \`get_scene_node_properties\` (read all)
+- Create / read / hierarchy: \`create_scene\`, \`read_scene\`, \`scene_tree_dump\`
+- Add / remove / move / rename nodes: \`add_node\`, \`remove_node\`, \`move_node\` (also reorders siblings), \`rename_node\`
+- Properties on a node, including resources: \`set_node_properties\` (write), \`get_scene_node_properties\` (read all). See \`godot-mcp://guide/scene-editing\` for value formats
 - Class-level property metadata: \`get_node_properties\` (with \`node_type\`)
 - Groups: \`set_node_groups\`, \`get_node_groups\`, \`find_nodes\` (filter with \`in_group\`)
 - Search nodes in a scene: \`find_nodes\` (\`name_pattern\` / \`type\` / \`in_group\` / \`recursive\`)
 - Scripts on nodes: \`attach_script\`, \`detach_script\`
-- Resources on nodes: \`set_collision_shape\`, \`set_sprite_texture\`, \`set_mesh\`, \`set_material\`, \`set_resource_property\`, \`save_resource_to_file\`
+- Resources: assign or edit with \`set_node_properties\` (paths, inline resources, colon paths, or a .tres as scene_path); save one to a file with \`save_resource_to_file\`
 - Resource introspection: \`get_resource_info\`
 - Signals: \`list_signal_connections\` (source scene_file or runtime), \`connect_signal\`, \`disconnect_signal\`
 - Instancing other scenes: \`instance_scene\`
@@ -387,7 +426,7 @@ Two common uses:
 ## Running the game
 - Launch: \`run_scene\` (block_until_started, wait_for_runtime)
 - Status: \`is_playing\`, \`get_runtime_status\`
-- Runtime tools: \`take_screenshot\`, \`send_input\`, \`query_runtime_node\`, \`get_runtime_log\`, \`get_performance_monitors\`, \`wait\`
+- Runtime tools: \`take_screenshot\`, \`send_input\`, \`query_runtime_node\`, \`call_method\` (runtime: true), \`get_runtime_log\`, \`get_performance_monitors\`, \`wait\`
 - Stop: \`stop_scene\`
 
 ## Asset generation
@@ -398,7 +437,7 @@ Two common uses:
 - Undo / redo / list AI mutations: \`mcp_undo\`, \`mcp_redo\`, \`mcp_undo_history\`
 
 ## Visualizer
-- Project + scenes maps: \`map_project\`, \`map_scenes\`
+- Project map (scripts and scenes): \`map_project\`
 `,
   },
 ];

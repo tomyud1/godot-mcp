@@ -32,7 +32,7 @@ func _ensure_res_path(path: String) -> String:
 func edit_script(args: Dictionary) -> Dictionary:
 	var edit: Dictionary = args.get(&"edit", {})
 	if edit.is_empty():
-		return {&"ok": false, &"error": "Missing 'edit' payload"}
+		return {&"ok": false, &"error": "Missing 'edit' payload. Expected {edit: {file: \"res://x.gd\", old_snippet: \"...\", new_snippet: \"...\"}} (through the MCP server: {path, old_text, new_text})"}
 
 	var path: String = str(edit.get(&"file", ""))
 	if path.is_empty():

@@ -11,9 +11,9 @@ export const visualizerTools: ToolDefinition[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        root: {
+        path: {
           type: 'string',
-          description: 'Root path to start crawling from (default: res://)'
+          description: 'Folder to start crawling from (default: res://)'
         },
         include_addons: {
           type: 'boolean',
@@ -21,6 +21,7 @@ export const visualizerTools: ToolDefinition[] = [
         }
       },
       required: []
-    }
+    },
+    renamedArgs: { root: 'path' }
   }
 ];

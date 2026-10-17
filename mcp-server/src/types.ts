@@ -11,6 +11,33 @@ export interface ToolDefinition {
     properties: Record<string, PropertySchema>;
     required?: string[];
   };
+  /**
+   * Arguments that were renamed: { oldName: newName }. The old name is still
+   * accepted (not advertised). The Godot plugin keeps reading the OLD name, so
+   * the server translates back before forwarding; that keeps any plugin
+   * version working with any server version.
+   */
+  renamedArgs?: Record<string, string>;
+  /**
+   * Alternative spellings accepted for an argument: { alternative: canonical }.
+   * Unlike renamedArgs, the canonical name is what goes to the plugin.
+   */
+  aliases?: Record<string, string>;
+  /**
+   * Rewrite an older argument shape into the current one before validation
+   * (e.g. edit_script's nested `edit` object). Return a string to reject.
+   */
+  fromLegacy?: (args: Record<string, unknown>) => Record<string, unknown> | string;
+  /**
+   * Rewrite validated arguments into the shape the plugin reads, after
+   * renamedArgs have been mapped back to their old names.
+   */
+  toWire?: (args: Record<string, unknown>) => Record<string, unknown>;
+  /**
+   * Hidden from the tool list but still callable, so older prompts and
+   * batches keep working. Responses carry a pointer to the replacement.
+   */
+  deprecated?: { replacement: string };
 }
 
 export interface PropertySchema {
@@ -22,6 +49,7 @@ export interface PropertySchema {
   properties?: Record<string, PropertySchema>;
   required?: string[];
   oneOf?: PropertySchema[];
+  minLength?: number;
 }
 
 // WebSocket message types (for Phase 2)
@@ -59,6 +87,9 @@ export interface GodotReadyMessage {
   // helper. Older addons (pre-runtime support) omit this; we treat that as 'editor'.
   role?: 'editor' | 'runtime';
   started_at?: number;
+  /** plugin.cfg version; sent by plugin 0.6.1+. */
+  plugin_version?: string;
+  godot_version?: string;
 }
 
 export interface ClientStatusMessage {

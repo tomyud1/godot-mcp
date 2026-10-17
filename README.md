@@ -4,7 +4,11 @@
 
 Build games faster with Claude, Cursor, or any MCP-compatible AI — no copy-pasting, no context switching. AI reads, writes, and manipulates your scenes, scripts, nodes, and project settings directly.
 
-> Godot 4.x · 75 tools · Undo/redo · Interactive project visualizer · MIT license
+> Godot 4.4+ · 69 tools · Undo/redo · Interactive project visualizer · MIT license
+
+**Now on the [Godot Asset Store](https://store.godotengine.org/asset/tomer-yud/godlink/) as Godlink MCP.** If it helps you, please leave a review there. It's the main way other Godot developers find it.
+
+![An AI agent in Cursor building a platformer level in the Godot editor](screenshots/agent-building-level.webp)
 
 ---
 
@@ -16,7 +20,11 @@ Download and run the installer from **[nodejs.org](https://nodejs.org/en/downloa
 
 ### 1. Install the Godot plugin
 
-Inside the Godot editor, click the **AssetLib** tab at the top → search **"mcp"** → find **"Godot AI Assistant tools MCP"** → Install.
+**Godot 4.7 and newer:** inside the Godot editor, click the **Asset Store** tab at the top → search **"Godlink"** → find **"Godlink MCP"** → Install. ([Store page](https://store.godotengine.org/asset/tomer-yud/godlink/))
+
+**Godot 4.6 and older:** click the **AssetLib** tab instead → search **"mcp"** → find **"Godot AI Assistant tools MCP"** → Install.
+
+**Manual install:** copy the `addons/godot_mcp/` folder from this repo into your project's `addons/` folder.
 
 Then go to **Project → Project Settings → Plugins** and enable the **Godot MCP** plugin.
 
@@ -87,22 +95,25 @@ Close and reopen Claude Desktop / Cursor / your client so it picks up the new co
 
 ### 4. Restart your Godot project
 
-Hit **Restart Project** in the Godot editor. Check the **top-right corner** — you should see **MCP Connected** in green. You're ready to go.
+Hit **Restart Project** in the Godot editor. Check the **top-right corner** — once your AI client is running you should see **MCP: Agent Active** in green. You're ready to go.
+
+If it shows **MCP: No Agent** in orange, Godot found the server but no AI client is using it yet. Restart your AI client. **MCP: Disconnected** in red means the server isn't running. Check that Node.js is installed and the config from step 2 is saved.
 
 ---
 
 ## What Can It Do?
 
-### 42 Tools Across 6 Categories
+### 69 Tools Across 7 Categories
 
 | Category | Tools | Examples |
 |----------|-------|---------|
-| **File Operations** | 4 | Browse directories, read files, search project, create scripts |
-| **Scene Operations** | 11 | Create scenes, add/remove/move nodes, set properties, attach scripts, assign collision shapes and textures |
-| **Script Operations** | 6 | Apply code edits, validate syntax, rename/move files with reference updates |
-| **Project Tools** | 14 | Run/stop scenes, query ClassDB, read errors from Output + Debugger, project settings, input map, collision layers, scene tree dumps, rescan filesystem |
+| **Scene Operations** | 23 | Create whole node trees in one call, add/remove/move nodes, set any property including textures, shapes, meshes and materials (by file path or inline), attach scripts, signals, groups, call methods |
+| **Project & Runtime** | 28 | Run/stop the game, send input, take screenshots, inspect live nodes, read errors and logs, project settings, input map, autoloads |
+| **Script & File Operations** | 8 | Edit and validate scripts, write files, rename/move files with reference updates, create and delete folders |
+| **File Browsing** | 4 | Browse directories, read files, search the project, create scripts |
+| **Undo & Batching** | 4 | Undo/redo any AI change, run many changes as one all-or-nothing batch |
 | **Asset Generation** | 1 | Generate 2D sprites from SVG |
-| **Visualization** | 6 | Interactive browser-based project map, scene graph explorer |
+| **Visualization** | 1 | Interactive browser-based project map and scene explorer |
 
 ### Interactive Visualizer
 
@@ -127,7 +138,7 @@ AI cannot create 100% of a game by itself — it struggles with complex UI layou
 │  AI Client  │◄────────────────►│  MCP Server  │◄─────────────►│ Godot Editor │
 │  (Claude,   │                  │  (Node.js)   │   port 6505   │  (Plugin)    │
 │   Cursor)   │                  │              │               │              │
-└─────────────┘                  │  Visualizer  │               │  42 tool     │
+└─────────────┘                  │  Visualizer  │               │  69 tool     │
                                  │  HTTP :6510  │               │  handlers    │
                                  └──────┬───────┘               └──────────────┘
                                         │
@@ -164,7 +175,7 @@ Then point your AI client at `mcp-server/dist/index.js` instead of using `npx`.
 
 ## Release notes
 
-Narrative write-ups of each release live in [`release-notes/`](./release-notes/) (latest: [v0.6.0](./release-notes/v0.6.0.md)). For the full change history, see [`CHANGELOG.md`](./CHANGELOG.md).
+Narrative write-ups of each release live in [`release-notes/`](./release-notes/) (latest: [v0.6.1](./release-notes/v0.6.1.md)). For the full change history, see [`CHANGELOG.md`](./CHANGELOG.md).
 
 ---
 
@@ -186,4 +197,4 @@ MIT
 
 ---
 
-**[npm package](https://www.npmjs.com/package/godot-mcp-server)** · **[Report Issues](https://github.com/tomyud1/godot-mcp/issues)**
+**[Godot Asset Store](https://store.godotengine.org/asset/tomer-yud/godlink/)** · **[npm package](https://www.npmjs.com/package/godot-mcp-server)** · **[Report Issues](https://github.com/tomyud1/godot-mcp/issues)**

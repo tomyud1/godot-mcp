@@ -8,7 +8,7 @@ import type { ToolDefinition } from '../types.js';
 export const sceneTools: ToolDefinition[] = [
   {
     name: 'create_scene',
-    description: 'Create a new Godot scene (.tscn) file with nodes. Use this to create player scenes, UI screens, game objects, etc.\n\n**Atomic pre-validation:** the entire spec (root, attach_script, every entry of `nodes`, and recursively their `children` / `properties` / `script`) is walked and validated BEFORE the scene file is created. If any node_type isn\'t a known class, any property name doesn\'t exist on its target class (plus the attached script\'s @export\'d properties when present), or any script path is missing / isn\'t a Script — the call returns `ok: false` with a `validation_errors` array of path-pointed messages (`nodes[1].children[2].properties.text: property does not exist on Sprite2D`) and ZERO filesystem mutation. Fix all listed issues in one shot.',
+    description: 'Create a new Godot scene (.tscn) with a tree of nodes in one call, including their properties, textures, collision shapes, scripts and groups. Use this to create player scenes, UI screens, game objects, etc.\n\n**All-or-nothing:** the whole tree is built and checked in memory first. Unknown node types or property names (with suggestions), values of the wrong type, missing resource files and bad scripts are ALL reported together as path-pointed `validation_errors` (e.g. `nodes[1].children[0].properties.texture: no resource at res://hero.png`), and no file is written unless everything is valid.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -18,7 +18,7 @@ export const sceneTools: ToolDefinition[] = [
         },
         root_node_name: {
           type: 'string',
-          description: 'Name of root node (default: derived from filename)'
+          description: 'Name of the root node. Default: the file name in PascalCase (res://player_ship.tscn -> PlayerShip).'
         },
         root_node_type: {
           type: 'string',
@@ -27,7 +27,7 @@ export const sceneTools: ToolDefinition[] = [
         nodes: {
           type: 'array',
           items: { type: 'object', description: 'A node spec: {name|node_name, type|node_type, properties?, script?, groups?, children?}. Unknown keys are rejected with an error.' },
-          description: 'Array of child nodes to add. Each node spec: {name|node_name, type|node_type, properties?, script?, groups?, children?}. Use either {name, type} or the same {node_name, node_type} keys used at the top level \u2014 both work. Unknown keys (e.g. "class", "kind", "parent") return an error instead of silently producing a generic Node.'
+          description: 'Child nodes to create under the root. Each node spec: {name|node_name, type|node_type, properties?, script?, groups?, children?}. Unknown keys (e.g. "class", "parent") are errors. properties values: Values are read according to each property type: numbers/bools/strings; enums by name (\"Nearest\") or number; Vector2/3 as {x, y[, z]} or [x, y[, z]]; Color as {r, g, b, a?} (0..1), \"#ff8800\" or \"red\"; resources (texture, shape, mesh, material, stream, ...) as a file path \"res://icon.png\" or an inline resource {type: \"CircleShape2D\", radius: 12} whose other keys are its properties. Same forms as set_node_properties.'
         },
         attach_script: {
           type: 'string',
@@ -75,7 +75,7 @@ export const sceneTools: ToolDefinition[] = [
   },
   {
     name: 'add_node',
-    description: 'Add a node to an existing scene file. Supports an optional script attachment, group memberships, and a tree of children created in the same call (1 tool call instead of N). Children format: {name|node_name, type|node_type, properties?, script?, groups?, children?}. Both key styles are accepted so children can reuse the same keys you use at the top level (node_name, node_type) or the shorter form (name, type). Unknown child keys are rejected with a clear error.\n\n**Atomic pre-validation:** the entire spec (top-level node + every descendant in `children`, recursively) is walked and validated BEFORE the .tscn is loaded from disk. Property names are checked against ClassDB + the attached script\'s @export\'d properties; `script` paths are checked for existence and Script-ness; node_types are checked against ClassDB. If anything fails, returns `ok: false` with `validation_errors: [...]` listing every issue with path-pointed prefixes (e.g. `children[2].properties.text: property does not exist on Sprite2D`), and ZERO mutation. Previously a typo like `properties: {color: ...}` on a Sprite2D would be silently swallowed; now it surfaces immediately.',
+    description: 'Add a node (optionally with a script, groups, properties and a whole tree of children) to an existing scene file in one call. Children format: {name|node_name, type|node_type, properties?, script?, groups?, children?}; unknown child keys are errors.\n\n**All-or-nothing:** the node tree is built and checked in memory before the scene is touched. Every problem (unknown types or properties with suggestions, wrong value types, missing resource files, bad scripts) is reported together in `validation_errors` with path-pointed prefixes, and nothing is saved unless everything is valid. Returns the new node\'s `node_path`.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -97,7 +97,7 @@ export const sceneTools: ToolDefinition[] = [
         },
         properties: {
           type: 'object',
-          description: 'Optional dictionary of properties to set on the node'
+          description: 'Optional properties to set on the node. Values are read according to each property type: numbers/bools/strings; enums by name (\"Nearest\") or number; Vector2/3 as {x, y[, z]} or [x, y[, z]]; Color as {r, g, b, a?} (0..1), \"#ff8800\" or \"red\"; resources (texture, shape, mesh, material, stream, ...) as a file path \"res://icon.png\" or an inline resource {type: \"CircleShape2D\", radius: 12} whose other keys are its properties. Same forms as set_node_properties.'
         },
         script: {
           type: 'string',
@@ -137,7 +137,8 @@ export const sceneTools: ToolDefinition[] = [
   },
   {
     name: 'modify_node_property',
-    description: 'Modify a single property on a node in a .tscn scene file. For multiple properties at once use set_node_properties. ALWAYS use a tool to modify .tscn files \u2014 NEVER edit them as text. To attach or change a script, use attach_script (NOT modify_node_property with property="script") \u2014 modify_node_property only rewrites the .tscn on disk, leaving the editor\'s in-memory node without the script, which makes connect_signal fail.',
+    deprecated: { replacement: 'set_node_properties with {properties: {<property_name>: <value>}}.' },
+    description: 'Deprecated alias of set_node_properties for a single property.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -154,7 +155,7 @@ export const sceneTools: ToolDefinition[] = [
           description: 'Name of the property to modify (position, scale, rotation, modulate, visible, etc.)'
         },
         value: {
-          description: 'New value for the property. ANY JSON value accepted: primitives (numbers, strings, booleans, null), arrays, or objects. Use the {type, ...} discriminated form for Godot variant types. Common forms: numeric (e.g. 1.5), boolean (true), string ("hello"), Vector2 ({type:"Vector2",x,y}), Vector3 ({type:"Vector3",x,y,z}), Color ({type:"Color",r,g,b,a}), Quaternion ({type:"Quaternion",x,y,z,w}), Basis ({type:"Basis",euler:{x,y,z}}), Transform3D ({type:"Transform3D",basis:{...},origin:{x,y,z}}), AABB ({type:"AABB",position:{x,y,z},size:{x,y,z}}), Rect2 ({type:"Rect2",x,y,width,height}), NodePath (string starting with "."). For Resource-typed properties (Texture2D, Mesh, Material, Shape, etc.) DO NOT pass values here \u2014 use set_resource_property, set_sprite_texture, set_mesh, set_material, or set_collision_shape.'
+          description: 'New value, read according to the property type (same forms as set_node_properties).'
         }
       },
       required: ['scene_path', 'property_name', 'value']
@@ -250,7 +251,8 @@ export const sceneTools: ToolDefinition[] = [
   },
   {
     name: 'set_collision_shape',
-    description: 'Create and assign a collision shape resource to a CollisionShape2D or CollisionShape3D node. Supports: CircleShape2D, RectangleShape2D, CapsuleShape2D, SphereShape3D, BoxShape3D, etc.',
+    deprecated: { replacement: 'set_node_properties with {properties: {"shape": {"type": "CircleShape2D", "radius": 12}}}.' },
+    description: 'Deprecated alias: assigns {type: shape_type, ...shape_params} to the node\'s shape property.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -276,7 +278,8 @@ export const sceneTools: ToolDefinition[] = [
   },
   {
     name: 'set_sprite_texture',
-    description: 'Assign a texture resource to a Sprite2D / Sprite3D / TextureRect node in a .tscn scene file. Modes:\n  \u2022 FromPath  \u2014 load any texture file from disk (png/jpg/webp/svg/.tres) via load(). Returns whatever Texture2D the importer produced (usually CompressedTexture2D). Most common after generate_2d_asset.\n  \u2022 ImageTexture (DEPRECATED ALIAS for FromPath, kept for back-compat)\n  \u2022 NewImageTexture \u2014 force-create an ImageTexture (in-memory) from a raw image file.\n  \u2022 PlaceholderTexture2D \u2014 in-scene placeholder of a given size.\n  \u2022 GradientTexture2D / NoiseTexture2D \u2014 procedural textures.\nResponse always includes texture_class (the actual Godot class the texture decoded to), width, height, and texture_path so the agent can confirm what landed without an extra get_resource_info call.',
+    deprecated: { replacement: 'set_node_properties with {properties: {"texture": "res://icon.png"}} (or an inline texture like {"type": "GradientTexture2D", "width": 64}). Works on any node with a texture property.' },
+    description: 'Deprecated alias: assigns a texture to the node\'s texture property.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -290,8 +293,7 @@ export const sceneTools: ToolDefinition[] = [
         },
         texture_type: {
           type: 'string',
-          enum: ['FromPath', 'ImageTexture', 'NewImageTexture', 'PlaceholderTexture2D', 'GradientTexture2D', 'NoiseTexture2D'],
-          description: 'How to obtain the texture. Prefer FromPath for assets on disk.'
+          description: 'FromPath (alias ImageTexture), NewImageTexture, or a Texture2D class such as GradientTexture2D, NoiseTexture2D, PlaceholderTexture2D.'
         },
         texture_params: {
           type: 'object',
@@ -325,7 +327,7 @@ export const sceneTools: ToolDefinition[] = [
         },
         properties: {
           type: 'object',
-          description: 'Optional property overrides on the instance root (e.g., {position: {type: "Vector3", x: 5, y: 0, z: 10}})'
+          description: 'Optional property overrides on the instance root, e.g. {"position": {"x": 5, "y": 0, "z": 10}}. Same value forms as set_node_properties; checked before the parent scene is touched.'
         }
       },
       required: ['scene_path', 'instance_path']
@@ -333,7 +335,8 @@ export const sceneTools: ToolDefinition[] = [
   },
   {
     name: 'set_mesh',
-    description: 'Create and assign a mesh resource to a MeshInstance3D node. REQUIRED to make 3D geometry visible. Primitive types: BoxMesh, SphereMesh, CylinderMesh, CapsuleMesh, PlaneMesh, PrismMesh, TorusMesh, QuadMesh, TextMesh. Or load from file.',
+    deprecated: { replacement: 'set_node_properties with {properties: {"mesh": {"type": "BoxMesh", "size": {"x": 1, "y": 1, "z": 1}}}} or {"mesh": "res://model.tres"}.' },
+    description: 'Deprecated alias: assigns {type: mesh_type, ...mesh_params} (or a file) to the node\'s mesh property.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -359,7 +362,8 @@ export const sceneTools: ToolDefinition[] = [
   },
   {
     name: 'set_material',
-    description: 'Create and assign a material to a MeshInstance3D, CSG, or GeometryInstance3D node. Supports StandardMaterial3D or loading from file.',
+    deprecated: { replacement: 'set_node_properties with {properties: {"material_override": {"type": "StandardMaterial3D", "albedo_color": "red"}}} (2D/CSG: "material"; one surface: "surface_material_override/0").' },
+    description: 'Deprecated alias: assigns a material to material_override, surface_material_override/<surface_index> or material, depending on the node.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -475,15 +479,15 @@ export const sceneTools: ToolDefinition[] = [
   },
   {
     name: 'set_node_properties',
-    description: 'Set MULTIPLE properties on a node in a single tool call. **Atomic pre-validation** — every entry is checked (name exists on the node\'s class plus its attached script\'s @export\'d properties; Resource-typed properties must use the dedicated resource tools) BEFORE anything is written. If ANY entry fails, the response is `ok: false` with a `validation_errors` array (e.g. `properties.color: property does not exist on Sprite2D`) and ZERO mutation occurs — no scene save, no half-applied state. On success, returns the `applied` list with old/new values per property. Resource-typed properties must use set_resource_property / set_sprite_texture / set_mesh / set_material / set_collision_shape.',
+    description: 'Set one or more properties on a node in a .tscn scene. This is THE tool for changing node properties, including resources. ALWAYS use it (or create_scene/add_node) to change scenes; never edit .tscn files as text.\n\nValues are read according to each property\'s type:\n  \u2022 numbers, bools, strings; enums by name ("Nearest", "TEXTURE_FILTER_NEAREST") or number\n  \u2022 Vector2/3: {x, y[, z]} or [x, y[, z]]; Color: {r, g, b, a?} (0..1), "#ff8800" or "red"; Rect2: {x, y, width, height}\n  \u2022 resources (texture, shape, mesh, material, stream, font, ...): a file path "res://icon.png", or an inline resource {"type": "RectangleShape2D", "size": {"x": 32, "y": 16}} whose other keys are its properties (nested resources work)\n  \u2022 a property of a resource the node holds, via a colon path: {"shape:radius": 12, "material:albedo_color": "red"}\n  \u2022 null clears a resource property\n\n**All-or-nothing:** every value is checked first and the scene is saved only if every write was accepted. Each write is read back: values Godot adjusted (clamped, wrapped) are listed in `adjusted`; a write Godot ignored is an error. Errors name the property and suggest close names. Scripts: use attach_script. Response: {ok, applied: [{property, old, new}], adjusted?}.',
     inputSchema: {
       type: 'object',
       properties: {
-        scene_path: { type: 'string', description: 'Path to the .tscn scene file' },
+        scene_path: { type: 'string', description: 'Path to the .tscn scene file, or to a .tres/.res resource file to edit that resource directly (node_path then omitted)' },
         node_path: { type: 'string', description: 'Path to the node (. for root, or relative path)' },
         properties: {
           type: 'object',
-          description: 'Map of property_name -> value. Each value follows the same form as modify_node_property.value (primitives, arrays, or {type:"Vector3",...} discriminated objects).'
+          description: 'Map of property name (or colon path like "material:albedo_color") -> value. See the tool description for value forms.'
         }
       },
       required: ['scene_path', 'properties']
@@ -536,7 +540,8 @@ export const sceneTools: ToolDefinition[] = [
   },
   {
     name: 'set_resource_property',
-    description: 'Modify a property on a Resource that is currently held by a node (or by another resource attached to that node). Use this to tweak shape radii, material colors, gradient stops, etc., WITHOUT recreating the resource. resource_path walks from the node down to the resource using "/"-separated property names, e.g. "shape", "material", or "material/next_pass". After the change, saves the scene.',
+    deprecated: { replacement: 'set_node_properties with a colon path, e.g. {properties: {"shape:radius": 12, "material:albedo_color": "red"}}.' },
+    description: 'Deprecated alias: sets <resource_path>:<property_name> through set_node_properties.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -544,14 +549,14 @@ export const sceneTools: ToolDefinition[] = [
         node_path: { type: 'string', description: 'Path to the node owning the resource' },
         resource_path: { type: 'string', description: 'Path from node to the target resource via property names. Examples: "shape", "material", "material/next_pass"' },
         property_name: { type: 'string', description: 'Property on the target resource to set (e.g. "radius", "albedo_color")' },
-        value: { description: 'New value (same shape as modify_node_property.value)' }
+        value: { description: 'New value (same forms as set_node_properties)' }
       },
       required: ['scene_path', 'resource_path', 'property_name', 'value']
     }
   },
   {
     name: 'save_resource_to_file',
-    description: 'Save a Resource currently held by a node (or sub-resource) to a standalone .tres file so it can be referenced by other scenes / shared / committed. The node\'s property is then re-pointed to the loaded-from-disk version, so future set_resource_property calls write through to that file. Works for any Resource subclass: Material, Mesh, Shape, Curve, Gradient, etc.',
+    description: 'Save a Resource currently held by a node (or sub-resource) to a standalone .tres file so it can be referenced by other scenes / shared / committed. The node\'s property is then re-pointed to the saved file. To change the file later, call set_node_properties with scene_path set to the .tres (this affects every scene that uses it). Works for any Resource subclass: Material, Mesh, Shape, Curve, Gradient, etc.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -593,19 +598,20 @@ export const sceneTools: ToolDefinition[] = [
   },
   {
     name: 'connect_signal',
-    description: 'Connect a signal between two nodes inside a .tscn scene file. The target script must define the method (will refuse otherwise). Equivalent to clicking the "+" in the editor\'s Node > Signals panel and persists the connection to the .tscn. NOTE: scripts must be attached via attach_script (NOT via modify_node_property), otherwise the editor\'s in-memory node will not see the script and this tool will reject the connection.',
+    description: 'Connect a signal between two nodes inside a .tscn scene file. The target script must define the method (will refuse otherwise). Equivalent to clicking the "+" in the editor\'s Node > Signals panel and persists the connection to the .tscn. NOTE: scripts must be attached via attach_script, otherwise the editor\'s in-memory node will not see the script and this tool will reject the connection.',
     inputSchema: {
       type: 'object',
       properties: {
         scene_path: { type: 'string' },
-        from_node: { type: 'string', description: 'Path to the emitting node' },
+        from_node_path: { type: 'string', description: 'Path to the emitting node (scene-relative, "." = root)' },
         signal: { type: 'string', description: 'Signal name on the emitting node' },
-        to_node: { type: 'string', description: 'Path to the receiving node' },
+        to_node_path: { type: 'string', description: 'Path to the receiving node (scene-relative, "." = root)' },
         method: { type: 'string', description: 'Method name on the receiving node\'s script' },
         flags: { type: 'number', description: 'Connection flags (CONNECT_DEFERRED=1, CONNECT_PERSIST=2, CONNECT_ONE_SHOT=4). Default 0.' }
       },
-      required: ['scene_path', 'from_node', 'signal', 'to_node', 'method']
-    }
+      required: ['scene_path', 'from_node_path', 'signal', 'to_node_path', 'method']
+    },
+    renamedArgs: { from_node: 'from_node_path', to_node: 'to_node_path' }
   },
   {
     name: 'disconnect_signal',
@@ -614,13 +620,14 @@ export const sceneTools: ToolDefinition[] = [
       type: 'object',
       properties: {
         scene_path: { type: 'string' },
-        from_node: { type: 'string' },
+        from_node_path: { type: 'string', description: 'Path to the emitting node' },
         signal: { type: 'string' },
-        to_node: { type: 'string' },
+        to_node_path: { type: 'string', description: 'Path to the receiving node' },
         method: { type: 'string' }
       },
-      required: ['scene_path', 'from_node', 'signal', 'to_node', 'method']
-    }
+      required: ['scene_path', 'from_node_path', 'signal', 'to_node_path', 'method']
+    },
+    renamedArgs: { from_node: 'from_node_path', to_node: 'to_node_path' }
   },
   {
     name: 'call_method',
@@ -633,7 +640,7 @@ export const sceneTools: ToolDefinition[] = [
       "**node_path resolution:**\n" +
       "  • editor mode — relative to scene root, e.g. \"Player\" or \"UI/HUD/HealthLabel\", or \".\" for root.\n" +
       "  • runtime mode — absolute (\"/root/Main/Player\") OR relative to current_scene (\"Player\"). Same rules as query_runtime_node.\n\n" +
-      "**args** — array of positional arguments. Each follows the same form as `modify_node_property.value`: primitives (`1.5`, `\"hello\"`, `true`, `null`), arrays, or `{type:\"Vector2\",x,y}` / `{type:\"Color\",r,g,b,a}` / `{type:\"NodePath\",...}` / `{type:\"Resource\",path:\"res://...\"}` discriminated objects.\n\n" +
+      "**args** — positional arguments, read according to the method's parameter types (same value forms as set_node_properties): a Texture2D parameter takes `\"res://icon.png\"`, a Vector2 takes `{x, y}`, a Color takes `\"red\"`. For `set(property, value)` the value is read by that property's type. Wrong types are errors, not silent no-ops. Untyped (Variant) parameters take plain JSON; use `{type:\"Resource\", path}` or `{type:\"Vector2\", x, y}` to pass typed values there.\n\n" +
       "**Method validation** — on miss, returns `closest_matches` (top similar method names) and an `available_methods_sample` so the AI can self-correct. Arity is also pre-checked against `MethodInfo` (with default-arg awareness).\n\n" +
       "**Destructive denylist** — `queue_free`, `free`, `set_script`, `remove_child`, `replace_by`, `reparent` require `confirm: true`. In runtime mode, calls directly on `/root/<name>` (likely autoloads or the active scene root) also require confirm. Use `attach_script` / `detach_script` / `remove_node` instead of the corresponding raw method calls in editor mode.\n\n" +
       "**Coroutines** — methods containing `await` return a `GDScriptFunctionState`. Such calls are dispatched fire-and-forget: `is_coroutine: true, awaited: false` is reported, side effects still run, but the return value is not captured. Follow up with `wait` + `query_runtime_node` to observe results.\n\n" +
@@ -651,7 +658,7 @@ export const sceneTools: ToolDefinition[] = [
         },
         args: {
           type: 'array',
-          items: { description: 'Positional argument. Primitive, array, or {type:"Vector2"|"Vector3"|"Color"|"Resource"|...} discriminated object — same form as modify_node_property.value.' },
+          items: { description: 'Positional argument, read according to the method signature.' },
           description: 'Positional arguments to pass. Default: []. Arity is pre-checked against the method signature (allowing for default arguments).'
         },
         scene_path: {

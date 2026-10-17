@@ -1,0 +1,6 @@
+; Headless test project for the godot_mcp plugin. The addon is symlinked in;
+; run tests with: tests/godot/run.sh
+config_version=5
+
+[application]
+config/name="godot_mcp_tests"

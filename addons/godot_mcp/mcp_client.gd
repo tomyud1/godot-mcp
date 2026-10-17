@@ -103,9 +103,18 @@ func _handle_connect() -> void:
 		&"type": &"godot_ready",
 		&"role": &"editor",
 		&"project_path": _project_path,
+		&"plugin_version": _plugin_version(),
+		&"godot_version": Engine.get_version_info().get("string", ""),
 	})
 
 	connected.emit()
+
+## Version from plugin.cfg, so the server can warn when plugin and server differ.
+func _plugin_version() -> String:
+	var cfg := ConfigFile.new()
+	if cfg.load("res://addons/godot_mcp/plugin.cfg") != OK:
+		return ""
+	return str(cfg.get_value("plugin", "version", ""))
 
 func _handle_disconnect() -> void:
 	_is_connected = false

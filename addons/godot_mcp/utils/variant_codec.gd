@@ -98,7 +98,24 @@ static func serialize_value(value: Variant) -> Variant:
 				&"position": serialize_value(value.position),
 				&"size": serialize_value(value.size)
 			}
-		TYPE_ARRAY:
+		TYPE_RECT2I:
+			return {&"type": &"Rect2i", &"x": value.position.x, &"y": value.position.y,
+				&"width": value.size.x, &"height": value.size.y}
+		TYPE_VECTOR4:
+			return {&"type": &"Vector4", &"x": value.x, &"y": value.y, &"z": value.z, &"w": value.w}
+		TYPE_VECTOR4I:
+			return {&"type": &"Vector4i", &"x": value.x, &"y": value.y, &"z": value.z, &"w": value.w}
+		TYPE_PLANE:
+			return {&"type": &"Plane", &"normal": serialize_value(value.normal), &"d": value.d}
+		TYPE_TRANSFORM2D:
+			return {&"type": &"Transform2D", &"x": serialize_value(value.x),
+				&"y": serialize_value(value.y), &"origin": serialize_value(value.origin)}
+		TYPE_STRING_NAME, TYPE_NODE_PATH:
+			return str(value)
+		TYPE_ARRAY, TYPE_PACKED_BYTE_ARRAY, TYPE_PACKED_INT32_ARRAY, TYPE_PACKED_INT64_ARRAY, \
+		TYPE_PACKED_FLOAT32_ARRAY, TYPE_PACKED_FLOAT64_ARRAY, TYPE_PACKED_STRING_ARRAY, \
+		TYPE_PACKED_VECTOR2_ARRAY, TYPE_PACKED_VECTOR3_ARRAY, TYPE_PACKED_VECTOR4_ARRAY, \
+		TYPE_PACKED_COLOR_ARRAY:
 			var out: Array = []
 			for item in value:
 				out.append(serialize_value(item))
@@ -109,9 +126,19 @@ static func serialize_value(value: Variant) -> Variant:
 				out[key] = serialize_value(value[key])
 			return out
 		TYPE_OBJECT:
-			if value and value is Resource and value.resource_path:
-				return {&"type": &"Resource", &"path": value.resource_path}
-			return null
+			# Resources saved in their own file round-trip through the property
+			# writer as {type:"Resource", path}. Embedded ones (inline in a
+			# scene) have no loadable path, so they're flagged instead.
+			if value == null:
+				return null
+			if value is Resource:
+				var rp: String = value.resource_path
+				if not rp.is_empty() and not rp.contains("::"):
+					return {&"type": &"Resource", &"class": value.get_class(), &"path": rp}
+				return {&"type": &"Resource", &"class": value.get_class(), &"embedded": true}
+			if value is Node:
+				return {&"type": &"Object", &"class": value.get_class(), &"name": str(value.name)}
+			return {&"type": &"Object", &"class": value.get_class()}
 		_:
 			return value
 

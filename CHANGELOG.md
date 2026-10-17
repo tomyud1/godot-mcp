@@ -1,5 +1,53 @@
 # Changelog
 
+## [0.6.1] - 2026-10-17
+
+A reliability release built from agent feedback: several tools reported success while changing nothing. Fixed at the root with three shared foundations instead of per-tool patches, and the tool list shrinks from 75 to 69 because six specialized tools are no longer needed. Every existing call keeps working.
+
+### Added
+
+- **One type-guided path for writing properties (`utils/property_writer.gd`).** Every tool that writes a property or passes a method argument now goes through it: `create_scene`, `add_node`, `instance_scene`, `set_node_properties`, `call_method` (editor and runtime) and the visualizer. The property's declared type decides how a JSON value is read:
+  - **Resources by path or inline.** A Texture2D/Shape/Mesh/Material/AudioStream/... property accepts `"res://icon.png"`, `{type:"Resource", path}`, or an inline resource such as `{type:"RectangleShape2D", size:{x:32, y:16}}` whose other keys are its properties (nested resources work). The loaded or created resource must match the property's class.
+  - **Colon paths into held resources:** `{"shape:radius": 12, "material:albedo_color": "red"}`, including into a resource assigned in the same call.
+  - **Strict, friendly values.** Enums by name (`"Nearest"`, `"TEXTURE_FILTER_NEAREST"`) or number; colors as `"#ff8800"`, `"red"` or `{r,g,b,a}`; vectors as `{x,y}` or `[x,y]`. Missing or unknown components, non-integral ints, and values of the wrong kind are errors. A String property keeps `"res://..."` as text.
+  - **Typed arrays and dictionaries** (`Array[Texture2D]`, typed `Dictionary`) are built with the right element types.
+  - **Writes are read back.** A value Godot adjusted (clamped, wrapped) is returned in `adjusted`; a write Godot ignored is an error. Properties are applied in Godot's declared order, so `{frame, hframes}` works in any key order.
+  - **Errors name the exact property and suggest close names** (`nodes[1].properties.texure: 'texure' is not a property of Sprite2D (did you mean 'texture'?)`).
+- **Argument checking for every tool call (server).** Calls are checked against each tool's schema before anything reaches Godot. Unknown arguments, missing required ones, wrong types and invalid enum values are rejected with a suggestion and a `usage` line; `batch_execute` sub-commands are checked the same way with `commands[i]` in each message. JSON-stringified objects, numeric/boolean strings and `null` for optional arguments are still accepted.
+- **Schema/plugin agreement test** (`plugin-args.test.ts`): fails if a schema declares an argument the plugin never reads, or the plugin reads one the schema doesn't declare. It found five undeclared arguments on its first run (below).
+- **`set_node_properties` can edit a resource file directly**: pass a `.tres`/`.res` as `scene_path` (undoable like a scene).
+- **`query_runtime_node` returns the node's state by default:** with no `properties` it lists every script variable plus every stored property that differs from its class default (a Label's `text`, `velocity`, ...), and `global_position`. Explicit names support colon paths; unknown names are errors with suggestions. Large arrays and strings are truncated.
+- **Plugin version handshake.** The plugin reports its version and Godot version on connect; `get_godot_status` shows `plugin_version`, `godot_version`, and a `warning` when plugin and server versions differ.
+- **Headless plugin test suite** (`tests/godot/run.sh`): runs against a real Godot binary in game mode and inside the editor (placeholder scripts, real EditorPlugin). 91 + 80 checks.
+
+### Changed
+
+- **Six tools hidden in favor of `set_node_properties`:** `modify_node_property`, `set_resource_property`, `set_collision_shape`, `set_sprite_texture`, `set_mesh`, `set_material`. They no longer appear in the tool list but remain callable (also inside `batch_execute`), now run through the shared writer, and their responses include a `deprecation_notice` with the equivalent call.
+- **Consistent argument names.** `run_scene.scene` → `scene_path`, `list_dir.root` → `path`, `map_project.root` → `path`, `connect_signal`/`disconnect_signal` `from_node`/`to_node` → `from_node_path`/`to_node_path`. The old names are still accepted. The plugin keeps receiving the old names, so any plugin version works with any server version.
+- **`edit_script` takes flat arguments:** `{path, old_text, new_text, context_before?, context_after?}`. The older `{edit: {file, old_snippet, new_snippet}}` shape is still accepted.
+- **`create_scene` and `add_node` build the whole node tree in memory first** and report every problem in one response; the scene file is written only when everything is valid. `add_node` now returns the new node's `node_path`. `create_scene`'s default root name is the file name in PascalCase, as its description always claimed (it was "Node").
+- **`send_input` rejects unknown key names, unknown actions and unknown event fields** instead of sending nothing. Key events now set both `keycode` and `physical_keycode`.
+- **`call_method` decodes arguments by the method's parameter types**; for `set(property, value)` the value is decoded by that property's type.
+- **Serialized values:** embedded resources are returned as `{type:"Resource", class, embedded:true}` instead of `null`; Node values, Vector4, Rect2i, Plane, Transform2D, NodePath and packed arrays are now serialized.
+- Guides rewritten for the new property model (`scene-editing`), plus autoload and coroutine notes (`testing-loop`), new troubleshooting entries, and a tool index without tools that don't exist.
+
+### Fixed
+
+- **`create_scene` / `add_node` / `instance_scene` silently dropped resource values** like `"texture": "res://x.png"` while reporting success.
+- **`call_method` returned `ok: true` but changed nothing** when passed `{type:"Resource", path}` (e.g. `set_texture`, `set("texture", ...)`).
+- **`set_sprite_texture` reported success on nodes without a `texture` property.** (It always worked on any node *with* one, such as PointLight2D; that's now documented.)
+- **`run_scene` ignored a misspelled scene argument and launched the main scene**; `create_scene` ignored unknown top-level keys. Both are now argument errors.
+- **Edits to a shared `.tres` through a node were silently lost** on save (`set_resource_property` on a resource saved with `save_resource_to_file`). They are now refused with directions; edit the file itself with `set_node_properties`.
+- **Unknown shape/mesh/material parameters were ignored** (e.g. `extents` on a 4.x shape); they're now errors with suggestions.
+- **Undeclared arguments added to schemas:** `read_file.max_bytes`, `search_project.max_results` and `case_sensitive`, `list_dir.include_hidden`; the old spellings `set_editor_selection.node_path` and `close_editor_tabs.scenes` are accepted as aliases.
+- Stale versioning note (said 0.5.0).
+
+### Packaging
+
+- The plugin folder now contains `LICENSE`, so the Asset Store / Asset Library download includes it.
+- Published on the new Godot Asset Store as **Godlink MCP**; README install steps cover the Asset Store (4.7+), AssetLib (4.6 and older) and manual install.
+- Requires Godot 4.4 or newer (the plugin already used typed-Dictionary syntax from 4.4).
+
 ## [0.6.0] - 2026-08-24
 
 ### Breaking Changes

@@ -1,0 +1,6 @@
+.godot/
+addons/
+_tmp/
+*.import
+*.uid
+project.godot

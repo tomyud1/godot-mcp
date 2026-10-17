@@ -149,7 +149,7 @@ export const projectTools: ToolDefinition[] = [
   },
   {
     name: 'get_editor_selection',
-    description: 'Return the node path(s) the user has currently selected in the Godot editor (Scene dock). **Call this FIRST whenever the user refers to a node without naming a path** — phrases like "this node", "fix this", "change the color here", "delete that", "make this red", "the selected one", "what I have selected", etc. Returns an empty `selection` array if nothing is selected; that\'s informational, not an error. Selection is editor UI state (not stored in the .tscn) and is scoped to the currently edited scene tab — instances from a non-active tab will not appear.\n\nResponse shape: `{ok, scene_path, selection: [{path, name, type}], count, reason, message?}`. `reason` is a stable machine-readable enum — `"ok"` (something is selected), `"none_selected"` (scene open but no nodes selected), or `"no_scene_open"` (no scene tab open at all) — so the agent can branch without string-matching the human-readable `message`. Paths are scene-relative ("." = scene root, "UI/HUD/Label" for nested) and match the format produced by `find_nodes` and `scene_tree_dump`, so they can be passed directly to `modify_node_property`, `set_node_properties`, `attach_script`, `remove_node`, etc. See the `selection-workflow` guide for end-to-end patterns.',
+    description: 'Return the node path(s) the user has currently selected in the Godot editor (Scene dock). **Call this FIRST whenever the user refers to a node without naming a path** — phrases like "this node", "fix this", "change the color here", "delete that", "make this red", "the selected one", "what I have selected", etc. Returns an empty `selection` array if nothing is selected; that\'s informational, not an error. Selection is editor UI state (not stored in the .tscn) and is scoped to the currently edited scene tab — instances from a non-active tab will not appear.\n\nResponse shape: `{ok, scene_path, selection: [{path, name, type}], count, reason, message?}`. `reason` is a stable machine-readable enum — `"ok"` (something is selected), `"none_selected"` (scene open but no nodes selected), or `"no_scene_open"` (no scene tab open at all) — so the agent can branch without string-matching the human-readable `message`. Paths are scene-relative ("." = scene root, "UI/HUD/Label" for nested) and match the format produced by `find_nodes` and `scene_tree_dump`, so they can be passed directly to `set_node_properties`, `attach_script`, `remove_node`, etc. See the `selection-workflow` guide for end-to-end patterns.',
     inputSchema: {
       type: 'object',
       properties: {}
@@ -170,11 +170,13 @@ export const projectTools: ToolDefinition[] = [
         },
         mode: {
           type: 'string',
+          enum: ['replace', 'add'],
           description: '"replace" (default) clears the existing selection first; "add" appends to it.'
         }
       },
       required: ['node_paths']
-    }
+    },
+    aliases: { node_path: 'node_paths' }
   },
   {
     name: 'close_editor_tabs',
@@ -190,10 +192,11 @@ export const projectTools: ToolDefinition[] = [
         paths: {
           type: 'array',
           items: { type: 'string' },
-          description: 'Optional list of paths to close (with or without "res://"). Omit, pass an empty array, or pass null to close ALL open tabs of the chosen kind. Paths not currently open are returned in `not_open` rather than causing an error.'
+          description: 'Optional list of paths to close (with or without "res://"). Omit or pass an empty array to close ALL open tabs of the chosen kind. Paths not currently open are returned in `not_open` rather than causing an error.'
         }
       }
-    }
+    },
+    aliases: { scenes: 'paths' }
   },
   {
     name: 'list_settings',
@@ -255,9 +258,9 @@ export const projectTools: ToolDefinition[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        scene: {
+        scene_path: {
           type: 'string',
-          description: 'Scene to run: omit for main scene, "current" for the currently open scene, or a res:// path for a specific scene'
+          description: 'Scene to run: omit for the main scene, "current" for the scene open in the editor, or a res:// path.'
         },
         block_until_started: {
           type: 'boolean',
@@ -276,7 +279,8 @@ export const projectTools: ToolDefinition[] = [
           description: 'Watermark the Output panel and Debugger > Errors tab at launch so get_console_log / get_errors only return entries from THIS run, preventing stale output from a previous run being read as current errors (default: true). Read-side only \u2014 the human\'s Output panel scrollback is preserved. Set false to read the full accumulated history.'
         }
       }
-    }
+    },
+    renamedArgs: { scene: 'scene_path' }
   },
   {
     name: 'stop_scene',
@@ -323,13 +327,13 @@ export const projectTools: ToolDefinition[] = [
   },
   {
     name: 'send_input',
-    description: 'Synthesize an InputEvent and dispatch it to the running game via Input.parse_input_event. REQUIRES the game to be running with the MCPRuntime autoload connected. Use this to drive automated tests: click buttons, press keys, fire input actions. For multi-step interactions, alternate send_input \u2192 wait \u2192 query_runtime_node / take_screenshot.',
+    description: 'Synthesize an InputEvent and dispatch it to the running game via Input.parse_input_event. REQUIRES the game to be running with the MCPRuntime autoload connected. Use this to drive automated tests: click buttons, press keys, fire input actions. For multi-step interactions, alternate send_input \u2192 wait \u2192 query_runtime_node / take_screenshot. Unknown key names, unknown actions and unknown event fields are errors (they used to be ignored), so a returned ok means the event really fired.',
     inputSchema: {
       type: 'object',
       properties: {
         event: {
           type: 'object',
-          description: 'InputEvent descriptor:\n  Key: {type:"key", key:"Space", pressed:true, shift?:bool, ctrl?:bool, alt?:bool} or {type:"key", keycode:32, pressed:true}\n  Mouse button: {type:"mouse_button", button_index:1, pressed:true, position:{x,y}, double_click?:bool} (1=left, 2=right, 3=middle)\n  Mouse motion: {type:"mouse_motion", position:{x,y}, relative?:{x,y}}\n  Action (named input from the InputMap): {type:"action", action:"jump", pressed:true, strength?:1.0}'
+          description: 'InputEvent descriptor:\n  Key: {type:"key", key:"Space", pressed:true, shift?:bool, ctrl?:bool, alt?:bool, meta?:bool, echo?:bool} or {type:"key", keycode:32, pressed:true}\n  Mouse button: {type:"mouse_button", button_index:1, pressed:true, position:{x,y}, double_click?:bool} (1=left, 2=right, 3=middle)\n  Mouse motion: {type:"mouse_motion", position:{x,y}, relative?:{x,y}}\n  Action (named input from the InputMap): {type:"action", action:"jump", pressed:true, strength?:1.0}'
         }
       },
       required: ['event']
@@ -337,12 +341,12 @@ export const projectTools: ToolDefinition[] = [
   },
   {
     name: 'query_runtime_node',
-    description: 'Query a live node in the running scene tree. REQUIRES the game to be running with the MCPRuntime autoload connected. Returns class, path, valid, groups, and a map of property values. By default returns position, global_position, rotation, scale, visible, modulate \u2014 pass `properties:["..."]` to override. Set include_children=true to also list direct child nodes.',
+    description: 'Read a live node in the running game. REQUIRES the game to be running with the MCPRuntime autoload connected. Returns class, path, script, groups and property values.\n\nBy default (no `properties`) it returns everything that describes the node\'s current state: all script variables (health, score, ...) plus every stored property that differs from the class default (a Label\'s text, a body\'s velocity, ...), plus global_position for 2D/3D/UI nodes. Pass `properties: ["text", "material:albedo_color"]` to read specific ones (colon paths read into resources); unknown names are errors with suggestions. Large arrays and strings are truncated. Set include_children=true to list direct children.',
     inputSchema: {
       type: 'object',
       properties: {
         node_path: { type: 'string', description: 'Absolute path (e.g. /root/Main/Player) or relative to current_scene.' },
-        properties: { type: 'array', items: { type: 'string' }, description: 'Property names to read. Default: position, global_position, rotation, scale, visible, modulate.' },
+        properties: { type: 'array', items: { type: 'string' }, description: 'Property names (or colon paths) to read. Omit to get every script variable and every property that differs from its default.' },
         include_children: { type: 'boolean', description: 'List direct children {name, class}. Default: false.' },
         include_groups: { type: 'boolean', description: 'Include the node\'s group memberships. Default: true.' }
       },

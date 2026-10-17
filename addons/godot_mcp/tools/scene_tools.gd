@@ -8,6 +8,7 @@ class_name SceneTools
 ##          get_node_spatial_info, measure_node_distance, snap_node_to_grid
 
 const VariantCodec = preload("res://addons/godot_mcp/utils/variant_codec.gd")
+const PropertyWriter = preload("res://addons/godot_mcp/utils/property_writer.gd")
 
 const _SKIP_PROPS: Dictionary[String, bool] = {
 	"script": true, "owner": true,
@@ -99,145 +100,149 @@ func _find_node(scene_root: Node, node_path: String) -> Node:
 func _parse_value(value: Variant) -> Variant:
 	return VariantCodec.parse_value(value)
 
-func _set_node_properties(node: Node, properties: Dictionary) -> void:
-	for prop_name: String in properties:
-		var prop_value = _parse_value(properties[prop_name])
-		node.set(prop_name, prop_value)
-
-
 # =============================================================================
-# Pre-validation walker (roadmap #7) — validate-then-mutate for compound tools.
+# Building nodes from specs (create_scene `nodes`, add_node + `children`)
 # =============================================================================
-## Validate a node spec dict (the args of add_node, OR a `children`/`nodes`
-## entry of add_node/create_scene) WITHOUT mutating anything. Walks the entire
-## tree recursively and returns an Array of path-pointed error strings, e.g.
-##   "children[2].properties.text: property does not exist on Sprite2D"
-## Empty array == valid; caller can proceed.
-##
-## `path_prefix` is the JSON-path-like prefix for errors:
-##   ""              top-level (add_node)
-##   "nodes[1]"      top-level (create_scene)
-##   "children[2]"   a recursed child
-## `require_name` is true only when the spec is the top-level add_node call
-## (where node_name is required); false for children and create_scene's nodes
-## entries (Godot will auto-name those if omitted).
-##
-## What we check (cheap, no scene load required):
-##   - node_type present and ClassDB.class_exists()
-##   - script (if provided): FileAccess.file_exists() AND is a Script resource
-##   - every key in `properties`: exists on node_type (or on the attached
-##     script's @export list). Property TYPE compatibility is NOT checked
-##     here — runtime catches type errors with clear messages.
-##   - children is an Array, every entry is a Dictionary, recurse.
-##
-## What we don't check (intentionally):
-##   - Property VALUE types (variant codec handles JSON→variant coercion).
-##   - res:// paths inside property values (would need per-property variant
-##     parsing; too complex for the marginal benefit).
-##   - groups membership (any non-empty string is a valid group name).
-func _validate_node_spec(spec: Dictionary, path_prefix: String, require_name: bool) -> Array:
-	var errors: Array = []
-	var prefix: String = path_prefix + "." if not path_prefix.is_empty() else ""
+## Known node-spec keys. Anything else is a typo (common agent mistakes:
+## parent_path, class, kind) and is reported instead of being ignored.
+const _CHILD_SPEC_KEYS: PackedStringArray = [
+	"name", "node_name", "type", "node_type", "script",
+	"properties", "children", "groups",
+]
 
-	# node_name (only required for the top-level add_node call).
-	var name_str: String = str(spec.get(&"node_name", spec.get(&"name", "")))
-	if require_name and name_str.strip_edges().is_empty():
+## Build a node and its children from a spec, entirely in memory. No scene is
+## loaded or saved here, so callers can gather every problem first and only
+## touch the file when ctx.errors is empty.
+##   ctx = {"errors": [], "adjusted": []}
+## Errors are path-pointed ("children[2].properties.texture: ...").
+## Returns the built node, or null when the node itself couldn't be created.
+## On failure the caller frees whatever was returned.
+func _build_node(spec: Dictionary, where: String, require_name: bool, ctx: Dictionary) -> Node:
+	var errors: Array = ctx.errors
+	var prefix := where + "." if not where.is_empty() else ""
+
+	for key in spec.keys():
+		if not _CHILD_SPEC_KEYS.has(str(key)):
+			errors.append("%s: unknown key '%s'. Valid keys: %s" % [where if not where.is_empty() else "node", key, ", ".join(_CHILD_SPEC_KEYS)])
+
+	var name_str := str(spec.get(&"node_name", spec.get(&"name", ""))).strip_edges()
+	if require_name and name_str.is_empty():
 		errors.append("%snode_name: required (non-empty string)" % prefix)
 
-	# node_type — must exist in ClassDB. Without a valid type we can't validate
-	# properties either, so short-circuit.
-	var type_str: String = str(spec.get(&"node_type", spec.get(&"type", "")))
-	if type_str.strip_edges().is_empty():
-		errors.append("%snode_type: required (a Godot class name like Node2D, Sprite2D, CharacterBody2D, …)" % prefix)
-		# Still walk children so the agent sees ALL issues in one shot.
-		_validate_children(spec, prefix, errors)
-		return errors
-	if not ClassDB.class_exists(type_str):
-		errors.append("%snode_type: '%s' is not a known Godot class (use classdb_query to discover valid types)" % [prefix, type_str])
-		_validate_children(spec, prefix, errors)
-		return errors
+	var node: Node = null
+	var type_str := str(spec.get(&"node_type", spec.get(&"type", ""))).strip_edges()
+	if type_str.is_empty():
+		errors.append("%snode_type: required (a Godot class name like Node2D, Sprite2D, CharacterBody2D, ...)" % prefix)
+	elif not ClassDB.class_exists(type_str):
+		errors.append("%snode_type: '%s' is not a Godot class%s (use classdb_query to check names)" % [prefix, type_str, _closest_class(type_str, "Node")])
+	elif not ClassDB.is_parent_class(type_str, "Node"):
+		errors.append("%snode_type: '%s' is not a node class" % [prefix, type_str])
+	elif not ClassDB.can_instantiate(type_str):
+		errors.append("%snode_type: '%s' is abstract; use a concrete subclass" % [prefix, type_str])
+	else:
+		node = ClassDB.instantiate(type_str)
+		if not name_str.is_empty():
+			node.name = name_str
 
-	# script (optional): file must exist AND be a Script.
-	var script_path: String = str(spec.get(&"script", "")).strip_edges()
-	var script_res: Script = null
+	# Script before properties: @export'd variables only exist once the
+	# script is attached.
+	var script_path := str(spec.get(&"script", "")).strip_edges()
 	if not script_path.is_empty():
-		if not script_path.begins_with("res://") and not script_path.begins_with("user://"):
-			errors.append("%sscript: path must start with res:// or user:// (got '%s')" % [prefix, script_path])
-		elif not FileAccess.file_exists(script_path):
-			errors.append("%sscript: file does not exist: '%s'" % [prefix, script_path])
-		else:
-			var loaded: Resource = load(script_path)
-			if loaded == null:
-				errors.append("%sscript: failed to load '%s' (corrupt or parse error — check get_errors)" % [prefix, script_path])
-			elif not (loaded is Script):
-				errors.append("%sscript: '%s' is not a Script (got %s)" % [prefix, script_path, loaded.get_class()])
+		var script := _load_script_checked(script_path, prefix + "script", errors)
+		if script != null and node != null:
+			var base := str(script.get_instance_base_type())
+			if not base.is_empty() and not ClassDB.is_parent_class(type_str, base):
+				errors.append("%sscript: %s extends %s, so it can't be attached to a %s" % [prefix, script_path, base, type_str])
 			else:
-				script_res = loaded
+				node.set_script(script)
 
-	# properties: each key must exist on node_type (plus @export'd properties
-	# from the attached script, if any).
 	var props_v: Variant = spec.get(&"properties", {})
-	if props_v is Dictionary and not (props_v as Dictionary).is_empty():
-		var valid_props: Dictionary = _collect_property_names(type_str, script_res)
-		# If we couldn't gather any names (shouldn't happen — every Object has
-		# basic properties), skip name validation rather than false-positive.
-		if not valid_props.is_empty():
-			for prop_name_v in (props_v as Dictionary).keys():
-				var prop_name := str(prop_name_v)
-				if not valid_props.has(prop_name):
-					errors.append("%sproperties.%s: property does not exist on %s%s" % [
-						prefix, prop_name, type_str,
-						(" (or its attached script)" if script_res != null else ""),
-					])
-	elif not (props_v is Dictionary):
-		errors.append("%sproperties: must be a Dictionary, got %s" % [prefix, type_string(typeof(props_v))])
+	if props_v == null:
+		props_v = {}
+	if not (props_v is Dictionary):
+		errors.append("%sproperties: must be an object, got %s" % [prefix, PropertyWriter.json_type(props_v)])
+	elif node != null and not (props_v as Dictionary).is_empty():
+		var r := PropertyWriter.write(node, props_v, prefix + "properties")
+		errors.append_array(r.errors)
+		ctx.adjusted.append_array(r.adjusted)
 
-	# groups: shape only — must be an Array (any string element is acceptable).
 	var groups_v: Variant = spec.get(&"groups", [])
+	if groups_v == null:
+		groups_v = []
 	if not (groups_v is Array or groups_v is PackedStringArray):
-		errors.append("%sgroups: must be an Array of strings, got %s" % [prefix, type_string(typeof(groups_v))])
+		errors.append("%sgroups: must be an array of strings, got %s" % [prefix, PropertyWriter.json_type(groups_v)])
+	else:
+		for g in groups_v:
+			if not (g is String or g is StringName) or str(g).strip_edges().is_empty():
+				errors.append("%sgroups: every entry must be a non-empty string, got %s" % [prefix, PropertyWriter.json_type(g)])
+			elif node != null:
+				node.add_to_group(str(g), true)
 
-	# children: recurse.
-	_validate_children(spec, prefix, errors)
-	return errors
-
-
-## Walk children recursively, appending into `errors`. Extracted so we can
-## still visit children even when the parent's node_type is invalid (so the
-## agent sees every issue at once, not just the first).
-func _validate_children(spec: Dictionary, prefix: String, errors: Array) -> void:
 	var children_v: Variant = spec.get(&"children", [])
 	if children_v == null:
-		return
+		children_v = []
 	if not (children_v is Array):
-		errors.append("%schildren: must be an Array, got %s" % [prefix, type_string(typeof(children_v))])
-		return
-	var children: Array = children_v
-	for i in range(children.size()):
-		var child_data: Variant = children[i]
-		# Drop the trailing dot from prefix when concatenating an index segment.
-		var raw_prefix: String = prefix.trim_suffix(".")
-		var child_path: String = (raw_prefix + "." if not raw_prefix.is_empty() else "") + ("children[%d]" % i)
-		# children[i] handled WITHOUT trailing dot so the recursion can decide.
-		var child_path_no_dot: String = child_path
-		if typeof(child_data) != TYPE_DICTIONARY:
-			errors.append("%s: must be a Dictionary, got %s" % [child_path_no_dot, type_string(typeof(child_data))])
-			continue
-		errors.append_array(_validate_node_spec(child_data, child_path_no_dot, false))
+		errors.append("%schildren: must be an array, got %s" % [prefix, PropertyWriter.json_type(children_v)])
+	else:
+		for i in range((children_v as Array).size()):
+			var child_where := "%schildren[%d]" % [prefix, i]
+			var child_spec: Variant = children_v[i]
+			if not (child_spec is Dictionary):
+				errors.append("%s: must be an object, got %s" % [child_where, PropertyWriter.json_type(child_spec)])
+				continue
+			var child := _build_node(child_spec, child_where, false, ctx)
+			if child == null:
+				continue
+			if node != null:
+				node.add_child(child, true)
+			else:
+				child.free()
+	return node
 
 
-## Collect the set of valid property names for a given node type, optionally
-## including @export'd properties from an attached script. Returns a
-## Dictionary keyed by property name (values are unused).
-func _collect_property_names(type_str: String, script: Script) -> Dictionary:
-	var out: Dictionary = {}
-	if ClassDB.class_exists(type_str):
-		for p in ClassDB.class_get_property_list(type_str, false):
-			out[str(p.get(&"name", ""))] = true
-	if script != null:
-		for p in script.get_script_property_list():
-			out[str(p.get(&"name", ""))] = true
+## Load a script for attaching, reporting why it can't be used.
+func _load_script_checked(path: String, where: String, errors: Array) -> Script:
+	if not path.begins_with("res://") and not path.begins_with("user://"):
+		errors.append("%s: path must start with res:// or user:// (got '%s')" % [where, path])
+		return null
+	if not FileAccess.file_exists(path):
+		errors.append("%s: file does not exist: '%s'" % [where, path])
+		return null
+	var loaded: Resource = load(path)
+	if loaded == null:
+		errors.append("%s: failed to load '%s' (parse error? check get_errors)" % [where, path])
+		return null
+	if not (loaded is Script):
+		errors.append("%s: '%s' is not a script (it's a %s)" % [where, path, loaded.get_class()])
+		return null
+	return loaded
+
+
+## " (did you mean 'X'?)" against classes that inherit `base`.
+func _closest_class(name: String, base: String) -> String:
+	var best := ""
+	var best_score := 0.0
+	for c in ClassDB.get_inheriters_from_class(base):
+		var score := name.to_lower().similarity(str(c).to_lower())
+		if score > best_score:
+			best_score = score
+			best = c
+	return " (did you mean '%s'?)" % best if best_score >= 0.5 else ""
+
+
+## Standard response when validation finds problems. Nothing was changed.
+func _validation_failure(tool: String, errors: Array, hint: String = "") -> Dictionary:
+	var out := {
+		&"ok": false,
+		&"error": "%s: %d problem(s) found; nothing was changed. %s" % [tool, errors.size(), "; ".join(errors.slice(0, 3))],
+		&"validation_errors": errors,
+	}
+	if not hint.is_empty():
+		out[&"hint"] = hint
 	return out
+
+
+const _PROPERTY_HINT := "Values are read according to each property's type. Resource properties (texture, shape, mesh, material, ...) take a file path \"res://...\", {\"type\": \"Resource\", \"path\": \"res://...\"}, or an inline resource like {\"type\": \"RectangleShape2D\", \"size\": {\"x\": 32, \"y\": 32}}. Edit a property of a held resource with a colon path, e.g. \"material:albedo_color\". Use get_scene_node_properties or classdb_query to look up property names and types."
 
 func _serialize_value(value: Variant) -> Variant:
 	return VariantCodec.serialize_value(value)
@@ -247,162 +252,78 @@ func _serialize_value(value: Variant) -> Variant:
 # =============================================================================
 func create_scene(args: Dictionary) -> Dictionary:
 	var scene_path: String = _ensure_res_path(str(args.get(&"scene_path", "")))
-	var root_node_name: String = str(args.get(&"root_node_name", "Node"))
-	var root_node_type: String = str(args.get(&"root_node_type", ""))
-	# Variant load so a non-Array `nodes` arg becomes a clean validation
-	# error rather than a typed-assignment crash (matches add_node).
+	var root_node_type: String = str(args.get(&"root_node_type", "")).strip_edges()
 	var nodes_v: Variant = args.get(&"nodes", [])
-	var attach_script_path: String = str(args.get(&"attach_script", ""))
+	if nodes_v == null:
+		nodes_v = []
+	var attach_script_path: String = str(args.get(&"attach_script", "")).strip_edges()
 
 	if scene_path.strip_edges() == "res://":
 		return {&"ok": false, &"error": "Missing 'scene_path' parameter"}
-	if root_node_type.strip_edges().is_empty():
+	if root_node_type.is_empty():
 		return {&"ok": false, &"error": "Missing 'root_node_type' parameter"}
 	if not scene_path.ends_with(".tscn"):
 		scene_path += ".tscn"
 	if FileAccess.file_exists(scene_path):
 		return {&"ok": false, &"error": "Scene already exists: " + scene_path}
-	if not ClassDB.class_exists(root_node_type):
-		return {&"ok": false, &"error": "Invalid root node type: " + root_node_type}
+	# Default root name comes from the file name: res://player_ship.tscn -> PlayerShip.
+	var root_node_name: String = str(args.get(&"root_node_name", "")).strip_edges()
+	if root_node_name.is_empty():
+		root_node_name = scene_path.get_file().get_basename().to_pascal_case()
 
-	# Pre-validation (roadmap #7): the root is validated above; here we walk
-	# the entire `nodes` array (which may contain nested subtrees via
-	# `children`) BEFORE touching the filesystem. Path-pointed errors so a
-	# malformed nodes[1].children[2].properties.text fails fast and clearly.
-	# Also validate the optional `attach_script` for the root.
-	var validation_errors: Array = []
+	# Build the whole tree in memory first. Every problem in the spec is
+	# collected; the scene file is only written when there are none.
+	var ctx := {"errors": [], "adjusted": []}
+	var root_spec := {&"node_name": root_node_name, &"node_type": root_node_type, &"script": attach_script_path}
+	var root := _build_node(root_spec, "", true, ctx)
+	for i in range(ctx.errors.size()):
+		# Root problems are reported against create_scene's own argument names.
+		ctx.errors[i] = str(ctx.errors[i]).replace("node_type:", "root_node_type:").replace("node_name:", "root_node_name:").replace("script:", "attach_script:")
 	if not (nodes_v is Array):
-		validation_errors.append("nodes: must be an Array, got %s" % type_string(typeof(nodes_v)))
-	if not attach_script_path.is_empty():
-		if not attach_script_path.begins_with("res://") and not attach_script_path.begins_with("user://"):
-			validation_errors.append("attach_script: path must start with res:// or user:// (got '%s')" % attach_script_path)
-		elif not FileAccess.file_exists(attach_script_path):
-			validation_errors.append("attach_script: file does not exist: '%s'" % attach_script_path)
-		else:
-			var loaded_root_script: Resource = load(attach_script_path)
-			if loaded_root_script == null:
-				validation_errors.append("attach_script: failed to load '%s' (corrupt or parse error)" % attach_script_path)
-			elif not (loaded_root_script is Script):
-				validation_errors.append("attach_script: '%s' is not a Script (got %s)" % [attach_script_path, loaded_root_script.get_class()])
-	if nodes_v is Array:
+		ctx.errors.append("nodes: must be an array, got %s" % PropertyWriter.json_type(nodes_v))
+	else:
 		for i in range((nodes_v as Array).size()):
-			var node_data: Variant = (nodes_v as Array)[i]
-			var entry_path: String = "nodes[%d]" % i
-			if typeof(node_data) != TYPE_DICTIONARY:
-				validation_errors.append("%s: must be a Dictionary, got %s" % [entry_path, type_string(typeof(node_data))])
+			var node_data: Variant = nodes_v[i]
+			if not (node_data is Dictionary):
+				ctx.errors.append("nodes[%d]: must be an object, got %s" % [i, PropertyWriter.json_type(node_data)])
 				continue
-			validation_errors.append_array(_validate_node_spec(node_data, entry_path, false))
-	if not validation_errors.is_empty():
-		return {
-			&"ok": false,
-			&"error": "create_scene: pre-validation failed with %d issue(s); no scene file created." % validation_errors.size(),
-			&"validation_errors": validation_errors,
-			&"hint": "Property names are validated against ClassDB + any @export'd properties on attached scripts. Fix all listed paths and retry.",
-		}
+			var child := _build_node(node_data, "nodes[%d]" % i, false, ctx)
+			if child == null:
+				continue
+			if root != null:
+				root.add_child(child, true)
+			else:
+				child.free()
 
-	# Ensure parent directory
+	if not ctx.errors.is_empty():
+		if root != null:
+			root.free()
+		return _validation_failure("create_scene", ctx.errors, _PROPERTY_HINT)
+
+	for child: Node in root.get_children():
+		_set_owner_recursive(child, root)
+
 	var dir_path := scene_path.get_base_dir()
 	if not DirAccess.dir_exists_absolute(dir_path):
 		DirAccess.make_dir_recursive_absolute(dir_path)
 
-	var root: Node = ClassDB.instantiate(root_node_type) as Node
-	if not root:
-		return {&"ok": false, &"error": "Failed to create root node of type: " + root_node_type}
-	root.name = root_node_name
-
-	if not attach_script_path.is_empty():
-		var script_res = load(attach_script_path)
-		if script_res:
-			root.set_script(script_res)
-
-	# Validation passed → narrow back to typed Array for the build loop.
-	var nodes: Array = nodes_v if nodes_v is Array else []
-	var node_count := 0
-	for node_data: Variant in nodes:
-		if typeof(node_data) != TYPE_DICTIONARY:
-			root.queue_free()
-			return {&"ok": false, &"error": "Every entry in 'nodes' must be a Dictionary; got %s" % type_string(typeof(node_data))}
-		var created_pair := _create_node_recursive(node_data, root, root)
-		if created_pair[1] != "":
-			root.queue_free()
-			return {&"ok": false, &"error": "create_scene: %s" % String(created_pair[1])}
-		if created_pair[0] != null:
-			node_count += _count_nodes(created_pair[0])
-
+	var node_count := _count_nodes(root) - 1
 	var err := _save_scene(root, scene_path)
 	if not err.is_empty():
 		return err
 
-	return {&"ok": true, &"path": scene_path, &"root_type": root_node_type, &"child_count": node_count,
-		&"message": "Scene created at " + scene_path}
+	var out := {&"ok": true, &"path": scene_path, &"root_name": root_node_name, &"root_type": root_node_type,
+		&"child_count": node_count, &"message": "Scene created at " + scene_path}
+	_add_adjusted(out, ctx.adjusted)
+	return out
 
-## Known child-spec keys. Anything else is a typo (common agent mistake: using
-## parent_path, class, kind, etc. in a child block). We reject unknown keys so
-## the bug surfaces loudly rather than defaulting to a generic Node.
-const _CHILD_SPEC_KEYS: PackedStringArray = [
-	"name", "node_name", "type", "node_type", "script",
-	"properties", "children", "groups",
-]
 
-## Recursively create a child node. Returns [Node_or_null, error_string].
-## Accepts EITHER {name, type} OR {node_name, node_type} so the child spec can
-## use the same key names as add_node's top-level arguments. Unknown keys
-## trigger an error so malformed specs are caught instead of silently
-## producing a generic Node with the wrong name.
-func _create_node_recursive(data: Dictionary, parent: Node, owner: Node) -> Array:
-	# Validate keys first so typos fail loudly instead of silently.
-	for key in data.keys():
-		var key_str: String = str(key)
-		if not _CHILD_SPEC_KEYS.has(key_str):
-			return [null, "Unknown child spec key '%s'. Valid keys: %s" % [key_str, ", ".join(_CHILD_SPEC_KEYS)]]
-
-	var n_name: String = str(data.get(&"node_name", data.get(&"name", "")))
-	var n_type: String = str(data.get(&"node_type", data.get(&"type", "")))
-	var n_script: String = str(data.get(&"script", ""))
-	var props: Dictionary = data.get(&"properties", {})
-	var children: Array = data.get(&"children", [])
-	var groups: Array = data.get(&"groups", [])
-
-	if n_type.is_empty():
-		return [null, "Child spec missing 'node_type' (or 'type')"]
-	if not ClassDB.class_exists(n_type):
-		return [null, "Unknown node type in child spec: %s" % n_type]
-	var node: Node = ClassDB.instantiate(n_type) as Node
-	if not node:
-		return [null, "Failed to instantiate node of type: %s" % n_type]
-
-	if not n_name.is_empty():
-		node.name = n_name
-
-	# Script-before-properties: same ordering rule as add_node. Without
-	# attaching the script first, any @export'd property in `props` would
-	# be silently dropped by node.set() (the var doesn't exist on the bare
-	# node yet). Pre-validation guarantees the script loads at this point.
-	if not n_script.is_empty():
-		var s = load(n_script)
-		if s:
-			node.set_script(s)
-		else:
-			node.free()
-			return [null, "Failed to load script for child '%s': %s" % [n_name, n_script]]
-
-	_set_node_properties(node, props)
-
-	for g in groups:
-		var gname := str(g)
-		if not gname.is_empty():
-			node.add_to_group(gname, true)
-
-	parent.add_child(node, true)
-	node.owner = owner
-
-	for child_data: Variant in children:
-		if typeof(child_data) != TYPE_DICTIONARY:
-			return [null, "Every entry in 'children' must be a Dictionary; got %s" % type_string(typeof(child_data))]
-		var sub := _create_node_recursive(child_data, node, owner)
-		if sub[1] != "":
-			return sub
-	return [node, ""]
+## Attach "Godot adjusted these values" info to a success response.
+func _add_adjusted(out: Dictionary, adjusted: Array) -> void:
+	if adjusted.is_empty():
+		return
+	out[&"adjusted"] = adjusted
+	out[&"warning"] = "Godot changed %d value(s) while setting them (clamped, wrapped or normalized). See 'adjusted' for requested vs stored." % adjusted.size()
 
 func _count_nodes(node: Node) -> int:
 	var count := 1
@@ -459,112 +380,57 @@ func _build_node_structure(node: Node, include_props: bool, path: String = ".") 
 # =============================================================================
 func add_node(args: Dictionary) -> Dictionary:
 	var scene_path: String = _ensure_res_path(str(args.get(&"scene_path", "")))
-	var node_name: String = str(args.get(&"node_name", ""))
-	var node_type: String = str(args.get(&"node_type", "Node"))
 	var parent_path: String = str(args.get(&"parent_path", "."))
-	# CRITICAL: do NOT declare these as typed `Dictionary`/`Array` locals —
-	# GDScript 4's typed assignment crashes the function before the
-	# pre-validator runs if the agent passes the wrong shape (e.g.
-	# `children: "not an array"`). Keep them Variant; the validator emits
-	# a proper path-pointed type error and we narrow after validation.
-	var properties_v: Variant = args.get(&"properties", {})
-	var script_path: String = str(args.get(&"script", ""))
-	var children_v: Variant = args.get(&"children", [])
-	var groups_v: Variant = args.get(&"groups", [])
-
 	if scene_path.strip_edges() == "res://":
 		return {&"ok": false, &"error": "Missing 'scene_path'"}
 
-	# Pre-validation (roadmap #7): walk the entire spec — top node, every
-	# property name, the script, plus every descendant in `children` — and
-	# return ALL issues at once, with path-pointed errors, BEFORE loading
-	# the scene from disk. Cheap exit on bad input; the agent gets a single
-	# round-trip with the full failure list instead of fixing them one at a
-	# time. Zero mutation occurs when validation fails.
-	var spec_for_validation: Dictionary = {
-		&"node_name": node_name,
-		&"node_type": node_type,
-		&"script": script_path,
-		&"properties": properties_v,
-		&"children": children_v,
-		&"groups": groups_v,
+	# Build the node (and any children) in memory and validate everything
+	# before the scene file is even loaded.
+	var spec := {
+		&"node_name": args.get(&"node_name", ""),
+		&"node_type": args.get(&"node_type", ""),
+		&"script": args.get(&"script", ""),
+		&"properties": args.get(&"properties", {}),
+		&"children": args.get(&"children", []),
+		&"groups": args.get(&"groups", []),
 	}
-	var validation_errors: Array = _validate_node_spec(spec_for_validation, "", true)
-	if not validation_errors.is_empty():
-		return {
-			&"ok": false,
-			&"error": "add_node: pre-validation failed with %d issue(s); no mutation occurred." % validation_errors.size(),
-			&"validation_errors": validation_errors,
-			&"hint": "Property names are validated against ClassDB + any @export'd properties on the attached script. Fix all listed paths and retry. Use classdb_query or get_scene_node_properties to discover valid property names.",
-		}
-
-	# Validation passed → narrow back to the typed shapes the rest of the
-	# function expects. Safe because the validator rejected anything else.
-	var properties: Dictionary = properties_v
-	var children: Array = children_v
-	var groups: Array = groups_v
+	var ctx := {"errors": [], "adjusted": []}
+	var new_node := _build_node(spec, "", true, ctx)
+	if not ctx.errors.is_empty():
+		if new_node != null:
+			new_node.free()
+		return _validation_failure("add_node", ctx.errors, _PROPERTY_HINT)
 
 	var result := _load_scene(scene_path)
 	if not result[1].is_empty():
+		new_node.free()
 		return result[1]
 
 	var root: Node = result[0]
 	var parent = _find_node(root, parent_path)
 	if not parent:
+		new_node.free()
 		root.queue_free()
 		return {&"ok": false, &"error": "Parent node not found: " + parent_path}
 
-	var new_node: Node = ClassDB.instantiate(node_type) as Node
-	if not new_node:
-		root.queue_free()
-		return {&"ok": false, &"error": "Failed to create node of type: " + node_type}
-
-	new_node.name = node_name
-
-	# ATTACH SCRIPT FIRST, THEN SET PROPERTIES. Setting an @export'd script
-	# var on a bare node (before set_script) silently fails because the var
-	# doesn't exist on the unscripted node yet. The pre-validator accepts
-	# script @exports as valid property names, so this ordering bug caused
-	# the validator to report success while the .tscn never actually
-	# recorded the value. Pre-validation already proved the script loads.
-	if not script_path.is_empty():
-		var s := load(script_path)
-		if s:
-			new_node.set_script(s)
-		else:
-			root.queue_free()
-			return {&"ok": false, &"error": "Failed to load script: " + script_path}
-
-	_set_node_properties(new_node, properties)
-
-	for g in groups:
-		var gname := str(g)
-		if not gname.is_empty():
-			new_node.add_to_group(gname, true)
-
 	parent.add_child(new_node, true)
-	new_node.owner = root
+	_set_owner_recursive(new_node, root)
 
-	var added_descendants: int = 0
-	for child_data: Variant in children:
-		if typeof(child_data) != TYPE_DICTIONARY:
-			root.queue_free()
-			return {&"ok": false, &"error": "Every entry in 'children' must be a Dictionary; got %s" % type_string(typeof(child_data))}
-		var created_pair := _create_node_recursive(child_data, new_node, root)
-		if created_pair[1] != "":
-			root.queue_free()
-			return {&"ok": false, &"error": "add_node: %s" % String(created_pair[1])}
-		if created_pair[0] != null:
-			added_descendants += _count_nodes(created_pair[0])
+	var actual_name := str(new_node.name)
+	var node_path := str(root.get_path_to(new_node))
+	var node_type := new_node.get_class()
+	var descendants := _count_nodes(new_node) - 1
 
 	var err := _save_scene(root, scene_path)
 	if not err.is_empty():
 		return err
 
-	return {&"ok": true, &"scene_path": scene_path, &"node_name": new_node.name, &"node_type": node_type,
-		&"descendants_added": added_descendants,
-		&"message": "Added %s (%s) to scene%s" % [new_node.name, node_type,
-			(" with %d descendant(s)" % added_descendants) if added_descendants > 0 else ""]}
+	var out := {&"ok": true, &"scene_path": scene_path, &"node_name": actual_name, &"node_path": node_path,
+		&"node_type": node_type, &"descendants_added": descendants,
+		&"message": "Added %s (%s) to scene%s" % [actual_name, node_type,
+			(" with %d descendant(s)" % descendants) if descendants > 0 else ""]}
+	_add_adjusted(out, ctx.adjusted)
+	return out
 
 # =============================================================================
 # remove_node
@@ -603,63 +469,67 @@ func remove_node(args: Dictionary) -> Dictionary:
 # =============================================================================
 # modify_node_property
 # =============================================================================
-func modify_node_property(args: Dictionary) -> Dictionary:
-	var scene_path: String = _ensure_res_path(str(args.get(&"scene_path", "")))
-	var node_path: String = str(args.get(&"node_path", "."))
-	var property_name: String = str(args.get(&"property_name", ""))
-	var value = args.get(&"value")
-
-	if scene_path.strip_edges() == "res://":
-		return {&"ok": false, &"error": "Missing 'scene_path'"}
-	if property_name.strip_edges().is_empty():
-		return {&"ok": false, &"error": "Missing 'property_name'"}
-	if value == null:
-		return {&"ok": false, &"error": "Missing 'value'"}
-
-	# Refuse to set the script via modify_node_property: it rewrites the .tscn
-	# but doesn't update the editor's live node, which makes connect_signal
-	# fail later. attach_script does both.
-	if property_name == "script":
-		return {&"ok": false, &"error": "Use attach_script to set or change a node's script. modify_node_property only edits the .tscn on disk, leaving the editor's in-memory node without the script (which breaks connect_signal and other tools that validate against the live node)."}
-
+## Load a scene, write properties on one node through PropertyWriter, and
+## save only if every property was accepted. `props` is either a Dictionary
+## or a Callable(target: Node) -> Dictionary that picks the properties once
+## the node is known; the Callable may return {"__error": "..."} to refuse.
+## Used by set_node_properties and every tool built on it.
+func _write_scene_node(scene_path: String, node_path: String, props: Variant, tool: String) -> Dictionary:
 	var result := _load_scene(scene_path)
 	if not result[1].is_empty():
 		return result[1]
-
 	var root: Node = result[0]
-	var target = _find_node(root, node_path)
+	var target := _find_node(root, node_path)
 	if not target:
 		root.queue_free()
-		return {&"ok": false, &"error": "Node not found: " + node_path}
+		return {&"ok": false, &"error": "Node not found: %s (paths are relative to the scene root; '.' is the root)" % node_path}
 
-	# Check property exists
-	var prop_exists := false
-	for prop: Dictionary in target.get_property_list():
-		if prop[&"name"] == property_name:
-			prop_exists = true
-			break
-	if not prop_exists:
-		var node_type = target.get_class()
+	var props_dict: Dictionary = props if props is Dictionary else {}
+	if props is Callable:
+		props_dict = (props as Callable).call(target)
+		if props_dict.has("__error"):
+			root.queue_free()
+			return {&"ok": false, &"error": "%s: %s" % [tool, props_dict["__error"]]}
+
+	var r := PropertyWriter.write(target, props_dict, "properties")
+	if not r.ok:
 		root.queue_free()
-		return {&"ok": false, &"error": "Property '%s' not found on %s (%s). Use get_node_properties to discover available properties." % [property_name, node_path, node_type]}
-
-	var parsed = _parse_value(value)
-	var old_value = target.get(property_name)
-
-	# Validate resource type compatibility
-	if old_value is Resource and not (parsed is Resource):
-		root.queue_free()
-		return {&"ok": false, &"error": "Property '%s' expects a Resource. Use specialized tools (set_collision_shape, set_sprite_texture, set_mesh, set_material) instead." % property_name}
-
-	target.set(property_name, parsed)
+		return _validation_failure(tool, r.errors, _PROPERTY_HINT)
 
 	var err := _save_scene(root, scene_path)
 	if not err.is_empty():
 		return err
 
-	return {&"ok": true, &"scene_path": scene_path, &"node_path": node_path,
-		&"property_name": property_name, &"old_value": str(old_value), &"new_value": str(parsed),
-		&"message": "Set %s.%s = %s" % [node_path, property_name, str(parsed)]}
+	var out := {
+		&"ok": true,
+		&"scene_path": scene_path,
+		&"node_path": node_path,
+		&"applied": r.applied,
+		&"message": "Set %d propert%s on %s" % [r.applied.size(), "y" if r.applied.size() == 1 else "ies", node_path],
+	}
+	_add_adjusted(out, r.adjusted)
+	return out
+
+
+## Kept for existing callers; set_node_properties does the same with one entry.
+func modify_node_property(args: Dictionary) -> Dictionary:
+	var scene_path: String = _ensure_res_path(str(args.get(&"scene_path", "")))
+	var node_path: String = str(args.get(&"node_path", "."))
+	var property_name: String = str(args.get(&"property_name", "")).strip_edges()
+	if scene_path.strip_edges() == "res://":
+		return {&"ok": false, &"error": "Missing 'scene_path'"}
+	if property_name.is_empty():
+		return {&"ok": false, &"error": "Missing 'property_name'"}
+	if not args.has(&"value"):
+		return {&"ok": false, &"error": "Missing 'value' (pass null to clear a resource property)"}
+	var out := _write_scene_node(scene_path, node_path, {property_name: args[&"value"]}, "modify_node_property")
+	if out.get(&"ok", false):
+		var entry: Dictionary = out.applied[0]
+		out[&"property_name"] = property_name
+		out[&"old_value"] = entry.old
+		out[&"new_value"] = entry.new
+		out[&"message"] = "Set %s.%s" % [node_path, property_name]
+	return out
 
 # =============================================================================
 # rename_node
@@ -911,146 +781,97 @@ func detach_script(args: Dictionary) -> Dictionary:
 # =============================================================================
 # set_collision_shape
 # =============================================================================
+## Kept for existing callers. Same as set_node_properties with
+## {"shape": {"type": shape_type, ...shape_params}}.
 func set_collision_shape(args: Dictionary) -> Dictionary:
 	var scene_path: String = _ensure_res_path(str(args.get(&"scene_path", "")))
 	var node_path: String = str(args.get(&"node_path", "."))
-	var shape_type: String = str(args.get(&"shape_type", ""))
-	var shape_params: Dictionary = args.get(&"shape_params", {})
-
+	var shape_type: String = str(args.get(&"shape_type", "")).strip_edges()
+	var shape_params: Variant = args.get(&"shape_params", {})
 	if scene_path.strip_edges() == "res://":
 		return {&"ok": false, &"error": "Missing 'scene_path'"}
-	if shape_type.strip_edges().is_empty():
+	if shape_type.is_empty():
 		return {&"ok": false, &"error": "Missing 'shape_type'"}
-	if not ClassDB.class_exists(shape_type):
-		return {&"ok": false, &"error": "Invalid shape type: " + shape_type}
-
-	var result := _load_scene(scene_path)
-	if not result[1].is_empty():
-		return result[1]
-
-	var root: Node = result[0]
-	var target = _find_node(root, node_path)
-	if not target:
-		root.queue_free()
-		return {&"ok": false, &"error": "Node not found: " + node_path}
-
-	var shape = ClassDB.instantiate(shape_type)
-	if not shape:
-		root.queue_free()
-		return {&"ok": false, &"error": "Failed to create shape: " + shape_type}
-
-	if shape_params.has(&"radius"):
-		shape.set("radius", float(shape_params[&"radius"]))
-	if shape_params.has(&"height"):
-		shape.set("height", float(shape_params[&"height"]))
-	if shape_params.has(&"size"):
-		shape.set("size", _parse_value(shape_params[&"size"]))
-
-	target.set("shape", shape)
-
-	var err := _save_scene(root, scene_path)
-	if not err.is_empty():
-		return err
-
-	return {&"ok": true, &"message": "Set %s on node '%s'" % [shape_type, node_path]}
+	if shape_params == null:
+		shape_params = {}
+	if not (shape_params is Dictionary):
+		return {&"ok": false, &"error": "'shape_params' must be an object"}
+	var inline: Dictionary = (shape_params as Dictionary).duplicate()
+	inline["type"] = shape_type
+	var out := _write_scene_node(scene_path, node_path, {"shape": inline}, "set_collision_shape")
+	if out.get(&"ok", false):
+		out[&"message"] = "Set %s on node '%s'" % [shape_type, node_path]
+	return out
 
 # =============================================================================
 # set_sprite_texture
 # =============================================================================
+## Kept for existing callers. Same as set_node_properties with
+## {"texture": "res://..."} or an inline texture. Works on any node with a
+## `texture` property (Sprite2D/3D, TextureRect, PointLight2D, particles, ...).
 func set_sprite_texture(args: Dictionary) -> Dictionary:
 	var scene_path: String = _ensure_res_path(str(args.get(&"scene_path", "")))
 	var node_path: String = str(args.get(&"node_path", "."))
-	var texture_type: String = str(args.get(&"texture_type", ""))
-	var texture_params: Dictionary = args.get(&"texture_params", {})
-
+	var texture_type: String = str(args.get(&"texture_type", "")).strip_edges()
+	var params_v: Variant = args.get(&"texture_params", {})
 	if scene_path.strip_edges() == "res://":
 		return {&"ok": false, &"error": "Missing 'scene_path'"}
-	if texture_type.strip_edges().is_empty():
+	if texture_type.is_empty():
 		return {&"ok": false, &"error": "Missing 'texture_type'"}
+	if params_v == null:
+		params_v = {}
+	if not (params_v is Dictionary):
+		return {&"ok": false, &"error": "'texture_params' must be an object"}
+	var params: Dictionary = params_v
 
-	var result := _load_scene(scene_path)
-	if not result[1].is_empty():
-		return result[1]
-
-	var root: Node = result[0]
-	var target = _find_node(root, node_path)
-	if not target:
-		root.queue_free()
-		return {&"ok": false, &"error": "Node not found: " + node_path}
-
-	var texture: Texture2D = null
-
+	var value: Variant
+	var tex_path := ""
 	match texture_type:
-		# Canonical name for "load whatever texture is at this path".
-		# "ImageTexture" is kept as a deprecated alias for backward compat.
 		"FromPath", "ImageTexture":
-			var tex_path: String = str(texture_params.get(&"path", ""))
+			tex_path = str(params.get(&"path", ""))
 			if tex_path.is_empty():
-				root.queue_free()
 				return {&"ok": false, &"error": "Missing 'path' in texture_params for %s" % texture_type}
-			texture = load(tex_path)
-			if not texture:
-				root.queue_free()
-				return {&"ok": false, &"error": "Failed to load texture: " + tex_path}
-
-		# Real ImageTexture from raw image data on disk (use when you need
-		# an in-memory ImageTexture rather than a CompressedTexture2D).
+			value = tex_path
 		"NewImageTexture":
-			var src_path: String = str(texture_params.get(&"path", ""))
-			if src_path.is_empty():
-				root.queue_free()
+			# An in-memory ImageTexture built from the raw image file, rather
+			# than the imported CompressedTexture2D that load() returns.
+			tex_path = str(params.get(&"path", ""))
+			if tex_path.is_empty():
 				return {&"ok": false, &"error": "Missing 'path' in texture_params for NewImageTexture"}
 			var img := Image.new()
-			var ierr := img.load(ProjectSettings.globalize_path(src_path))
+			var ierr := img.load(ProjectSettings.globalize_path(tex_path))
 			if ierr != OK:
-				root.queue_free()
-				return {&"ok": false, &"error": "Image.load failed for %s (err=%d %s)" % [src_path, ierr, error_string(ierr)]}
-			texture = ImageTexture.create_from_image(img)
-
-		"PlaceholderTexture2D":
-			texture = PlaceholderTexture2D.new()
-			var size_data = texture_params.get(&"size", {&"x": 64, &"y": 64})
-			if typeof(size_data) == TYPE_DICTIONARY:
-				texture.size = Vector2(size_data.get(&"x", 64), size_data.get(&"y", 64))
-
-		"GradientTexture2D":
-			texture = GradientTexture2D.new()
-			texture.width = int(texture_params.get(&"width", 64))
-			texture.height = int(texture_params.get(&"height", 64))
-
-		"NoiseTexture2D":
-			texture = NoiseTexture2D.new()
-			texture.width = int(texture_params.get(&"width", 64))
-			texture.height = int(texture_params.get(&"height", 64))
-
+				return {&"ok": false, &"error": "Image.load failed for %s (err=%d %s)" % [tex_path, ierr, error_string(ierr)]}
+			value = ImageTexture.create_from_image(img)
 		_:
-			root.queue_free()
-			return {&"ok": false, &"error": "Unknown texture type: " + texture_type}
+			var inline: Dictionary = params.duplicate()
+			inline["type"] = texture_type
+			# Old defaults: these were always created at 64x64.
+			match texture_type:
+				"PlaceholderTexture2D":
+					if not inline.has("size"):
+						inline["size"] = {"x": 64, "y": 64}
+				"GradientTexture2D", "NoiseTexture2D":
+					if not inline.has("width"):
+						inline["width"] = 64
+					if not inline.has("height"):
+						inline["height"] = 64
+			value = inline
 
-	target.set("texture", texture)
+	var dec := PropertyWriter.decode(value, {"type": TYPE_OBJECT, "class_name": "Texture2D"}, null, "texture_params")
+	if not dec.errors.is_empty():
+		return _validation_failure("set_sprite_texture", dec.errors, _PROPERTY_HINT)
+	var texture: Texture2D = dec.value
 
-	var err := _save_scene(root, scene_path)
-	if not err.is_empty():
-		return err
-
-	# Report what the texture actually decodes to. For texture_type "FromPath"
-	# (or its alias "ImageTexture"), Godot's importer typically returns a
-	# CompressedTexture2D, NOT an ImageTexture — surfacing this here saves the
-	# agent a round trip via get_resource_info.
-	var resolved_class: String = texture.get_class() if texture else ""
-	var tex_path: String = ""
-	if texture_type in ["FromPath", "ImageTexture", "NewImageTexture"]:
-		tex_path = str(texture_params.get(&"path", ""))
-
-	return {
-		&"ok": true,
-		&"texture_type": texture_type,
-		&"texture_class": resolved_class,
-		&"texture_path": tex_path,
-		&"width": texture.get_width() if texture else 0,
-		&"height": texture.get_height() if texture else 0,
-		&"message": "Set %s (%s) on node '%s'" % [texture_type, resolved_class, node_path],
-	}
+	var out := _write_scene_node(scene_path, node_path, {"texture": texture}, "set_sprite_texture")
+	if out.get(&"ok", false):
+		out[&"texture_type"] = texture_type
+		out[&"texture_class"] = texture.get_class()
+		out[&"texture_path"] = tex_path
+		out[&"width"] = texture.get_width()
+		out[&"height"] = texture.get_height()
+		out[&"message"] = "Set %s (%s) on node '%s'" % [texture_type, texture.get_class(), node_path]
+	return out
 
 # =============================================================================
 # instance_scene
@@ -1060,12 +881,16 @@ func instance_scene(args: Dictionary) -> Dictionary:
 	var instance_path: String = _ensure_res_path(str(args.get(&"instance_path", "")))
 	var node_name: String = str(args.get(&"node_name", ""))
 	var parent_path: String = str(args.get(&"parent_path", "."))
-	var properties: Dictionary = args.get(&"properties", {})
+	var properties_v: Variant = args.get(&"properties", {})
 
 	if scene_path.strip_edges() == "res://":
 		return {&"ok": false, &"error": "Missing 'scene_path'"}
 	if instance_path.strip_edges() == "res://":
 		return {&"ok": false, &"error": "Missing 'instance_path'"}
+	if properties_v == null:
+		properties_v = {}
+	if not (properties_v is Dictionary):
+		return {&"ok": false, &"error": "'properties' must be an object"}
 
 	if scene_path == instance_path:
 		return {&"ok": false, &"error": "Cannot instance a scene inside itself (circular reference): " + instance_path}
@@ -1074,220 +899,135 @@ func instance_scene(args: Dictionary) -> Dictionary:
 	if not instance_packed:
 		return {&"ok": false, &"error": "Failed to load scene: " + instance_path}
 
+	var instance = _instantiate_packed_scene_for_edit(instance_packed, true)
+	if not instance:
+		return {&"ok": false, &"error": "Failed to instantiate scene: " + instance_path}
+	if not node_name.strip_edges().is_empty():
+		instance.name = node_name
+
+	# Property overrides are validated before the parent scene is touched.
+	var r := PropertyWriter.write(instance, properties_v, "properties")
+	if not r.ok:
+		instance.free()
+		return _validation_failure("instance_scene", r.errors, _PROPERTY_HINT)
+
 	var result := _load_scene(scene_path)
 	if not result[1].is_empty():
+		instance.free()
 		return result[1]
 
 	var root: Node = result[0]
 	var parent = _find_node(root, parent_path)
 	if not parent:
+		instance.free()
 		root.queue_free()
 		return {&"ok": false, &"error": "Parent node not found: " + parent_path}
-
-	var instance = _instantiate_packed_scene_for_edit(instance_packed, true)
-	if not instance:
-		root.queue_free()
-		return {&"ok": false, &"error": "Failed to instantiate scene: " + instance_path}
-
-	if not node_name.strip_edges().is_empty():
-		instance.name = node_name
-
-	_set_node_properties(instance, properties)
 
 	parent.add_child(instance, true)
 	instance.owner = root
 
 	var actual_name: String = instance.name
+	var node_type: String = instance.get_class()
 
 	var err := _save_scene(root, scene_path)
 	if not err.is_empty():
 		return err
 
-	return {&"ok": true, &"scene_path": scene_path, &"instance_path": instance_path,
-		&"node_name": actual_name, &"node_type": instance.get_class(),
+	var out := {&"ok": true, &"scene_path": scene_path, &"instance_path": instance_path,
+		&"node_name": actual_name, &"node_type": node_type,
 		&"message": "Instanced '%s' as '%s' in scene" % [instance_path, actual_name]}
+	_add_adjusted(out, r.adjusted)
+	return out
 
 # =============================================================================
 # set_mesh
 # =============================================================================
+## Kept for existing callers. Same as set_node_properties with
+## {"mesh": {"type": mesh_type, ...mesh_params}} or {"mesh": "res://..."}.
 func set_mesh(args: Dictionary) -> Dictionary:
 	var scene_path: String = _ensure_res_path(str(args.get(&"scene_path", "")))
 	var node_path: String = str(args.get(&"node_path", "."))
-	var mesh_type: String = str(args.get(&"mesh_type", ""))
-	var mesh_params: Dictionary = args.get(&"mesh_params", {})
-
+	var mesh_type: String = str(args.get(&"mesh_type", "")).strip_edges()
+	var params_v: Variant = args.get(&"mesh_params", {})
 	if scene_path.strip_edges() == "res://":
 		return {&"ok": false, &"error": "Missing 'scene_path'"}
-	if mesh_type.strip_edges().is_empty():
+	if mesh_type.is_empty():
 		return {&"ok": false, &"error": "Missing 'mesh_type'"}
+	if params_v == null:
+		params_v = {}
+	if not (params_v is Dictionary):
+		return {&"ok": false, &"error": "'mesh_params' must be an object"}
+	var params: Dictionary = params_v
 
-	var result := _load_scene(scene_path)
-	if not result[1].is_empty():
-		return result[1]
-
-	var root: Node = result[0]
-	var target = _find_node(root, node_path)
-	if not target:
-		root.queue_free()
-		return {&"ok": false, &"error": "Node not found: " + node_path}
-
-	if not (target is MeshInstance3D):
-		root.queue_free()
-		return {&"ok": false, &"error": "Node '%s' is %s, expected MeshInstance3D" % [node_path, target.get_class()]}
-
-	var mesh: Mesh = null
-
+	var value: Variant
 	if mesh_type == "file":
-		var file_path: String = str(mesh_params.get(&"path", ""))
+		var file_path := str(params.get(&"path", ""))
 		if file_path.is_empty():
-			root.queue_free()
 			return {&"ok": false, &"error": "Missing 'path' in mesh_params for file type"}
-		var loaded = load(file_path)
-		if not loaded or not (loaded is Mesh):
-			root.queue_free()
-			return {&"ok": false, &"error": "Failed to load mesh resource (or not a Mesh): " + file_path}
-		mesh = loaded
+		value = file_path
 	else:
-		if not ClassDB.class_exists(mesh_type):
-			root.queue_free()
-			return {&"ok": false, &"error": "Unknown mesh type: " + mesh_type}
-		if not ClassDB.can_instantiate(mesh_type):
-			root.queue_free()
-			return {&"ok": false, &"error": "Cannot instantiate mesh type: " + mesh_type}
-
-		var instance = ClassDB.instantiate(mesh_type)
-		if not (instance is PrimitiveMesh):
-			if instance is Node:
-				instance.queue_free()
-			root.queue_free()
-			return {&"ok": false, &"error": "'%s' is not a PrimitiveMesh type" % mesh_type}
-		mesh = instance
-
-		if mesh_params.has(&"radius"):
-			mesh.set("radius", float(mesh_params[&"radius"]))
-		if mesh_params.has(&"height"):
-			mesh.set("height", float(mesh_params[&"height"]))
-		if mesh_params.has(&"top_radius"):
-			mesh.set("top_radius", float(mesh_params[&"top_radius"]))
-		if mesh_params.has(&"bottom_radius"):
-			mesh.set("bottom_radius", float(mesh_params[&"bottom_radius"]))
-		if mesh_params.has(&"inner_radius"):
-			mesh.set("inner_radius", float(mesh_params[&"inner_radius"]))
-		if mesh_params.has(&"outer_radius"):
-			mesh.set("outer_radius", float(mesh_params[&"outer_radius"]))
-		if mesh_params.has(&"radial_segments"):
-			mesh.set("radial_segments", int(mesh_params[&"radial_segments"]))
-		if mesh_params.has(&"rings"):
-			mesh.set("rings", int(mesh_params[&"rings"]))
-		if mesh_params.has(&"left_to_right"):
-			mesh.set("left_to_right", float(mesh_params[&"left_to_right"]))
-		if mesh_params.has(&"subdivide_width"):
-			mesh.set("subdivide_width", int(mesh_params[&"subdivide_width"]))
-		if mesh_params.has(&"subdivide_height"):
-			mesh.set("subdivide_height", int(mesh_params[&"subdivide_height"]))
-		if mesh_params.has(&"subdivide_depth"):
-			mesh.set("subdivide_depth", int(mesh_params[&"subdivide_depth"]))
-		if mesh_params.has(&"text"):
-			mesh.set("text", str(mesh_params[&"text"]))
-		if mesh_params.has(&"font_size"):
-			mesh.set("font_size", int(mesh_params[&"font_size"]))
-		if mesh_params.has(&"depth"):
-			mesh.set("depth", float(mesh_params[&"depth"]))
-		if mesh_params.has(&"size"):
-			mesh.set("size", _parse_value(mesh_params[&"size"]))
-
-	target.set("mesh", mesh)
-
-	var err := _save_scene(root, scene_path)
-	if not err.is_empty():
-		return err
-
-	return {&"ok": true, &"message": "Set %s on node '%s'" % [mesh_type, node_path]}
+		var inline: Dictionary = params.duplicate()
+		inline["type"] = mesh_type
+		value = inline
+	var out := _write_scene_node(scene_path, node_path, {"mesh": value}, "set_mesh")
+	if out.get(&"ok", false):
+		out[&"message"] = "Set %s on node '%s'" % [mesh_type, node_path]
+	return out
 
 # =============================================================================
 # set_material
 # =============================================================================
+## Kept for existing callers. Picks the node's material slot
+## (material_override, surface_material_override/<i>, or material) and
+## assigns {"type": material_type, ...material_params} or a file.
 func set_material(args: Dictionary) -> Dictionary:
 	var scene_path: String = _ensure_res_path(str(args.get(&"scene_path", "")))
 	var node_path: String = str(args.get(&"node_path", "."))
-	var material_type: String = str(args.get(&"material_type", ""))
-	var material_params: Dictionary = args.get(&"material_params", {})
+	var material_type: String = str(args.get(&"material_type", "")).strip_edges()
+	var params_v: Variant = args.get(&"material_params", {})
 	var surface_index: int = int(args.get(&"surface_index", -1))
-
 	if scene_path.strip_edges() == "res://":
 		return {&"ok": false, &"error": "Missing 'scene_path'"}
-	if material_type.strip_edges().is_empty():
+	if material_type.is_empty():
 		return {&"ok": false, &"error": "Missing 'material_type'"}
+	if params_v == null:
+		params_v = {}
+	if not (params_v is Dictionary):
+		return {&"ok": false, &"error": "'material_params' must be an object"}
+	var params: Dictionary = params_v
 
-	var result := _load_scene(scene_path)
-	if not result[1].is_empty():
-		return result[1]
-
-	var root: Node = result[0]
-	var target = _find_node(root, node_path)
-	if not target:
-		root.queue_free()
-		return {&"ok": false, &"error": "Node not found: " + node_path}
-
-	var material: Material = null
-
+	var value: Variant
 	if material_type == "file":
-		var file_path: String = str(material_params.get(&"path", ""))
+		var file_path := str(params.get(&"path", ""))
 		if file_path.is_empty():
-			root.queue_free()
 			return {&"ok": false, &"error": "Missing 'path' in material_params for file type"}
-		var loaded = load(file_path)
-		if not loaded or not (loaded is Material):
-			root.queue_free()
-			return {&"ok": false, &"error": "Failed to load material (or not a Material): " + file_path}
-		material = loaded
-
-	elif material_type == "StandardMaterial3D":
-		material = StandardMaterial3D.new()
-
-		if material_params.has(&"albedo_color"):
-			material.albedo_color = _parse_value(material_params[&"albedo_color"])
-		if material_params.has(&"metallic"):
-			material.metallic = float(material_params[&"metallic"])
-		if material_params.has(&"roughness"):
-			material.roughness = float(material_params[&"roughness"])
-		if material_params.has(&"emission"):
-			var parsed_emission = _parse_value(material_params[&"emission"])
-			if parsed_emission is Color:
-				material.emission = parsed_emission
-				material.emission_enabled = true
-		if material_params.has(&"emission_energy"):
-			material.emission_energy_multiplier = float(material_params[&"emission_energy"])
-		if material_params.has(&"transparency"):
-			material.transparency = int(material_params[&"transparency"])
-
+		value = file_path
 	else:
-		root.queue_free()
-		return {&"ok": false, &"error": "Unknown material type: '%s'. Use 'StandardMaterial3D' or 'file'." % material_type}
+		var inline: Dictionary = params.duplicate()
+		# Short names this tool has always accepted.
+		if inline.has("emission_energy") and not inline.has("emission_energy_multiplier"):
+			inline["emission_energy_multiplier"] = inline["emission_energy"]
+			inline.erase("emission_energy")
+		if inline.has("emission") and not inline.has("emission_enabled"):
+			inline["emission_enabled"] = true
+		inline["type"] = material_type
+		value = inline
 
-	var apply_mode: String
-	if target is MeshInstance3D:
-		if surface_index >= 0:
-			target.set_surface_override_material(surface_index, material)
-			apply_mode = "surface_override_material[%d]" % surface_index
+	var slot := [""]
+	var pick := func(target: Node) -> Dictionary:
+		if target is MeshInstance3D and surface_index >= 0:
+			slot[0] = "surface_material_override/%d" % surface_index
+		elif target is CSGPrimitive3D or target is CanvasItem:
+			slot[0] = "material"
+		elif target is GeometryInstance3D:
+			slot[0] = "material_override"
 		else:
-			target.material_override = material
-			apply_mode = "material_override"
-	elif target is CSGPrimitive3D:
-		target.set("material", material)
-		apply_mode = "material"
-	elif target is GeometryInstance3D:
-		target.material_override = material
-		apply_mode = "material_override"
-	else:
-		root.queue_free()
-		return {&"ok": false, &"error": "Node '%s' (%s) does not support material assignment" % [node_path, target.get_class()]}
-
-	var err := _save_scene(root, scene_path)
-	if not err.is_empty():
-		return err
-
-	return {&"ok": true, &"message": "Set %s on node '%s' via %s" % [material_type, node_path, apply_mode]}
+			return {"__error": "Node '%s' (%s) does not support material assignment" % [node_path, target.get_class()]}
+		return {slot[0]: value}
+	var out := _write_scene_node(scene_path, node_path, pick, "set_material")
+	if out.get(&"ok", false):
+		out[&"message"] = "Set %s on node '%s' via %s" % [material_type, node_path, slot[0]]
+	return out
 
 # =============================================================================
 # get_node_spatial_info
@@ -1754,175 +1494,75 @@ func _get_property_category(node: Node, prop_name: String) -> String:
 # set_scene_node_property (for visualizer inline editing)
 # =============================================================================
 func set_scene_node_property(args: Dictionary) -> Dictionary:
-	"""Set a property on a node in a scene (supports complex types)."""
+	"""Set one property on a node in a scene (visualizer inline editing).
+	The value is read according to the property's type; value_type is
+	accepted for older visualizer builds but no longer needed."""
 	var scene_path: String = _ensure_res_path(str(args.get(&"scene_path", "")))
 	var node_path: String = str(args.get(&"node_path", "."))
-	var property_name: String = str(args.get(&"property_name", ""))
-	var value = args.get(&"value")
-	var value_type: int = int(args.get(&"value_type", -1))
-
+	var property_name: String = str(args.get(&"property_name", "")).strip_edges()
 	if scene_path.strip_edges() == "res://":
 		return {&"ok": false, &"error": "Missing 'scene_path'"}
-	if property_name.strip_edges().is_empty():
+	if property_name.is_empty():
 		return {&"ok": false, &"error": "Missing 'property_name'"}
-
-	var result := _load_scene(scene_path)
-	if not result[1].is_empty():
-		return result[1]
-
-	var root: Node = result[0]
-	var target = _find_node(root, node_path)
-	if not target:
-		root.queue_free()
-		return {&"ok": false, &"error": "Node not found: " + node_path}
-
-	var parsed_value = _parse_typed_value(value, value_type)
-	var old_value = target.get(property_name)
-
-	target.set(property_name, parsed_value)
-
-	var err := _save_scene(root, scene_path)
-	if not err.is_empty():
-		return err
-
-	return {
-		&"ok": true,
-		&"scene_path": scene_path,
-		&"node_path": node_path,
-		&"property_name": property_name,
-		&"old_value": _serialize_value(old_value),
-		&"new_value": _serialize_value(parsed_value),
-		&"message": "Set %s.%s" % [node_path, property_name]
-	}
-
-func _parse_typed_value(value, type_hint: int):
-	return VariantCodec.parse_typed_value(value, type_hint)
+	var out := _write_scene_node(scene_path, node_path, {property_name: args.get(&"value")}, "set_scene_node_property")
+	if out.get(&"ok", false):
+		var entry: Dictionary = out.applied[0]
+		out[&"property_name"] = property_name
+		out[&"old_value"] = entry.old
+		out[&"new_value"] = entry.new
+		out[&"message"] = "Set %s.%s" % [node_path, property_name]
+	return out
 
 # =============================================================================
 # set_node_properties (bulk, atomic)
 # =============================================================================
-## Apply multiple properties to a node in a single load/save cycle.
-## ATOMIC (roadmap #7): every property is pre-validated (name exists on the
-## node's class + script, and Resource compatibility is satisfied) BEFORE any
-## mutation. If ANY entry fails validation, the call returns `ok: false`
-## with a `validation_errors` list and ZERO mutation occurs — no scene save,
-## no half-applied state. This is the explicit policy change from the old
-## per-property tolerance; the agent now gets one round-trip with the full
-## issue list instead of having to inspect a mixed `applied`/`failed` shape.
-##
-## Use modify_node_property for a single property; this is for batch writes.
-## Resource-typed properties must use set_resource_property / specialized tools.
+## Set one or more properties on a node. All-or-nothing: every entry is
+## validated and decoded by property type first, and the scene is saved only
+## if every write was accepted. Supports resources by path or inline, and
+## colon paths into held resources ("material:albedo_color").
 func set_node_properties(args: Dictionary) -> Dictionary:
 	var scene_path: String = _ensure_res_path(str(args.get(&"scene_path", "")))
 	var node_path: String = str(args.get(&"node_path", "."))
-	var properties: Dictionary = args.get(&"properties", {})
-
+	var properties_v: Variant = args.get(&"properties", {})
 	if scene_path.strip_edges() == "res://":
 		return {&"ok": false, &"error": "Missing 'scene_path'"}
-	if properties.is_empty():
-		return {&"ok": false, &"error": "Missing or empty 'properties' dictionary"}
+	if not (properties_v is Dictionary) or (properties_v as Dictionary).is_empty():
+		return {&"ok": false, &"error": "Missing or empty 'properties' object"}
+	if scene_path.get_extension() in ["tres", "res"]:
+		if node_path != "." and not node_path.is_empty():
+			return {&"ok": false, &"error": "node_path doesn't apply to a resource file; omit it or pass \".\""}
+		return _write_resource_file(scene_path, properties_v)
+	return _write_scene_node(scene_path, node_path, properties_v, "set_node_properties")
 
-	var result := _load_scene(scene_path)
-	if not result[1].is_empty():
-		return result[1]
 
-	var root: Node = result[0]
-	var target := _find_node(root, node_path)
-	if not target:
-		root.queue_free()
-		return {&"ok": false, &"error": "Node not found: " + node_path}
-
-	# Build per-property metadata from the LIVE target's property list. This
-	# already includes @export'd properties from any attached script. We need
-	# more than just the name set — the declared variant type tells us
-	# whether the property expects a Resource/Object even when its current
-	# value happens to be null (which is the common case for fresh Sprite2Ds
-	# with no texture, etc.). Checking just `old_value is Resource` misses
-	# that case and lets `texture: 1` slip through silently.
-	var prop_meta: Dictionary = {}
-	for prop in target.get_property_list():
-		var pname: String = str(prop.get(&"name", ""))
-		prop_meta[pname] = {
-			&"type": int(prop.get(&"type", TYPE_NIL)),
-			&"class_name": str(prop.get(&"class_name", "")),
-		}
-
-	# Pre-validate every entry. Collect ALL issues so the agent gets the full
-	# picture in one shot, not just the first failure.
-	var validation_errors: Array = []
-	var planned: Array = [] # parallel list of {prop_name, parsed, old_value} for the apply phase
-	for prop_name_v in properties.keys():
-		var prop_name := str(prop_name_v)
-		var raw_value = properties[prop_name_v]
-
-		if not prop_meta.has(prop_name):
-			validation_errors.append("properties.%s: property does not exist on %s" % [prop_name, target.get_class()])
-			continue
-
-		var meta: Dictionary = prop_meta[prop_name]
-		var declared_type: int = int(meta.get(&"type", TYPE_NIL))
-		var declared_class: String = str(meta.get(&"class_name", ""))
-		var old_value = target.get(prop_name)
-		var parsed = _parse_value(raw_value)
-
-		# Reject Resource-typed properties that received a non-Object. Accepts
-		# null (clearing the property) and any Object/Resource instance the
-		# variant codec produced. The declared-type check catches the
-		# `texture: 1` case where the current value is null — the older
-		# `old_value is Resource` heuristic missed it.
-		if declared_type == TYPE_OBJECT and parsed != null and not (parsed is Object):
-			var expected: String = declared_class if not declared_class.is_empty() else "Resource"
-			validation_errors.append("properties.%s: expects %s (use set_resource_property / set_sprite_texture / set_mesh / set_material / set_collision_shape instead — passing a primitive here would be silently dropped)" % [prop_name, expected])
-			continue
-
-		# Belt-and-suspenders: the original heuristic still fires for the
-		# already-has-a-Resource case (e.g. someone clearing a texture by
-		# passing 0 instead of null — still a misuse worth flagging).
-		if old_value is Resource and parsed != null and not (parsed is Resource):
-			validation_errors.append("properties.%s: expects a Resource (use set_resource_property / set_sprite_texture / set_mesh / set_material / set_collision_shape instead)" % prop_name)
-			continue
-
-		planned.append({
-			&"prop_name": prop_name,
-			&"parsed": parsed,
-			&"old_value": old_value,
-		})
-
-	if not validation_errors.is_empty():
-		root.queue_free()
-		return {
-			&"ok": false,
-			&"error": "set_node_properties: pre-validation failed with %d issue(s); no mutation occurred." % validation_errors.size(),
-			&"validation_errors": validation_errors,
-			&"node_path": node_path,
-			&"hint": "All property names + Resource-type compatibility are validated before anything is written. Fix every listed issue and retry. Use get_scene_node_properties to read this node's current properties (including @export'd script vars), or classdb_query for the full class API.",
-		}
-
-	# Validation passed — apply every property and save.
-	var applied: Array = []
-	for entry: Dictionary in planned:
-		target.set(entry[&"prop_name"], entry[&"parsed"])
-		applied.append({
-			&"property": entry[&"prop_name"],
-			&"old": _serialize_value(entry[&"old_value"]),
-			&"new": _serialize_value(entry[&"parsed"]),
-		})
-
-	var err := _save_scene(root, scene_path)
-	if not err.is_empty():
-		return err
-
-	return {
+## set_node_properties on a .tres/.res file: edit a shared resource (material,
+## theme, shape, custom Resource) in place and save it. Undo snapshots the file
+## like a scene.
+func _write_resource_file(path: String, props: Dictionary) -> Dictionary:
+	if not ResourceLoader.exists(path):
+		return {&"ok": false, &"error": "Resource does not exist: " + path}
+	var res: Resource = load(path)
+	if res == null:
+		return {&"ok": false, &"error": "Failed to load resource: " + path}
+	var r := PropertyWriter.write(res, props, "properties")
+	if not r.ok:
+		# Writes may have partially applied to the cached instance; reload it
+		# from disk so the editor doesn't keep half-changed state.
+		ResourceLoader.load(path, "", ResourceLoader.CACHE_MODE_REPLACE)
+		return _validation_failure("set_node_properties", r.errors, _PROPERTY_HINT)
+	var err := ResourceSaver.save(res, path)
+	if err != OK:
+		return {&"ok": false, &"error": "Failed to save %s: %s" % [path, error_string(err)]}
+	_refresh_filesystem()
+	var out := {
 		&"ok": true,
-		&"scene_path": scene_path,
-		&"node_path": node_path,
-		&"applied": applied,
-		&"message": "Applied %d propert%s on %s" % [
-			applied.size(),
-			"y" if applied.size() == 1 else "ies",
-			node_path,
-		],
+		&"scene_path": path,
+		&"resource_class": res.get_class(),
+		&"applied": r.applied,
+		&"message": "Set %d propert%s on %s" % [r.applied.size(), "y" if r.applied.size() == 1 else "ies", path],
 	}
+	_add_adjusted(out, r.adjusted)
+	return out
 
 # =============================================================================
 # Node groups (scene-file editing)
@@ -2195,70 +1835,32 @@ func _node_matches_filters(
 ## resource_path: dot/slash path from the node to the resource.
 ##   "shape"                       → the node's shape resource
 ##   "material/albedo_color_texture" → texture sub-resource of the node's material
+## Kept for existing callers. Same as set_node_properties with a colon path:
+## resource_path "material/next_pass" + property_name "albedo_color"
+## -> "material:next_pass:albedo_color".
 func set_resource_property(args: Dictionary) -> Dictionary:
 	var scene_path: String = _ensure_res_path(str(args.get(&"scene_path", "")))
 	var node_path: String = str(args.get(&"node_path", "."))
-	var resource_path: String = str(args.get(&"resource_path", ""))
-	var property_name: String = str(args.get(&"property_name", ""))
-	var value = args.get(&"value")
-
+	var resource_path: String = str(args.get(&"resource_path", "")).strip_edges()
+	var property_name: String = str(args.get(&"property_name", "")).strip_edges()
 	if scene_path.strip_edges() == "res://":
 		return {&"ok": false, &"error": "Missing 'scene_path'"}
-	if property_name.strip_edges().is_empty():
+	if property_name.is_empty():
 		return {&"ok": false, &"error": "Missing 'property_name'"}
-
-	var result := _load_scene(scene_path)
-	if not result[1].is_empty():
-		return result[1]
-
-	var root: Node = result[0]
-	var target := _find_node(root, node_path)
-	if not target:
-		root.queue_free()
-		return {&"ok": false, &"error": "Node not found: " + node_path}
-
-	# Walk to the resource.
-	var resource: Object = target
-	if not resource_path.is_empty():
-		for segment in resource_path.split("/", false):
-			if resource == null:
-				root.queue_free()
-				return {&"ok": false, &"error": "Resource path broke at segment '%s' (got null)" % segment}
-			resource = resource.get(segment)
-		if resource == null:
-			root.queue_free()
-			return {&"ok": false, &"error": "Resource at '%s' is null on node '%s'" % [resource_path, node_path]}
-		if not (resource is Resource):
-			root.queue_free()
-			return {&"ok": false, &"error": "'%s' is not a Resource (got %s)" % [resource_path, typeof(resource)]}
-
-	var has_prop := false
-	for p in resource.get_property_list():
-		if str(p[&"name"]) == property_name:
-			has_prop = true
-			break
-	if not has_prop:
-		root.queue_free()
-		return {&"ok": false, &"error": "Property '%s' not found on %s" % [property_name, resource.get_class()]}
-
-	var old_value = resource.get(property_name)
-	var parsed = _parse_value(value)
-	resource.set(property_name, parsed)
-
-	var err := _save_scene(root, scene_path)
-	if not err.is_empty():
-		return err
-
-	return {
-		&"ok": true,
-		&"scene_path": scene_path,
-		&"node_path": node_path,
-		&"resource_path": resource_path,
-		&"property_name": property_name,
-		&"old_value": _serialize_value(old_value),
-		&"new_value": _serialize_value(parsed),
-		&"message": "Set %s.%s.%s" % [node_path, resource_path, property_name],
-	}
+	if not args.has(&"value"):
+		return {&"ok": false, &"error": "Missing 'value'"}
+	var segments: Array = Array(resource_path.split("/", false))
+	segments.append(property_name)
+	var key := ":".join(segments)
+	var out := _write_scene_node(scene_path, node_path, {key: args[&"value"]}, "set_resource_property")
+	if out.get(&"ok", false):
+		var entry: Dictionary = out.applied[0]
+		out[&"resource_path"] = resource_path
+		out[&"property_name"] = property_name
+		out[&"old_value"] = entry.old
+		out[&"new_value"] = entry.new
+		out[&"message"] = "Set %s.%s" % [node_path, key]
+	return out
 
 ## Save a Resource currently held by a node (or sub-resource) to its own .tres file
 ## so it can be shared by other scenes / referenced by path. After saving, the
@@ -2788,10 +2390,14 @@ func call_method(args: Dictionary) -> Dictionary:
 				&"hint": "For most game-logic methods (take_damage, respawn, play_intro, …) runtime mode is the right answer. Editor mode is for engine/built-in methods (set_modulate, add_to_group, add_user_signal, Curve2D.add_point, etc.) that mutate persistent scene state.",
 			}
 
-	# Parse args through VariantCodec for {type:"Vector2",...} discriminated form.
-	var parsed_args: Array = []
-	for v in (raw_args as Array):
-		parsed_args.append(_parse_value(v))
+	# Decode args by the method's declared parameter types (a Texture2D
+	# parameter accepts "res://x.png"; set("prop", v) decodes v by the
+	# property's type). Mismatches are errors instead of silent no-ops.
+	var decoded := PropertyWriter.decode_call_args(target, method, raw_args as Array, "args")
+	if not decoded.errors.is_empty():
+		root.queue_free()
+		return _validation_failure("call_method", decoded.errors, "Argument values are read according to the method signature. Resources take \"res://...\" or an inline {\"type\": \"<Class>\", ...}.")
+	var parsed_args: Array = decoded.args
 
 	# Arity check using MethodInfo. Skip if we can't find a signature (some
 	# C++ overloads expose multiple entries; we just don't fail-fast in that

@@ -15,6 +15,7 @@ const CACHE_SCREENSHOT_DIR := "res://addons/godot_mcp/cache/screenshots/"
 const LOG_RING_CAPACITY := 500
 
 const VariantCodec = preload("res://addons/godot_mcp/utils/variant_codec.gd")
+const PropertyWriter = preload("res://addons/godot_mcp/utils/property_writer.gd")
 
 ## Methods that require confirm=true. Mirrors scene_tools.gd's denylist plus
 ## extra wariness about hitting autoload nodes directly (/root/* singletons).
@@ -186,38 +187,60 @@ func _take_screenshot(args: Dictionary) -> Dictionary:
 # send_input
 # =============================================================================
 func _send_input(args: Dictionary) -> Dictionary:
-	var event_desc: Dictionary = args.get("event", {})
-	if event_desc.is_empty():
-		return {"ok": false, "error": "Missing 'event' dictionary"}
-	var event := _build_input_event(event_desc)
-	if event == null:
-		return {"ok": false, "error": "Could not construct InputEvent from: %s" % str(event_desc)}
+	var event_v: Variant = args.get("event", {})
+	if not (event_v is Dictionary) or (event_v as Dictionary).is_empty():
+		return {"ok": false, "error": "Missing 'event' object, e.g. {type:\"key\", key:\"Space\", pressed:true}"}
+	var built := _build_input_event(event_v)
+	if built.has("error"):
+		return {"ok": false, "error": "send_input: %s" % built.error, "event": event_v}
+	var event: InputEvent = built.event
 	Input.parse_input_event(event)
 	return {
 		"ok": true,
 		"dispatched": event.get_class(),
-		"event": event_desc,
+		"event": event_v,
 	}
 
 
-func _build_input_event(desc: Dictionary) -> InputEvent:
+## Allowed keys per event type. Anything else is reported instead of ignored.
+const _INPUT_EVENT_KEYS := {
+	"key": ["key", "keycode", "physical_keycode", "pressed", "shift", "ctrl", "alt", "meta", "echo"],
+	"mouse_button": ["button_index", "pressed", "position", "double_click"],
+	"mouse_motion": ["position", "relative"],
+	"action": ["action", "pressed", "strength"],
+}
+
+## Returns {"event": InputEvent} or {"error": String}.
+func _build_input_event(desc: Dictionary) -> Dictionary:
 	var t: String = str(desc.get("type", ""))
+	if not _INPUT_EVENT_KEYS.has(t):
+		return {"error": "event.type must be one of %s (got '%s')" % [", ".join(_INPUT_EVENT_KEYS.keys()), t]}
+	var allowed: Array = _INPUT_EVENT_KEYS[t]
+	for k in desc.keys():
+		if str(k) != "type" and not allowed.has(str(k)):
+			return {"error": "unknown key '%s' for a %s event (allowed: %s)" % [k, t, ", ".join(allowed)]}
 	match t:
 		"key":
 			var k := InputEventKey.new()
 			k.pressed = bool(desc.get("pressed", true))
-			if desc.has("keycode"):
-				k.keycode = int(desc["keycode"])
-			if desc.has("physical_keycode"):
-				k.physical_keycode = int(desc["physical_keycode"])
+			k.echo = bool(desc.get("echo", false))
 			if desc.has("key"):
-				var keystr := str(desc["key"]).to_upper()
-				k.physical_keycode = OS.find_keycode_from_string(keystr)
+				var code := OS.find_keycode_from_string(str(desc["key"]))
+				if code == KEY_NONE:
+					return {"error": "unknown key name '%s' (examples: Space, Enter, Escape, A, Left, F1)" % desc["key"]}
+				k.keycode = code
+				k.physical_keycode = code
+			elif desc.has("keycode"):
+				k.keycode = int(desc["keycode"])
+			elif desc.has("physical_keycode"):
+				k.physical_keycode = int(desc["physical_keycode"])
+			else:
+				return {"error": "a key event needs 'key' (e.g. \"Space\"), 'keycode' or 'physical_keycode'"}
 			if desc.has("shift"): k.shift_pressed = bool(desc["shift"])
 			if desc.has("ctrl"): k.ctrl_pressed = bool(desc["ctrl"])
 			if desc.has("alt"): k.alt_pressed = bool(desc["alt"])
 			if desc.has("meta"): k.meta_pressed = bool(desc["meta"])
-			return k
+			return {"event": k}
 		"mouse_button":
 			var mb := InputEventMouseButton.new()
 			mb.pressed = bool(desc.get("pressed", true))
@@ -227,7 +250,7 @@ func _build_input_event(desc: Dictionary) -> InputEvent:
 				mb.global_position = mb.position
 			if desc.has("double_click"):
 				mb.double_click = bool(desc["double_click"])
-			return mb
+			return {"event": mb}
 		"mouse_motion":
 			var mm := InputEventMouseMotion.new()
 			if desc.has("position"):
@@ -235,15 +258,20 @@ func _build_input_event(desc: Dictionary) -> InputEvent:
 				mm.global_position = mm.position
 			if desc.has("relative"):
 				mm.relative = _to_vec2(desc["relative"])
-			return mm
-		"action":
+			return {"event": mm}
+		_:  # action
+			var action := str(desc.get("action", ""))
+			if not InputMap.has_action(action):
+				var names: Array = []
+				for a in InputMap.get_actions():
+					if not str(a).begins_with("ui_") and not str(a).begins_with("spatial_editor"):
+						names.append(str(a))
+				return {"error": "no input action named '%s'. Project actions: %s (add one with configure_input_map)" % [action, ", ".join(names) if not names.is_empty() else "none"]}
 			var act := InputEventAction.new()
-			act.action = str(desc.get("action", ""))
+			act.action = action
 			act.pressed = bool(desc.get("pressed", true))
 			act.strength = float(desc.get("strength", 1.0 if act.pressed else 0.0))
-			return act
-		_:
-			return null
+			return {"event": act}
 
 
 func _to_vec2(v: Variant) -> Vector2:
@@ -263,24 +291,11 @@ func _query_runtime_node(args: Dictionary) -> Dictionary:
 	var node_path: String = str(args.get("node_path", "")).strip_edges()
 	if node_path.is_empty():
 		return {"ok": false, "error": "Missing 'node_path' (e.g. /root/Main/Player or relative path from current_scene)"}
-	var properties: Array = args.get("properties", [])
+	var properties_v: Variant = args.get("properties", null)
 	var include_children: bool = bool(args.get("include_children", false))
 	var include_groups: bool = bool(args.get("include_groups", true))
 
-	var tree := get_tree()
-	if tree == null:
-		return {"ok": false, "error": "SceneTree unavailable"}
-
-	var node: Node = null
-	if node_path.begins_with("/"):
-		node = tree.root.get_node_or_null(NodePath(node_path))
-	else:
-		var current := tree.current_scene
-		if current:
-			node = current.get_node_or_null(NodePath(node_path))
-		if node == null:
-			node = tree.root.get_node_or_null(NodePath(node_path))
-
+	var node := _resolve_runtime_node(node_path)
 	if node == null:
 		return {"ok": false, "error": "Node not found: %s" % node_path}
 
@@ -291,18 +306,33 @@ func _query_runtime_node(args: Dictionary) -> Dictionary:
 		"path": str(node.get_path()),
 		"valid": true,
 	}
+	var scr: Variant = node.get_script()
+	if scr is Script:
+		info["script"] = (scr as Script).resource_path
 	if include_groups:
 		info["groups"] = node.get_groups()
 
-	if properties.is_empty():
-		# Default subset that's almost always interesting
-		properties = ["position", "global_position", "rotation", "scale", "visible", "modulate"]
 	var prop_values := {}
-	for pname_v in properties:
-		var pname := str(pname_v)
-		var v = node.get(pname)
-		if v != null:
-			prop_values[pname] = _serialize(v)
+	if properties_v == null or (properties_v is Array and (properties_v as Array).is_empty()):
+		# Default: everything that tells you about this node's state — script
+		# variables plus every stored property that differs from the class
+		# default (Label text, health, velocity, ...).
+		info["mode"] = "changed"
+		prop_values = _changed_properties(node)
+	elif properties_v is Array:
+		info["mode"] = "selected"
+		var unknown: Array = []
+		for pname_v in (properties_v as Array):
+			var pname := str(pname_v)
+			var base := pname.get_slice(":", 0)
+			if PropertyWriter.find_property(node, base).is_empty():
+				unknown.append("'%s'%s" % [pname, PropertyWriter.property_suggestion(node, base)])
+				continue
+			prop_values[pname] = _serialize(node.get_indexed(NodePath(pname)) if pname.contains(":") else node.get(pname))
+		if not unknown.is_empty():
+			return {"ok": false, "error": "%s has no propert%s %s. Omit 'properties' to get every changed property and script variable." % [PropertyWriter.describe(node), "y" if unknown.size() == 1 else "ies", ", ".join(unknown)]}
+	else:
+		return {"ok": false, "error": "'properties' must be an array of property names"}
 	info["properties"] = prop_values
 
 	if include_children:
@@ -314,16 +344,59 @@ func _query_runtime_node(args: Dictionary) -> Dictionary:
 	return info
 
 
+func _resolve_runtime_node(node_path: String) -> Node:
+	var tree := get_tree()
+	if tree == null:
+		return null
+	if node_path.begins_with("/"):
+		return tree.root.get_node_or_null(NodePath(node_path))
+	var node: Node = null
+	if tree.current_scene:
+		node = tree.current_scene.get_node_or_null(NodePath(node_path))
+	if node == null:
+		node = tree.root.get_node_or_null(NodePath(node_path))
+	return node
+
+
+## Script variables plus stored properties that differ from the class default.
+## Positions are always included for 2D/3D nodes since they're asked for most.
+func _changed_properties(node: Node) -> Dictionary:
+	var out := {}
+	var defaults: Object = null
+	if ClassDB.can_instantiate(node.get_class()):
+		defaults = ClassDB.instantiate(node.get_class())
+	for p in node.get_property_list():
+		var usage := int(p.get("usage", 0))
+		var pname := str(p.get("name", ""))
+		if pname.is_empty() or pname == "script" or pname.begins_with("_"):
+			continue
+		if usage & PROPERTY_USAGE_SCRIPT_VARIABLE:
+			out[pname] = _serialize(node.get(pname))
+			continue
+		if not (usage & PROPERTY_USAGE_STORAGE):
+			continue
+		var value: Variant = node.get(pname)
+		if defaults != null and PropertyWriter.values_equal(value, defaults.get(pname)):
+			continue
+		out[pname] = _serialize(value)
+	if defaults is Node:
+		(defaults as Node).free()
+	if node is Node2D or node is Node3D or node is Control:
+		out["global_position"] = _serialize(node.get("global_position"))
+	return out
+
+
+## Serialize for responses, capping huge arrays/strings so one query can't
+## flood the agent's context.
 func _serialize(v: Variant) -> Variant:
-	match typeof(v):
-		TYPE_VECTOR2: return {"type": "Vector2", "x": v.x, "y": v.y}
-		TYPE_VECTOR3: return {"type": "Vector3", "x": v.x, "y": v.y, "z": v.z}
-		TYPE_COLOR: return {"type": "Color", "r": v.r, "g": v.g, "b": v.b, "a": v.a}
-		TYPE_OBJECT:
-			if v == null:
-				return null
-			return "<%s>" % v.get_class() if v.has_method("get_class") else "<Object>"
-		_: return v
+	var out: Variant = VariantCodec.serialize_value(v)
+	if out is Array and (out as Array).size() > 50:
+		var size := (out as Array).size()
+		out = (out as Array).slice(0, 50)
+		(out as Array).append("... %d more items" % (size - 50))
+	elif out is String and (out as String).length() > 2000:
+		out = (out as String).left(2000) + "... (%d chars total)" % str(v).length()
+	return out
 
 
 # =============================================================================
@@ -532,9 +605,11 @@ func _call_method(args: Dictionary) -> Dictionary:
 			"closest_matches": suggestions,
 		}
 
-	var parsed_args: Array = []
-	for v in (raw_args as Array):
-		parsed_args.append(VariantCodec.parse_value(v))
+	# Decode args by the method's declared parameter types (see PropertyWriter).
+	var decoded := PropertyWriter.decode_call_args(node, method, raw_args as Array, "args")
+	if not decoded.errors.is_empty():
+		return {"ok": false, "error": "call_method: %s" % "; ".join(decoded.errors), "validation_errors": decoded.errors}
+	var parsed_args: Array = decoded.args
 
 	var sig_info: Dictionary = _find_method_info_runtime(node, method)
 	if not sig_info.is_empty():

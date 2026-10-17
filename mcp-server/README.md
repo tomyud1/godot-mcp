@@ -4,7 +4,7 @@
 
 Build games faster with Claude, Cursor, or any MCP-compatible AI — no copy-pasting, no context switching. The AI reads, writes, and manipulates your scenes, scripts, nodes, and project settings directly inside the running Godot editor.
 
-> Godot 4.x · 32 tools · Interactive project visualizer · MIT license
+> Godot 4.4+ · 69 tools · Undo/redo · Interactive project visualizer · MIT license
 
 ---
 
@@ -48,11 +48,11 @@ Works with any MCP-compatible client (Claude Code, Cline, Windsurf, etc.)
 
 Copy the `addons/godot_mcp/` folder from the [GitHub repo](https://github.com/tomyud1/godot-mcp) into your Godot project's `addons/` directory. Then enable it: **Project → Project Settings → Plugins → Godot MCP → Enable**.
 
-Or install directly from the **Godot Asset Library**: AssetLib → search "Godot MCP" → Install.
+Or install it from inside the Godot editor: the **Asset Store** tab (Godot 4.7+, search "[Godlink MCP](https://store.godotengine.org/asset/tomer-yud/godlink/)") or the **AssetLib** tab (Godot 4.6 and older, search "mcp") → Install.
 
 ### 3. Connect
 
-Restart your Godot project. Check the **top-right corner** of the editor — you should see **MCP Connected** in green. You're ready to go.
+Restart your Godot project. Check the **top-right corner** of the editor — you should see **MCP: Agent Active** in green. You're ready to go.
 
 ---
 
